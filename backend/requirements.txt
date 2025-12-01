@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-dotenv
+pydantic-settings
+langchain-google-genai
+langchain-openai
+websockets
