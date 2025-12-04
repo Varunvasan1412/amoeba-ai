@@ -2,6 +2,10 @@ fastapi
 uvicorn
 python-dotenv
 pydantic-settings
+langchain-core
 langchain-google-genai
 langchain-openai
+langchain-ollama
 websockets
+sqlmodel
+asyncpg

@@ -1,15 +1,48 @@
 version: "3.8"
+
 services:
+  # 1. THE DATABASE (This was missing!)
+  db:
+    image: ankane/pgvector:latest
+    container_name: amoeba-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: amoeba
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d amoeba"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. The Backend
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    env_file:
+      - ./backend/.env
+    # Wait for DB to be healthy before starting
+    depends_on:
+      db:
+        condition: service_healthy
 
+  # 3. The Frontend
   frontend:
     build: ./frontend
     ports:
       - "5173:5173"
     volumes:
       - ./frontend/src:/app/src
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+
+# Persistent Storage for DB
+volumes:
+  postgres_data:
