@@ -1,6 +1,133 @@
-node_modules/
-venv/
+# ================================
+# Python
+# ================================
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environments
+.venv/
+venv/
+env/
+backend/venv/
+
+# Environment Variables (SECRETS — never commit)
 .env
-.DS_Store
+backend/.env
+
+# Pytest
+.pytest_cache/
+backend/.pytest_cache/
+.coverage
+htmlcov/
+
+# ================================
+# Node / Frontend
+# ================================
+node_modules/
+frontend/node_modules/
 dist/
+dist-ssr/
+frontend/dist/
+*.local
+
+# ================================
+# IDE / Editor
+# ================================
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.DS_Store
+
+# ================================
+# Docker
+# ================================
+postgres_data/
+
+# ================================
+# Logs (all locations)
+# ================================
+*.log
+db_debug.log
+
+# ================================
+# Debug / Temp text outputs (root)
+# ================================
+/debug*.txt
+/traceback*.txt
+/backend_logs*.txt
+/backend_save_logs*.txt
+/backend_frontend_error_logs.txt
+/migration_output.txt
+/debug_output*.txt
+/debug_pymysql.txt
+
+# ================================
+# Debug / One-off Scripts (root)
+# ================================
+/debug_connection.py
+/test_get_clients.py
+/universal_connector.py
+/verify_builder_live.py
+/verify_v2_live.py
+/diagnostic.md
+
+# ================================
+# Debug / One-off Scripts (backend)
+# ================================
+backend/add_column.py
+backend/check_*.py
+backend/create_admin.py
+backend/create_client.py
+backend/debug_*.py
+backend/diagnose_models.py
+backend/dump_metadata.py
+backend/fix_metadata.py
+backend/force_init.py
+backend/get_key.py
+backend/inspect_*.py
+backend/manual_fix.py
+backend/migrate_*.py
+backend/mock_preview.py
+backend/repair_metadata.py
+backend/target_debug.py
+backend/test_*.py
+backend/update_client_url.py
+backend/verify_*.py
+
+# Backend temp text outputs
+backend/debug_output.txt
+backend/full_output.txt
+backend/mock_results*.txt
+backend/schema_output.txt
+backend/temp_*.txt
+
+# ================================
+# Test / Temp Databases
+# ================================
+*.db
+# Keep app-internal .db files if any
+!backend/app/**/*.db
+
+# ================================
+# Uploaded User Files (runtime data)
+# ================================
+backend/uploads/
+backend/static/reports/
+
+# ================================
+# Build Artifacts & Archives
+# ================================
+*.zip
+frontend/build_*.log
