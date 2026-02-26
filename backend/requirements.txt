@@ -9,3 +9,17 @@ langchain-ollama
 websockets
 sqlmodel
 asyncpg
+reportlab
+pandas
+openpyxl
+httpx
+python-multipart
+tabulate
+aiomysql
+cryptography
+pymysql
+psycopg2-binary
+passlib[bcrypt]
+bcrypt<4.0.0
+python-jose[cryptography]
+python-multipart

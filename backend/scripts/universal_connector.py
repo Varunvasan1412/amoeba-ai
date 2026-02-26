@@ -1,0 +1,193 @@
+import os
+import re
+import json
+import sys
+import urllib.request
+import urllib.parse
+from urllib.error import URLError
+
+# ==========================================
+# 🧠 AMOEBA UNIVERSAL CONNECTOR AGENT v2.0
+# ==========================================
+# Supports: PHP, HTML, Next.js, React, Vue, Angular
+# ==========================================
+
+# CONFIGURATION
+AMOEBA_API_URL = "http://localhost:8000/api/routes/learn" 
+IGNORE_DIRS = {'.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 'coverage'}
+
+def simple_title_case(s):
+    """Converts 'user-profile' or 'user_profile' to 'User Profile'"""
+    s = os.path.splitext(s)[0] # remove ext
+    s = s.replace("_", " ").replace("-", " ")
+    # Handle dynamic routes like [id]
+    s = re.sub(r'\[.*?\]', 'Detail', s)
+    return s.title()
+
+def detect_framework(root_path):
+    """Detects the likely framework used in the project."""
+    if os.path.exists(os.path.join(root_path, 'next.config.js')) or os.path.exists(os.path.join(root_path, 'next.config.mjs')):
+        return "NEXTJS"
+    if os.path.exists(os.path.join(root_path, 'artisan')):
+        return "LARAVEL" # (PHP)
+    if os.path.exists(os.path.join(root_path, 'composer.json')):
+         # Fallback check for PHP if not Laravel
+        return "PHP"
+    if os.path.exists(os.path.join(root_path, 'package.json')):
+        # Could be React/Vue/Angular. We'll Generic JS Scan.
+        return "JS_SPA"
+    return "LEGACY_PHP_HTML"
+
+def scan_nextjs(root_path, base_url):
+    print("⚡ Deteced Next.js Project")
+    routes = []
+    
+    # Next.js uses 'pages' or 'app' directory
+    target_dirs = ['pages', 'app', 'src/pages', 'src/app']
+    
+    for relative_dir in target_dirs:
+        scan_dir = os.path.join(root_path, relative_dir)
+        if not os.path.exists(scan_dir):
+            continue
+            
+        print(f"   Scanning directory: {relative_dir}")
+        for subdir, dirs, files in os.walk(scan_dir):
+            for file in files:
+                if file.startswith('_') or file.startswith('.'): continue
+                if not file.endswith(('.js', '.jsx', '.ts', '.tsx')): continue
+                
+                # Convert File Path to Route Path
+                # pages/users/[id].tsx -> /users/:id
+                
+                full_path = os.path.join(subdir, file)
+                rel_from_pages = os.path.relpath(full_path, scan_dir)
+                
+                # Remove extension
+                route_path = os.path.splitext(rel_from_pages)[0]
+                
+                # Handle 'index'
+                if route_path.endswith('index'):
+                    route_path = route_path[:-5] # remove 'index'
+                
+                # Cleanup slashes
+                route_path = route_path.replace("\\", "/")
+                if not route_path.startswith('/'):
+                    route_path = '/' + route_path
+                
+                # Handle Dynamic Routes [id] -> :id (optional, for readability)
+                # But keep it as is or clean it up for the label
+                
+                label = simple_title_case(os.path.basename(file))
+                if not label: label = "Home"
+                
+                full_url = urllib.parse.urljoin(base_url, route_path)
+                
+                routes.append({
+                    "label": label,
+                    "path": full_url,
+                    "keywords": label.lower().split() + ["nextjs"]
+                })
+    return routes
+
+def scan_generic_spa(root_path, base_url):
+    print("⚛️  Detected Single Page Application (React/Vue/Angular)")
+    routes = []
+    seen_paths = set()
+    
+    # For SPAs, we look for Router definitions in code
+    # Matches: path="/about" or path: '/about'
+    router_regex = re.compile(r"""path\s*[:=]\s*["']([^"']+)["']""", re.IGNORECASE)
+    
+    for subdir, dirs, files in os.walk(root_path):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        
+        for file in files:
+            if not file.endswith(('.js', '.jsx', '.ts', '.tsx', '.vue')): continue
+            
+            try:
+                with open(os.path.join(subdir, file), 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    matches = router_regex.findall(content)
+                    
+                    for match in matches:
+                        if match.startswith('/') and match not in seen_paths:
+                            # Guess Label from path: /user-settings -> User Settings
+                            label = simple_title_case(match.split('/')[-1])
+                            if not label: label = "Home"
+                            
+                            full_url = urllib.parse.urljoin(base_url, match)
+                            
+                            routes.append({
+                                "label": label,
+                                "path": full_url,
+                                "keywords": label.lower().split()
+                            })
+                            seen_paths.add(match)
+            except: pass
+            
+    return routes
+
+def scan_legacy_php(root_path, base_url):
+    print("🐘 Detected Legacy PHP/HTML Project")
+    routes = []
+    seen_paths = set()
+    
+    for subdir, dirs, files in os.walk(root_path):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        for file in files:
+            if file.lower().endswith(('.php', '.html', '.htm')):
+                file_path = os.path.join(subdir, file)
+                rel_path = os.path.relpath(file_path, root_path)
+                web_path = rel_path.replace("\\", "/")
+                full_url = urllib.parse.urljoin(base_url, web_path)
+                
+                if full_url not in seen_paths:
+                    label = simple_title_case(file)
+                    routes.append({
+                        "label": label,
+                        "path": full_url,
+                        "keywords": label.lower().split()
+                    })
+                    seen_paths.add(full_url)
+    return routes
+
+def scan_project(root_path):
+    print(f"🕵️  Scanning project at: {root_path}")
+    
+    # 1. Determine Base URL
+    folder_name = os.path.basename(root_path)
+    base_url = f"http://localhost/{folder_name}/" 
+    
+    # 2. Detect Framework
+    framework = detect_framework(root_path)
+    
+    routes = []
+    if framework == "NEXTJS":
+        routes = scan_nextjs(root_path, base_url)
+    elif framework == "JS_SPA":
+        routes = scan_generic_spa(root_path, base_url)
+    else:
+        routes = scan_legacy_php(root_path, base_url)
+        
+    return routes, [] # Return empty DB files for now to keep it simple
+
+def sync_with_amoeba(routes):
+    print(f"🚀 Syncing {len(routes)} routes with Amoeba Brain...")
+    try:
+        data = json.dumps(routes).encode('utf-8')
+        req = urllib.request.Request(AMOEBA_API_URL, data=data, headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'AmoebaConnector/2.0'
+        })
+        with urllib.request.urlopen(req) as response:
+            print(f"✅ Success! Amoeba responded: {response.read().decode('utf-8')}")
+    except Exception as e:
+        print(f"❌ Connection failed: {e}")
+
+if __name__ == "__main__":
+    current_dir = os.getcwd()
+    routes, _ = scan_project(current_dir)
+    if routes:
+        sync_with_amoeba(routes)
+    else:
+        print("🤷 No routes found.")

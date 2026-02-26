@@ -1,0 +1,16 @@
+# ERP BUSINESS RULES
+# These rules are enforced by the AI Agent.
+
+[GENERAL]
+1. DELETION POLICY: Records with status 'Finalized', 'Posted', 'Approved', or 'Closed' CANNOT be deleted.
+2. DATE FORMAT: All dates must be handled in YYYY-MM-DD format.
+3. PRIVACY: Never expose user passwords, API keys, or personal home addresses in chat responses.
+4. CONFIRMATION: Any state-changing action (INSERT, UPDATE, DELETE) requires explicit two-step confirmation.
+
+[SALES]
+1. Orders cannot be modified after shipment.
+2. Discounts greater than 20% require manager approval (Agent: Ask user if they have approval).
+
+[NAVIGATION]
+1. Always resolve the exact URL using the sitemap before navigating.
+2. If a module has multiple sub-tabs, ask the user for preference unless specific.

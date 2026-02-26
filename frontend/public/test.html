@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mock ERP Dashboard</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #f0f2f5; }
+        h1 { color: #333; }
+        .content { margin-top: 50px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <h1>🏢 Mock ERP System</h1>
+    <div class="content">
+        <h2>Dashboard</h2>
+        <p>This mimics your client's existing website.</p>
+        <p><strong>Current Page URL:</strong> <span id="url-display">/</span></p>
+    </div>
+
+    <!-- LOAD THE WIDGET -->
+    <!-- We point to the local Vite dev server -->
+    <script>
+        // Update URL display
+        document.getElementById('url-display').textContent = window.location.href;
+
+        function manualTest() {
+            console.log("👆 Manual Test Clicked");
+            window.postMessage({
+                type: 'AMOEBA_ACTION',
+                action: 'NAVIGATE',
+                payload: '/about'
+            }, '*');
+        }
+    </script>
+    
+    <button onclick="manualTest()" style="margin-top:20px; padding:10px; background:red; color:white; border:none; border-radius:4px; cursor:pointer;">
+        🔴 MANUAL TEST: Force Navigate to /about
+    </button>
+    
+    <!-- Using relative path to load the script from the "public" folder served by Vite -->
+    <script src="/widget-loader.js"></script>
+</body>
+</html>

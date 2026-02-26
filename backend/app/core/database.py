@@ -3,6 +3,15 @@ from sqlmodel import SQLModel, create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
+from app.models.client_config import ClientConfig 
+from app.models.chat import ChatMessage
+from app.models.blog import Blog
+from app.models.user import User
+from app.models.navigation import NavigationItem
+from app.models.report_registry import ReportRegistry
+from app.models.audit_log import AuditLog # Ensure registration
+from app.models.semantic_metadata import SemanticMetadata # [NEW] v2 Semantic Layer
+from app.models.allowed_relationship import AllowedRelationship # [NEW] v2 Governance Layer
 import asyncio
 
 # 1. Create the Link
@@ -30,7 +39,7 @@ async def init_db():
         try:
             async with engine.begin() as conn:
                 # ENABLE PGVECTOR EXTENSION
-                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                # await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                 
                 # Create normal tables
                 await conn.run_sync(SQLModel.metadata.create_all)

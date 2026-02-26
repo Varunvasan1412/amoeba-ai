@@ -1,0 +1,36 @@
+{
+  "Sales Summary": {
+    "base_table": "sales_orders",
+    "date_column": "order_date",
+    "base_where": "status = 'finalized'",
+    "allowed_aggregations": [
+      "SUM(total_amount) as total_sales",
+      "COUNT(id) as order_count",
+      "AVG(total_amount) as avg_order_value"
+    ],
+    "group_by": ["customer_id", "status"],
+    "output_shape": "Summary of sales performance."
+  },
+  "User Activity Log": {
+    "base_table": "audit_logs",
+    "date_column": "timestamp",
+    "base_where": "1=1",
+    "allowed_aggregations": [
+      "COUNT(id) as action_count",
+      "MAX(timestamp) as last_active"
+    ],
+    "group_by": ["user_id", "action_type"],
+    "output_shape": "Log of user actions."
+  },
+  "Inventory Status": {
+    "base_table": "inventory",
+    "date_column": "last_updated",
+    "base_where": "quantity >= 0",
+    "allowed_aggregations": [
+      "SUM(quantity) as total_stock",
+      "COUNT(product_id) as sku_count"
+    ],
+    "group_by": ["category", "warehouse_location"],
+    "output_shape": "Current inventory levels."
+  }
+}
