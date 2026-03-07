@@ -130,7 +130,7 @@ async def save_report(
     existing_report = result.scalars().first()
     
     try:
-        if existing_report:
+        if existing_report is not None:
             # Update existing
             existing_report.display_name = report_name
             existing_report.sql_template = sql_string
@@ -164,7 +164,7 @@ async def save_report(
             )
             result = await session.execute(stmt)
             existing_report = result.scalars().first()
-            if existing_report:
+            if existing_report is not None:
                 existing_report.display_name = report_name
                 existing_report.sql_template = sql_string
                 existing_report.builder_definition = definition

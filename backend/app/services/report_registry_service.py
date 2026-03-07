@@ -22,7 +22,7 @@ async def register_reports(session: AsyncSession, client_id: int, reports: List[
         result = await session.execute(statement)
         existing = result.scalars().first()
         
-        if existing:
+        if existing is not None:
             # Update - FULL OVERWRITE (JSON Authority)
             existing.display_name = report_data.get("display_name")
             existing.user_phrases = report_data.get("keywords", [])

@@ -81,7 +81,7 @@ async def bulk_upsert_semantics(session: AsyncSession, client_id: int, mappings:
         result = await session.execute(statement)
         existing = result.scalars().first()
         
-        if existing:
+        if existing is not None:
             # Update
             existing.label = mapping.get("label", existing.label)
             existing.description = mapping.get("description", existing.description)

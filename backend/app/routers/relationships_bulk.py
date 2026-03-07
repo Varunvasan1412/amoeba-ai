@@ -26,13 +26,14 @@ async def bulk_update(
 ):
     """
     Perform bulk operations on relationships.
-    Actions: 'enable_safe', 'disable_heuristic'
+    Actions: 'auto_unlock_safe', 'auto_unlock_heuristics', 'enable_all', 'disable_all'
     """
     client_id = await get_client_id_by_key(api_key, session)
     action = payload.get("action")
     
-    if action not in ["enable_safe", "disable_heuristic"]:
-        raise HTTPException(status_code=400, detail="Invalid action")
+    valid_actions = ["auto_unlock_safe", "auto_unlock_heuristics", "enable_all", "disable_all", "enable_safe", "disable_heuristic"]
+    if action not in valid_actions:
+        raise HTTPException(status_code=400, detail=f"Invalid action: {action}")
         
     result = await bulk_update_relationships(session, client_id, action)
     return result

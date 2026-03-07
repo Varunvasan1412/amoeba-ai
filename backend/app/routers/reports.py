@@ -34,7 +34,7 @@ async def register_report(
     """
     # 1. Validate Client
     client = await session.get(ClientConfig, payload.client_id)
-    if not client:
+    if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
         
     # 2. Validate Table Exists (Security & Sanity)

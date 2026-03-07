@@ -35,14 +35,14 @@
     },
     {
         "label": "Logout",
-        "path": "http://localhost:8080/login/logout",
+        "path": "http://localhost/demopower04/home/logout",
         "keywords": [
             "logout"
         ]
     },
     {
         "label": "Enquiry",
-        "path": "http://localhost:8080/marketing/enquirylist",
+        "path": "http://localhost/demopower04/enquiry",
         "keywords": [
             "enquiry"
         ]
@@ -126,7 +126,7 @@
     },
     {
         "label": "Purchase Order",
-        "path": "http://localhost/varun_sterling/Inventory/purchase_order_list",
+        "path": "http://localhost/demopower04/stock/purchaseOrder",
         "keywords": [
             "purchase order"
         ]
@@ -175,7 +175,7 @@
     },
     {
         "label": "Outstanding Report",
-        "path": "http://localhost/sterling_company/reports/outstandingReport",
+        "path": "http://localhost/demopower04/report/contraOutstandingReport",
         "keywords": [
             "outstanding report"
         ]
@@ -203,7 +203,7 @@
     },
     {
         "label": "Product Category",
-        "path": "http://localhost:8080/master/producttypelist",
+        "path": "http://localhost:8080/master/productcategorylist",
         "keywords": [
             "product category"
         ]
@@ -378,14 +378,14 @@
     },
     {
         "label": "Payroll Entry",
-        "path": "http://localhost/varun_sterling/payroll/payroll_entry",
+        "path": "http://localhost/demopower04/master/payroll",
         "keywords": [
             "payroll entry"
         ]
     },
     {
         "label": "Payroll Report",
-        "path": "http://localhost/varun_sterling/payroll/payroll_report",
+        "path": "http://localhost/demopower04/master/payrollreport",
         "keywords": [
             "payroll report"
         ]
@@ -630,7 +630,7 @@
     },
     {
         "label": "Inventory",
-        "path": "http://localhost/varun_sterling/application/controllers/Inventory.php",
+        "path": "http://localhost/demopower04/stock",
         "keywords": [
             "inventory"
         ]
@@ -644,7 +644,7 @@
     },
     {
         "label": "Payroll",
-        "path": "http://localhost/varun_sterling/application/controllers/Payroll.php",
+        "path": "http://localhost/demopower04/master/payroll",
         "keywords": [
             "payroll"
         ]
@@ -686,7 +686,7 @@
     },
     {
         "label": "Service",
-        "path": "http://localhost/varun_sterling/application/controllers/Service.php",
+        "path": "http://localhost/demopower04/service",
         "keywords": [
             "service"
         ]
@@ -10941,7 +10941,7 @@
     },
     {
         "label": "Unit",
-        "path": "http://localhost/varun_sterling/application/views/master/unit.php",
+        "path": "http://localhost:8080/master/unitlist",
         "keywords": [
             "unit"
         ]
@@ -11179,7 +11179,7 @@
     },
     {
         "label": "Payroll List",
-        "path": "http://localhost/varun_sterling/application/views/payroll/payroll_list.php",
+        "path": "http://localhost/demopower04/master/payrolllist",
         "keywords": [
             "payroll list"
         ]
@@ -11459,7 +11459,7 @@
     },
     {
         "label": "Home",
-        "path": "http://localhost/varun_sterling/Dashboard",
+        "path": "http://localhost/demopower04/home",
         "keywords": [
             "home"
         ]
@@ -11613,7 +11613,7 @@
     },
     {
         "label": "Invoice",
-        "path": "http://localhost/varun_sterling/application/views/transaction/invoice.php",
+        "path": "http://localhost/demopower04/sales/invoice",
         "keywords": [
             "invoice"
         ]
@@ -14301,7 +14301,7 @@
     },
     {
         "label": "Back",
-        "path": "http://localhost:8080/master/yarn_master",
+        "path": "http://localhost/demopower04/enquiry/salescontact",
         "keywords": [
             "back"
         ]
@@ -14322,7 +14322,7 @@
     },
     {
         "label": "Cancel",
-        "path": "http://localhost/sterling_company/production/production_attendance_list",
+        "path": "http://localhost:8080/marketing/followuplist",
         "keywords": [
             "cancel"
         ]
@@ -14693,7 +14693,7 @@
     },
     {
         "label": "Feasibility",
-        "path": "http://localhost:8080/marketing/feasibility",
+        "path": "http://localhost:8080/engineering/feasibility",
         "keywords": [
             "feasibility"
         ]
@@ -14707,7 +14707,7 @@
     },
     {
         "label": "Sample",
-        "path": "http://localhost:8080/marketing/samplelist",
+        "path": "http://localhost:8080/engineering/samplelist",
         "keywords": [
             "sample"
         ]
@@ -14868,7 +14868,7 @@
     },
     {
         "label": "Marketing",
-        "path": "http://localhost:8080/marketing/enquirylist",
+        "path": "http://localhost:8080/marketing/followuplist",
         "keywords": [
             "marketing"
         ]
@@ -14903,7 +14903,7 @@
     },
     {
         "label": "Create New",
-        "path": "http://localhost:8080/master/designationcreate",
+        "path": "http://localhost/demopower04/enquiry/createEnquiry",
         "keywords": [
             "create new"
         ]
@@ -14920,6 +14920,503 @@
         "path": "http://localhost:8080/marketing/enquiryview/1",
         "keywords": [
             "enq2026010001"
+        ]
+    },
+    {
+        "label": "Beta Calculator",
+        "path": "http://localhost:8080/engineering/betacalculator",
+        "keywords": [
+            "beta calculator"
+        ]
+    },
+    {
+        "label": "Sample Request",
+        "path": "http://localhost:8080/marketing/samplerequestlist",
+        "keywords": [
+            "sample request"
+        ]
+    },
+    {
+        "label": "Sample Quotation",
+        "path": "http://localhost:8080/marketing/samplequotationlist",
+        "keywords": [
+            "sample quotation"
+        ]
+    },
+    {
+        "label": "Quotation Preview",
+        "path": "http://localhost:8080/engineering/quotation_preview_list",
+        "keywords": [
+            "quotation preview"
+        ]
+    },
+    {
+        "label": "Design Register",
+        "path": "http://localhost:8080/engineering/design_register_list",
+        "keywords": [
+            "design register"
+        ]
+    },
+    {
+        "label": "Drawing Upload",
+        "path": "http://localhost:8080/engineering/drawing_upload_list",
+        "keywords": [
+            "drawing upload"
+        ]
+    },
+    {
+        "label": "Design Review",
+        "path": "http://localhost:8080/engineering/design_review_list",
+        "keywords": [
+            "design review"
+        ]
+    },
+    {
+        "label": "Revision History",
+        "path": "http://localhost:8080/engineering/revision_history_list",
+        "keywords": [
+            "revision history"
+        ]
+    },
+    {
+        "label": "ECR List",
+        "path": "http://localhost:8080/engineering/Ecrlist",
+        "keywords": [
+            "ecr list"
+        ]
+    },
+    {
+        "label": "ECN List",
+        "path": "http://localhost:8080/engineering/Ecnlist",
+        "keywords": [
+            "ecn list"
+        ]
+    },
+    {
+        "label": "Product Type",
+        "path": "http://localhost:8080/master/producttypelist",
+        "keywords": [
+            "product type"
+        ]
+    },
+    {
+        "label": "Product Sub Category",
+        "path": "http://localhost:8080/master/productsubcategorylist",
+        "keywords": [
+            "product sub category"
+        ]
+    },
+    {
+        "label": "Product Series",
+        "path": "http://localhost:8080/master/productserieslist",
+        "keywords": [
+            "product series"
+        ]
+    },
+    {
+        "label": "BOM",
+        "path": "http://localhost:8080/engineering/bom_list",
+        "keywords": [
+            "bom"
+        ]
+    },
+    {
+        "label": "Category Master",
+        "path": "http://localhost:8080/master/raw_material_category",
+        "keywords": [
+            "category master"
+        ]
+    },
+    {
+        "label": "Raw Material Master",
+        "path": "http://localhost:8080/master/raw_material",
+        "keywords": [
+            "raw material master"
+        ]
+    },
+    {
+        "label": "Store",
+        "path": "http://localhost:8080/master/store",
+        "keywords": [
+            "store"
+        ]
+    },
+    {
+        "label": "Technical Specification",
+        "path": "http://localhost:8080/master/technical_spec_list",
+        "keywords": [
+            "technical specification"
+        ]
+    },
+    {
+        "label": "Follow-up List",
+        "path": "http://localhost:8080/marketing/followuplist",
+        "keywords": [
+            "follow-up list"
+        ]
+    },
+    {
+        "label": "New Sample Request",
+        "path": "http://localhost:8080/marketing/samplerequestcreate",
+        "keywords": [
+            "new sample request"
+        ]
+    },
+    {
+        "label": "Review",
+        "path": "http://localhost:8080/engineering/feasibility_action/3",
+        "keywords": [
+            "review"
+        ]
+    },
+    {
+        "label": "ENQ2026020004",
+        "path": "http://localhost:8080/marketing/enquiryview/4",
+        "keywords": [
+            "enq2026020004"
+        ]
+    },
+    {
+        "label": "ENQ2026020003",
+        "path": "http://localhost:8080/marketing/enquiryview/3",
+        "keywords": [
+            "enq2026020003"
+        ]
+    },
+    {
+        "label": "ENQ2026020002",
+        "path": "http://localhost:8080/marketing/enquiryview/2",
+        "keywords": [
+            "enq2026020002"
+        ]
+    },
+    {
+        "label": "ENQ2026020001",
+        "path": "http://localhost:8080/marketing/enquiryview/1",
+        "keywords": [
+            "enq2026020001"
+        ]
+    },
+    {
+        "label": "Sales Contact",
+        "path": "http://localhost/demopower04/enquiry/salescontact",
+        "keywords": [
+            "sales contact"
+        ]
+    },
+    {
+        "label": "Reporting",
+        "path": "http://localhost/demopower04/enquiry/reportingview",
+        "keywords": [
+            "reporting"
+        ]
+    },
+    {
+        "label": "Sales",
+        "path": "http://localhost/demopower04/sales",
+        "keywords": [
+            "sales"
+        ]
+    },
+    {
+        "label": "Contra",
+        "path": "http://localhost/demopower04/contra/contra",
+        "keywords": [
+            "contra"
+        ]
+    },
+    {
+        "label": "Bank Process",
+        "path": "http://localhost/demopower04/bank",
+        "keywords": [
+            "bank process"
+        ]
+    },
+    {
+        "label": "Power Master",
+        "path": "http://localhost/demopower04/master",
+        "keywords": [
+            "power master"
+        ]
+    },
+    {
+        "label": "Report",
+        "path": "http://localhost/demopower04/report",
+        "keywords": [
+            "report"
+        ]
+    },
+    {
+        "label": "Receipt Collection Pending (Sales) : 56,99,020",
+        "path": "http://localhost/demopower04/sales/receipt",
+        "keywords": [
+            "receipt collection pending (sales) : 56,99,020"
+        ]
+    },
+    {
+        "label": "Receipt Collection Pending (Service) : 1,84,351",
+        "path": "http://localhost/demopower04/service/receipt",
+        "keywords": [
+            "receipt collection pending (service) : 1,84,351"
+        ]
+    },
+    {
+        "label": "Reporting List",
+        "path": "http://localhost/demopower04/enquiry/reportingview",
+        "keywords": [
+            "reporting list"
+        ]
+    },
+    {
+        "label": "Create Reporting",
+        "path": "http://localhost/demopower04/enquiry/createReporting",
+        "keywords": [
+            "create reporting"
+        ]
+    },
+    {
+        "label": "Enquiry List",
+        "path": "http://localhost/demopower04/enquiry",
+        "keywords": [
+            "enquiry list"
+        ]
+    },
+    {
+        "label": "Create Enquiry",
+        "path": "http://localhost/demopower04/enquiry/createEnquiry",
+        "keywords": [
+            "create enquiry"
+        ]
+    },
+    {
+        "label": "Closed Enquiry",
+        "path": "http://localhost/demopower04/enquiry/closedEnquiry",
+        "keywords": [
+            "closed enquiry"
+        ]
+    },
+    {
+        "label": "Converted Enquiry",
+        "path": "http://localhost/demopower04/enquiry/convertedEnquiry",
+        "keywords": [
+            "converted enquiry"
+        ]
+    },
+    {
+        "label": "Hold Enquiry",
+        "path": "http://localhost/demopower04/enquiry/HoldEnquiry",
+        "keywords": [
+            "hold enquiry"
+        ]
+    },
+    {
+        "label": "Follow Up",
+        "path": "http://localhost/demopower04/sales",
+        "keywords": [
+            "follow up"
+        ]
+    },
+    {
+        "label": "Site Visit",
+        "path": "http://localhost/demopower04/sales/siteVist",
+        "keywords": [
+            "site visit"
+        ]
+    },
+    {
+        "label": "Job Card",
+        "path": "http://localhost/demopower04/sales/jobCard",
+        "keywords": [
+            "job card"
+        ]
+    },
+    {
+        "label": "Advance Receipt",
+        "path": "http://localhost/demopower04/sales/advanceReceipt",
+        "keywords": [
+            "advance receipt"
+        ]
+    },
+    {
+        "label": "Further Receipt",
+        "path": "http://localhost/demopower04/sales/receipt",
+        "keywords": [
+            "further receipt"
+        ]
+    },
+    {
+        "label": "Completed Sales",
+        "path": "http://localhost/demopower04/sales/completedSales",
+        "keywords": [
+            "completed sales"
+        ]
+    },
+    {
+        "label": "Un Alloted Enquiry",
+        "path": "http://localhost/demopower04/sales/unAllottedEnquiry",
+        "keywords": [
+            "un alloted enquiry"
+        ]
+    },
+    {
+        "label": "Sales Return",
+        "path": "http://localhost/demopower04/sales/salesReturn",
+        "keywords": [
+            "sales return"
+        ]
+    },
+    {
+        "label": "Contra List",
+        "path": "http://localhost/demopower04/contra/Contra",
+        "keywords": [
+            "contra list"
+        ]
+    },
+    {
+        "label": "Contra Receipt",
+        "path": "http://localhost/demopower04/contra/ContraReceipt",
+        "keywords": [
+            "contra receipt"
+        ]
+    },
+    {
+        "label": "Stock",
+        "path": "http://localhost/demopower04/stock/stock",
+        "keywords": [
+            "stock"
+        ]
+    },
+    {
+        "label": "Direct GRN",
+        "path": "http://localhost/demopower04/stock/directGrn",
+        "keywords": [
+            "direct grn"
+        ]
+    },
+    {
+        "label": "Suggested Purchase Order",
+        "path": "http://localhost/demopower04/stock/suggestedPurchaseOrder",
+        "keywords": [
+            "suggested purchase order"
+        ]
+    },
+    {
+        "label": "GRN Inspection",
+        "path": "http://localhost/demopower04/stock/grnInspection",
+        "keywords": [
+            "grn inspection"
+        ]
+    },
+    {
+        "label": "Further Inspection",
+        "path": "http://localhost/demopower04/stock/furtherInspection",
+        "keywords": [
+            "further inspection"
+        ]
+    },
+    {
+        "label": "Advance Payment",
+        "path": "http://localhost/demopower04/stock/advanceReceipt",
+        "keywords": [
+            "advance payment"
+        ]
+    },
+    {
+        "label": "Further Payment",
+        "path": "http://localhost/demopower04/stock/receipt",
+        "keywords": [
+            "further payment"
+        ]
+    },
+    {
+        "label": "Stock Transfer",
+        "path": "http://localhost/demopower04/stock/stockTransfer",
+        "keywords": [
+            "stock transfer"
+        ]
+    },
+    {
+        "label": "Stock Report",
+        "path": "http://localhost/demopower04/report/stockReportNew",
+        "keywords": [
+            "stock report"
+        ]
+    },
+    {
+        "label": "Customer Ledger Report",
+        "path": "http://localhost/demopower04/report/customerLedgerReport",
+        "keywords": [
+            "customer ledger report"
+        ]
+    },
+    {
+        "label": "Vendor Ledger Report",
+        "path": "http://localhost/demopower04/report/vendorLedgerReport",
+        "keywords": [
+            "vendor ledger report"
+        ]
+    },
+    {
+        "label": "Enquiry Hold Report",
+        "path": "http://localhost/demopower04/report/enquiry_hold_report",
+        "keywords": [
+            "enquiry hold report"
+        ]
+    },
+    {
+        "label": "Sales Contact List",
+        "path": "http://localhost/demopower04/enquiry/salescontact",
+        "keywords": [
+            "sales contact list"
+        ]
+    },
+    {
+        "label": "Create Contact",
+        "path": "http://localhost/demopower04/enquiry/contactReporting",
+        "keywords": [
+            "create contact"
+        ]
+    },
+    {
+        "label": "Closed Contact",
+        "path": "http://localhost/demopower04/enquiry/salesClosedcontact",
+        "keywords": [
+            "closed contact"
+        ]
+    },
+    {
+        "label": "Converted Contact",
+        "path": "http://localhost/demopower04/enquiry/salesConvertedcontact",
+        "keywords": [
+            "converted contact"
+        ]
+    },
+    {
+        "label": "9994449957",
+        "path": "tel:9994449957",
+        "keywords": [
+            "9994449957"
+        ]
+    },
+    {
+        "label": "9944680677",
+        "path": "tel:9944680677",
+        "keywords": [
+            "9944680677"
+        ]
+    },
+    {
+        "label": "9994449974",
+        "path": "tel:9994449974",
+        "keywords": [
+            "9994449974"
+        ]
+    },
+    {
+        "label": "9876542345",
+        "path": "tel:9876542345",
+        "keywords": [
+            "9876542345"
         ]
     }
 ]

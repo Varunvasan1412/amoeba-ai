@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
-import { LayoutTemplate, Play, Save, Code, Loader2, Check, AlertTriangle } from "lucide-react";
+import { 
+  LayoutTemplate, Play, Save, Code, Loader2, Check, 
+  AlertTriangle, ArrowRight, ArrowLeft, Database, 
+  Table, ChevronRight, Settings2, Eye, Rocket, GitBranch
+} from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { apiFetch } from "../utils/api";
+import { JoinGraph } from "../components/admin/JoinGraph";
 
 interface SemanticColumn {
   table: string;
@@ -10,25 +15,26 @@ interface SemanticColumn {
   label: string;
 }
 
+interface JoinDefinition {
+  table: string;
+  parent: string;
+}
+
 export default function ReportBuilder() {
   const { clientId, apiKey } = useAdmin();
   const navigate = useNavigate();
   const location = useLocation();
   
-  // State
+  const [step, setStep] = useState(1);
   const [reportName, setReportName] = useState("");
   const [baseTable, setBaseTable] = useState("");
-  const [tables, setTables] = useState<string[]>([]); // Just names
+  const [tables, setTables] = useState<string[]>([]);
   const [semanticColumns, setSemanticColumns] = useState<SemanticColumn[]>([]);
-  const [selectedColumns, setSelectedColumns] = useState<string[]>([]); // Labels
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [dateColumn, setDateColumn] = useState<string>("");
   const [dateRange, setDateRange] = useState<string>("last_30_days");
-  
-  // Joins State
-  const [relationships, setRelationships] = useState<any>({}); // The full graph
-  const [joins, setJoins] = useState<string[]>([]); // Linear chain of table names
-
-  // Outputs
+  const [relationships, setRelationships] = useState<any>({});
+  const [joins, setJoins] = useState<JoinDefinition[]>([]);
   const [previewSql, setPreviewSql] = useState("");
   const [previewData, setPreviewData] = useState<any[]>([]); 
   const [loading, setLoading] = useState(false);
@@ -36,12 +42,10 @@ export default function ReportBuilder() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
 
-  // 0. Check for Edit Mode (Load from State)
   useEffect(() => {
       if (location.state?.report) {
           const report = location.state.report;
-          const def = report.builder_definition || {}; // Guard for old reports
-          
+          const def = report.builder_definition || {};
           setReportName(report.display_name);
           if (def.base_table) setBaseTable(def.base_table);
           if (def.columns) setSelectedColumns(def.columns);
@@ -49,7 +53,15 @@ export default function ReportBuilder() {
               setDateColumn(def.date_filter.column);
               setDateRange(def.date_filter.range);
           }
-          if (def.joins) setJoins(def.joins);
+          if (def.joins) {
+              const normalized = def.joins.map((j: any, i: number) => {
+                  if (typeof j === 'string') {
+                      return { table: j, parent: i === 0 ? def.base_table : def.joins[i-1] };
+                  }
+                  return j;
+              });
+              setJoins(normalized);
+          }
       }
   }, [location.state]);
 
@@ -60,14 +72,11 @@ export default function ReportBuilder() {
       setTimeout(() => setMessage(null), 5000);
   };
 
-  // 1. Fetch Schema (Semantic) & Relationships
   useEffect(() => {
     if (!apiKey) return;
-    
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Fetch Schema
             const schemaRes = await apiFetch(`${API_BASE}/v2/semantic/schema`, {
                 headers: { "X-API-Key": apiKey }
             });
@@ -81,8 +90,6 @@ export default function ReportBuilder() {
                     label: m.label
                 })));
             }
-
-            // Fetch Relationships
             const relRes = await apiFetch(`${API_BASE}/v2/builder/relationships`, {
                 headers: { "X-API-Key": apiKey }
             });
@@ -99,13 +106,11 @@ export default function ReportBuilder() {
     fetchData();
   }, [apiKey]);
 
-  // Handle Preview
   const handlePreview = async () => {
       if (!baseTable || selectedColumns.length === 0) return showMessage("error", "Select base table and columns");
       setPreviewLoading(true);
       setPreviewSql("");
       setPreviewData([]);
-      
       try {
           const payload = {
               client_id: clientId,
@@ -116,19 +121,13 @@ export default function ReportBuilder() {
                   joins: joins
               }
           };
-
           const res = await apiFetch(`${API_BASE}/v2/builder/preview/data`, {
               method: "POST",
-              headers: { 
-                  "Content-Type": "application/json",
-                  "X-API-Key": apiKey!
-              },
+              headers: { "Content-Type": "application/json", "X-API-Key": apiKey! },
               body: JSON.stringify(payload)
           });
-          
           const data = await res.json();
           if (!res.ok) throw new Error(data.detail || "Preview failed");
-          
           setPreviewSql(data.sql);
           setPreviewData(data.data || []);
       } catch (err: any) {
@@ -138,12 +137,9 @@ export default function ReportBuilder() {
       }
   };
 
-  // Handle Save
   const handleSave = async () => {
       if (!reportName) return showMessage("error", "Please enter a report name");
-      if (!previewSql) return showMessage("error", "Please preview the report first");
       setSaving(true);
-      
       try {
            const payload = {
               client_id: clientId,
@@ -155,20 +151,13 @@ export default function ReportBuilder() {
                   joins: joins
               }
           };
-
           const res = await apiFetch(`${API_BASE}/v2/builder/save`, {
               method: "POST",
-              headers: { 
-                  "Content-Type": "application/json",
-                  "X-API-Key": apiKey!
-              },
+              headers: { "Content-Type": "application/json", "X-API-Key": apiKey! },
               body: JSON.stringify(payload)
           });
-          
           if (!res.ok) throw new Error("Save failed");
-          
           showMessage("success", "Report Saved Successfully!");
-          // Redirect to reports page
           setTimeout(() => navigate("/admin/reports"), 1500);
       } catch (err: any) {
           showMessage("error", err.message);
@@ -177,270 +166,307 @@ export default function ReportBuilder() {
       }
   };
 
-  const availableColumns = semanticColumns.filter(c => 
-      c.table === baseTable || joins.includes(c.table)
-  );
+  const activeTables = [baseTable, ...joins.map(j => j.table)].filter(Boolean);
+  const availableColumns = semanticColumns.filter(c => activeTables.includes(c.table));
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left: Configuration */}
-        <div className="lg:col-span-1 space-y-6">
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
-                    <LayoutTemplate size={20} className="text-purple-600"/> Report Config
-                </h2>
-                
-                {/* Base Table */}
-                <div className="mb-4">
-                    <label className="block text-sm font-semibold text-gray-700 mb-2">1. Base Table</label>
-                    <select 
-                        className="w-full border p-2 rounded bg-white"
-                        value={baseTable}
-                        onChange={e => {
-                            setBaseTable(e.target.value);
-                            setSelectedColumns([]); // Reset
-                        }}
-                    >
-                        <option value="">-- Select Table --</option>
-                        {tables.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
+    <div className="max-w-7xl mx-auto py-6 px-4">
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 mb-8">
+            <div className="flex justify-between items-center mb-8">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                        <LayoutTemplate className="text-purple-600" /> Report Builder
+                    </h1>
+                    <p className="text-sm text-gray-500">Design powerful business reports by connecting your data visually.</p>
                 </div>
-
-                {/* Columns (Multi-select) */}
-                <div className="mb-4">
-                     <div className="flex justify-between items-center mb-2">
-                        <label className="block text-sm font-semibold text-gray-700">2. Select Columns</label>
-                        {availableColumns.length > 0 && (
-                            <button 
-                                onClick={() => {
-                                    if (selectedColumns.length === availableColumns.length) setSelectedColumns([]);
-                                    else setSelectedColumns(availableColumns.map(c => c.label));
-                                }}
-                                className="text-xs text-blue-600 font-medium hover:underline"
-                            >
-                                {selectedColumns.length === availableColumns.length ? "Deselect All" : "Select All"}
-                            </button>
-                        )}
-                     </div>
-                     <div className="border rounded-lg max-h-48 overflow-y-auto p-2">
-                        {availableColumns.length === 0 && <p className="text-xs text-gray-400 p-2">Select a base table first.</p>}
-                        {availableColumns.map(col => (
-                            <label key={col.label} className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
-                                <input 
-                                    type="checkbox" 
-                                    className="rounded text-purple-600 focus:ring-purple-500"
-                                    checked={selectedColumns.includes(col.label)}
-                                    onChange={e => {
-                                        if (e.target.checked) setSelectedColumns([...selectedColumns, col.label]);
-                                        else setSelectedColumns(selectedColumns.filter(c => c !== col.label));
-                                    }}
-                                />
-                                <span className="text-sm font-medium">{col.label}</span>
-                            </label>
-                        ))}
-                     </div>
+                <div className="flex gap-3">
+                    {step > 1 && (
+                        <button onClick={() => setStep(step - 1)} className="flex items-center gap-2 px-4 py-2 border rounded-xl hover:bg-gray-50 transition-colors font-medium text-gray-600">
+                            <ArrowLeft size={18} /> Back
+                        </button>
+                    )}
+                    {step === 1 && (
+                        <button 
+                            disabled={!baseTable}
+                            onClick={() => setStep(2)}
+                            className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all font-bold disabled:opacity-50 shadow-lg shadow-blue-100"
+                        >
+                            Select Fields <ArrowRight size={18} />
+                        </button>
+                    )}
+                    {step === 2 && (
+                        <button 
+                            disabled={selectedColumns.length === 0}
+                            onClick={() => { setStep(3); handlePreview(); }}
+                            className="flex items-center gap-2 px-6 py-2 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-all font-bold shadow-lg shadow-purple-100"
+                        >
+                            Review & Launch <ArrowRight size={18} />
+                        </button>
+                    )}
                 </div>
+            </div>
 
-                 {/* Date Filter */}
-                <div className="mb-4">
-                     <label className="block text-sm font-semibold text-gray-700 mb-2">3. Date Filter (Optional)</label>
-                     <select 
-                        className="w-full border p-2 rounded bg-white mb-2"
-                        value={dateColumn}
-                        onChange={e => setDateColumn(e.target.value)}
-                        disabled={!baseTable}
-                     >
-                         <option value="">-- No Date Filter --</option>
-                         {availableColumns.map(col => <option key={col.label} value={col.label}>{col.label}</option>)}
-                     </select>
-                     
-                     {dateColumn && (
-                         <select 
-                            className="w-full border p-2 rounded bg-white"
-                            value={dateRange}
-                            onChange={e => setDateRange(e.target.value)}
-                         >
-                             <option value="last_30_days">Last 30 Days</option>
-                             <option value="last_7_days">Last 7 Days</option>
-                             <option value="this_month">This Month</option>
-                             <option value="today">Today</option>
-                         </select>
-                     )}
-                </div>
-
-                 {/* Join Selector */}
-                 <div className="mb-4">
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">4. Add Related Data (Joins)</label>
-                      <div className="space-y-2">
-                          {joins.map((t, idx) => (
-                              <div key={idx} className="flex items-center justify-between bg-purple-50 p-2 rounded border border-purple-100">
-                                  <span className="text-xs font-bold text-purple-700 uppercase">{t}</span>
-                                  <button 
-                                      onClick={() => setJoins(joins.slice(0, idx))}
-                                      className="text-red-500 hover:text-red-700"
-                                  >
-                                      &times;
-                                  </button>
-                              </div>
-                          ))}
-                          
-                          {joins.length < 3 && (
-                              <select 
-                                  className="w-full border p-2 rounded bg-white text-sm"
-                                  value=""
-                                  onChange={e => {
-                                      if (e.target.value) setJoins([...joins, e.target.value]);
-                                  }}
-                                  disabled={!baseTable}
-                              >
-                                  <option value="">+ Add Related Table...</option>
-                                  {Object.keys(relationships[joins[joins.length - 1] || baseTable] || {}).map(t => (
-                                      <option key={t} value={t}>{t}</option>
-                                  ))}
-                              </select>
-                          )}
-                      </div>
-                 </div>
-
-                <button 
-                    onClick={handlePreview}
-                    disabled={loading || !baseTable}
-                    className="w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                    {loading ? <Loader2 size={16} className="animate-spin"/> : <Play size={16}/>}
-                    Generate Preview
-                </button>
+            <div className="flex items-center gap-4 relative overflow-x-auto pb-2">
+                {[
+                    { id: 1, label: "Architecture", icon: Database },
+                    { id: 2, label: "Field Mapping", icon: Settings2 },
+                    { id: 3, label: "Launch", icon: Eye }
+                ].map((s, idx) => (
+                    <div key={s.id} className="flex items-center gap-2 shrink-0">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold transition-all ${
+                            step === s.id ? "bg-purple-600 text-white shadow-lg shadow-purple-200" : 
+                            step > s.id ? "bg-green-100 text-green-600" : "bg-gray-100 text-gray-400"
+                        }`}>
+                            {step > s.id ? <Check size={16} /> : s.id}
+                        </div>
+                        <span className={`text-sm font-bold ${step === s.id ? "text-gray-800" : "text-gray-400"}`}>{s.label}</span>
+                        {idx < 2 && <ChevronRight size={16} className="text-gray-300 mx-2" />}
+                    </div>
+                ))}
             </div>
         </div>
 
-        {/* Right: Preview & Save */}
-        <div className="lg:col-span-2 space-y-6">
-             {message && (
-                <div className={`p-4 rounded-lg flex items-center gap-3 ${message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-                   {message.type === "success" ? <Check size={18}/> : <AlertTriangle size={18}/>}
-                   {message.text}
+        {step === 1 && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+                <div className="bg-purple-50 p-6 rounded-3xl border border-purple-100 mb-2">
+                    <h3 className="text-purple-900 font-bold flex items-center gap-2 mb-1 text-sm uppercase tracking-wider">
+                        <GitBranch size={18} /> Step 1: Data Architecture
+                    </h3>
+                    <p className="text-purple-700 text-xs leading-relaxed max-w-2xl">
+                        Define your data universe. Select a starting table and visually branch out to connect related information. 
+                        This mindmap forms the structural backbone of your report and determines which fields will be available in the next step.
+                    </p>
                 </div>
-            )}
 
-            {previewSql && (
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 animate-in fade-in slide-in-from-bottom-4 duration-500 flex flex-col h-full max-h-[600px]">
-                    <div className="flex justify-between items-center mb-4 flex-shrink-0">
-                        <div className="flex items-center gap-4">
+                <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+                    <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+                        <Database size={20} className="text-blue-500" /> 1. Select Starting Table
+                    </h2>
+                    <div className="max-w-md">
+                        <select 
+                            className="w-full border-2 border-gray-100 p-4 rounded-2xl bg-gray-50 focus:border-blue-500 outline-none transition text-lg font-medium"
+                            value={baseTable}
+                            onChange={e => {
+                                setBaseTable(e.target.value);
+                                setJoins([]);
+                                setSelectedColumns([]);
+                            }}
+                        >
+                            <option value="">-- Choose Base Table (e.g. Sales) --</option>
+                            {tables.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                    <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-slate-50/50">
+                        <div>
                             <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                                <Code size={20} className="text-slate-500"/> Generated SQL
+                                <Table size={20} className="text-purple-500" /> 2. Map Relationships
                             </h2>
-                            <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded font-mono border border-green-200 flex items-center gap-1">
-                                <Check size={10} /> Deterministic
-                            </span>
+                            <p className="text-xs text-gray-500 mt-1">Click a table to branch out and explore related data.</p>
                         </div>
-                        {/* 4. Joins Section */}
-                        <div className="space-y-4 pt-4 border-t border-gray-100">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                    4. Add Related Data (Joins)
-                                </h3>
-                                <button 
-                                    onClick={async () => {
-                                        if (!confirm("This will re-scan the database for relationships. Continue?")) return;
-                                        try {
-                                            const res = await apiFetch(`${import.meta.env.VITE_API_URL}/v2/builder/reset-cache`, {
-                                                method: 'POST',
-                                                headers: { 'X-API-Key': apiKey || "" }
-                                            });
-                                            if (res.ok) {
-                                                // Re-fetch relationships
-                                                const relRes = await apiFetch(`${import.meta.env.VITE_API_URL}/v2/builder/relationships?client_id=${clientId}`, {
-                                                    headers: { 'X-API-Key': apiKey || "" }
-                                                });
-                                                const relData = await relRes.json();
-                                                if (relData.status === 'success') {
-                                                    setRelationships(relData.graph);
-                                                    alert("Relationships refreshed successfully!");
-                                                }
-                                            }
-                                        } catch (e) {
-                                            console.error(e);
-                                            alert("Failed to refresh relationships");
-                                        }
-                                    }}
-                                    className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                                >
-                                    Force Refresh
-                                </button>
-                            </div>
-                        </div>
+                        {joins.length > 0 && (
+                            <button onClick={() => setJoins([])} className="text-xs font-bold text-red-500 uppercase hover:underline">Clear Map</button>
+                        )}
                     </div>
-                    
-                    <div className="bg-slate-900 rounded-lg p-4 mb-6 flex-shrink-0">
-                        <pre className="text-green-300 font-mono text-sm leading-relaxed overflow-x-auto">{previewSql}</pre>
+                    <div className="h-[600px] relative">
+                        {baseTable ? (
+                            <JoinGraph 
+                                baseTable={baseTable}
+                                relationships={relationships}
+                                onJoinsChange={setJoins}
+                                initialJoins={joins}
+                            />
+                        ) : (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-50/30">
+                                <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-4 border border-slate-200 shadow-inner">
+                                    <Database size={32} className="opacity-20" />
+                                </div>
+                                <p className="font-medium">Please select a base table above to begin.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {step === 2 && (
+            <div className="space-y-8 animate-in fade-in duration-500">
+                <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 mb-2">
+                    <h3 className="text-blue-900 font-bold flex items-center gap-2 mb-1 text-sm uppercase tracking-wider">
+                        <Settings2 size={18} /> Step 2: Field Mapping
+                    </h3>
+                    <p className="text-blue-700 text-xs leading-relaxed max-w-2xl">
+                        Pick your signals. Select the specific business fields you want to include in this report from each connected table. 
+                        You can toggle entire tables instantly to build wide reports comfortably and efficiently.
+                    </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {activeTables.map(tableName => {
+                        const tableCols = semanticColumns.filter(c => c.table === tableName);
+                        const allSelected = tableCols.every(c => selectedColumns.includes(`${tableName}:${c.label}`));
+                        const toggleTable = () => {
+                            if (allSelected) {
+                                setSelectedColumns(selectedColumns.filter(sc => !sc.startsWith(`${tableName}:`)));
+                            } else {
+                                const newQualified = tableCols.map(c => `${tableName}:${c.label}`).filter(q => !selectedColumns.includes(q));
+                                setSelectedColumns([...selectedColumns, ...newQualified]);
+                            }
+                        };
+                        return (
+                            <div key={tableName} className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+                                <div className="p-4 bg-slate-800 text-white flex justify-between items-center">
+                                    <div className="flex items-center gap-2">
+                                        <Table size={16} className="text-blue-400" />
+                                        <span className="font-bold text-xs uppercase tracking-widest">{tableName}</span>
+                                    </div>
+                                    <button onClick={toggleTable} className={`text-[9px] font-black uppercase tracking-tighter px-2 py-1 rounded transition-colors ${allSelected ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30'}`}>
+                                        {allSelected ? 'Deselect All' : 'Select All'}
+                                    </button>
+                                </div>
+                                <div className="p-4 flex-1 max-h-[400px] overflow-y-auto space-y-1 bg-gray-50/30">
+                                    {tableCols.map(col => {
+                                        const uniqueKey = `${tableName}:${col.label}`;
+                                        return (
+                                            <label key={uniqueKey} className="flex items-center gap-3 p-3 hover:bg-white hover:shadow-md rounded-2xl cursor-pointer transition-all group border border-transparent hover:border-purple-100">
+                                                <input type="checkbox" className="w-5 h-5 rounded-lg border-2 border-gray-200 text-purple-600 focus:ring-purple-500 transition-all" checked={selectedColumns.includes(uniqueKey)} onChange={e => {
+                                                    if (e.target.checked) setSelectedColumns([...selectedColumns, uniqueKey]);
+                                                    else setSelectedColumns(selectedColumns.filter(c => c !== uniqueKey));
+                                                }} />
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm font-bold text-gray-700 group-hover:text-purple-700 transition-colors">{col.label}</span>
+                                                    <span className="text-[10px] text-gray-400 font-mono">{col.column}</span>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+
+                <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+                    <h2 className="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                        <ChevronRight size={20} className="text-orange-500" /> 3. Additional Filters (Optional)
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Time-Series Field</label>
+                            <select className="w-full border-2 border-gray-100 p-3 rounded-2xl bg-gray-50 focus:border-orange-500 outline-none transition font-medium" value={dateColumn} onChange={e => setDateColumn(e.target.value)}>
+                                <option value="">-- No Date Filter --</option>
+                                {availableColumns.map(col => <option key={`${col.table}:${col.label}`} value={`${col.table}:${col.label}`}>{col.table}: {col.label}</option>)}
+                            </select>
+                        </div>
+                        {dateColumn && (
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Default Range</label>
+                                <select className="w-full border-2 border-gray-100 p-3 rounded-2xl bg-gray-50 focus:border-orange-500 outline-none transition font-medium" value={dateRange} onChange={e => setDateRange(e.target.value)}>
+                                    <option value="last_30_days">Last 30 Days</option>
+                                    <option value="last_7_days">Last 7 Days</option>
+                                    <option value="this_month">This Month</option>
+                                    <option value="today">Today</option>
+                                </select>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {step === 3 && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-500">
+                <div className="lg:col-span-2 space-y-6">
+                    <div className="bg-emerald-50 p-6 rounded-3xl border border-emerald-100 mb-2">
+                        <h3 className="text-emerald-900 font-bold flex items-center gap-2 mb-1 text-sm uppercase tracking-wider">
+                            <Rocket size={18} /> Step 3: Deployment Console
+                        </h3>
+                        <p className="text-emerald-700 text-xs leading-relaxed max-w-2xl">
+                            Final verification. Review your automatically optimized SQL and see a live preview of the results 
+                            before "launching" this report to your organization. The name you give it here will be its identifier in the chat.
+                        </p>
                     </div>
 
-                    {/* Data Results Table */}
-                    <div className="flex-1 flex flex-col min-h-0 border rounded-xl overflow-hidden shadow-sm">
-                        <div className="bg-gray-50 border-b px-4 py-2 flex justify-between items-center">
-                             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Data Preview (Limit 50)</span>
-                             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{previewData.length} Rows</span>
+                    <div className="bg-slate-900 rounded-3xl p-6 shadow-xl relative group">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                <Code size={16} /> Optimized SQL
+                            </h2>
+                            <span className="text-[10px] bg-green-500/20 text-green-400 px-2 py-1 rounded-lg font-bold border border-green-500/30">Verified Deterministic</span>
                         </div>
-                        <div className="overflow-auto bg-white flex-1 relative">
-                             {previewLoading ? (
-                                 <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
-                                     <Loader2 className="animate-spin text-purple-600" size={32}/>
-                                 </div>
-                             ) : previewData.length > 0 ? (
-                                <table className="w-full text-left text-sm whitespace-nowrap">
-                                    <thead className="bg-gray-50 sticky top-0 z-10 text-gray-700 font-semibold shadow-sm">
-                                        <tr>
-                                            {Object.keys(previewData[0]).map(key => (
-                                                <th key={key} className="p-3 border-r last:border-r-0 border-b">{key}</th>
-                                            ))}
-                                        </tr>
+                        <pre className="text-green-300 font-mono text-xs leading-relaxed overflow-x-auto p-4 bg-black/30 rounded-2xl">
+                            {previewSql || "-- SQL will be generated on preview..."}
+                        </pre>
+                    </div>
+
+                    <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden flex flex-col min-h-[400px]">
+                        <div className="p-4 bg-gray-50 border-b flex justify-between items-center">
+                            <span className="text-xs font-bold text-gray-500 uppercase">Live Data Preview</span>
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">{previewData.length} Sample Rows</span>
+                        </div>
+                        <div className="flex-1 overflow-auto relative">
+                            {previewLoading ? (
+                                <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                                    <Loader2 className="animate-spin text-purple-600" size={32}/>
+                                </div>
+                            ) : previewData.length > 0 ? (
+                                <table className="w-full text-left text-xs whitespace-nowrap">
+                                    <thead className="bg-slate-50 sticky top-0 font-bold text-slate-600 border-b shadow-sm">
+                                        <tr>{Object.keys(previewData[0]).map(key => (<th key={key} className="p-4">{key}</th>))}</tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {previewData.map((row, i) => (
                                             <tr key={i} className="hover:bg-blue-50/30 transition-colors">
-                                                {Object.values(row).map((val: any, j) => (
-                                                    <td key={j} className="p-3 border-r last:border-r-0 max-w-xs overflow-hidden text-ellipsis text-gray-600">
-                                                        {val === null ? <span className="text-gray-300 italic">null</span> : String(val)}
-                                                    </td>
-                                                ))}
+                                                {Object.values(row).map((val: any, j) => (<td key={j} className="p-4 text-gray-600">{val === null ? <span className="text-gray-300 italic font-mono">null</span> : String(val)}</td>))}
                                             </tr>
                                         ))}
                                     </tbody>
                                 </table>
-                             ) : (
-                                 <div className="flex items-center justify-center h-full text-gray-400 italic">No data returned</div>
-                             )}
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+                                    <AlertTriangle size={32} className="opacity-20" />
+                                    <p className="italic text-sm">No data returned for this configuration.</p>
+                                </div>
+                            )}
                         </div>
                     </div>
+                </div>
 
-                    <div className="border-t pt-6 mt-6 flex-shrink-0">
-                        <h3 className="text-md font-bold mb-4">Save Report</h3>
-                        <div className="flex gap-4">
-                            <input 
-                                className="flex-1 border p-3 rounded-lg focus:ring-2 focus:ring-purple-200 outline-none"
-                                placeholder="Report Name (e.g. Monthly Revenue)"
-                                value={reportName}
-                                onChange={e => setReportName(e.target.value)}
-                            />
-                            <button 
-                                onClick={handleSave}
-                                disabled={saving || !reportName}
-                                className="bg-emerald-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-emerald-700 flex items-center gap-2 disabled:opacity-50 transition-all shadow-lg shadow-emerald-200"
-                            >
-                                {saving ? <Loader2 size={18} className="animate-spin"/> : <Save size={18}/>}
-                                Save to Library
+                <div className="lg:col-span-1">
+                    <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-xl sticky top-6">
+                        <div className="mb-8">
+                            <h3 className="text-xl font-bold text-gray-800 mb-2">Deploy View</h3>
+                            <p className="text-sm text-gray-500 leading-relaxed">Give your view a recognizable business name. It will be immediately available in the chat.</p>
+                        </div>
+                        <div className="space-y-6">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Business Display Name</label>
+                                <input className="w-full border-2 border-gray-100 p-4 rounded-2xl focus:border-purple-500 outline-none transition-all font-bold text-lg shadow-sm bg-gray-50/50" placeholder="e.g. Monthly Revenue" value={reportName} onChange={e => setReportName(e.target.value)} />
+                            </div>
+                            <div className="p-5 bg-purple-50 rounded-2xl border border-purple-100 text-purple-700 space-y-3 shadow-sm">
+                                <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-60"><span>Deployment Summary</span></div>
+                                <div className="space-y-1">
+                                    <p className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{selectedColumns.length}</strong> Semantic Fields</p>
+                                    <p className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{activeTables.length}</strong> Tables Joined</p>
+                                </div>
+                            </div>
+                            {message && (
+                                <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in zoom-in-95 duration-200 border-2 ${message.type === "success" ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100"}`}>
+                                    {message.type === "success" ? <Check size={18} className="shrink-0"/> : <AlertTriangle size={18} className="shrink-0"/>}
+                                    <span className="text-sm font-bold">{message.text}</span>
+                                </div>
+                            )}
+                            <button onClick={handleSave} disabled={saving || !reportName} className="w-full bg-emerald-600 text-white py-5 rounded-2xl font-black hover:bg-emerald-700 transition-all shadow-xl shadow-emerald-100 text-lg uppercase tracking-widest flex items-center justify-center gap-3 disabled:opacity-50">
+                                {saving ? <Loader2 size={24} className="animate-spin"/> : <Rocket size={24} className="animate-bounce" />}
+                                {saving ? 'Deploying...' : 'Launch View'}
                             </button>
                         </div>
                     </div>
                 </div>
-            )}
-
-            {!previewSql && !loading && (
-                <div className="h-64 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center text-gray-400">
-                    <p>Configure options and click "Generate Preview" to see results.</p>
-                </div>
-            )}
-        </div>
+            </div>
+        )}
     </div>
   );
 }

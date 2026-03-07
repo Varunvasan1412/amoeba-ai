@@ -1,32 +1,71 @@
 # ================================
+# Tooling & Documentation
+# ================================
+.gemini/
+*.md
+
+# ================================
+# OS-Specific
+# ================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ================================
+# Environment Variables & Secrets
+# ================================
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# ================================
 # Python
 # ================================
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyo
 *.pyd
 *.egg-info/
 *.egg
 .eggs/
 *.whl
+dist/
+build/
 pip-log.txt
 pip-delete-this-directory.txt
+.python-version
+.mypy_cache/
+.pyre_configuration
+.pytype/
+cython_debug/
 
 # Virtual Environments
 .venv/
 venv/
 env/
+ENV/
 backend/venv/
+backend/env/
 
-# Environment Variables (SECRETS — never commit)
-.env
-backend/.env
-
-# Pytest
+# Pytest & Coverage
 .pytest_cache/
 backend/.pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
 
 # ================================
 # Node / Frontend
@@ -36,19 +75,45 @@ frontend/node_modules/
 dist/
 dist-ssr/
 frontend/dist/
+frontend/dist-ssr/
 *.local
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.next
+.nuxt
+.svelte-kit
+.vercel
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+db_debug.log
 
 # ================================
 # IDE / Editor
 # ================================
 .vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
 .idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
-.DS_Store
+*.swo
+*.swn
+.project
+.settings/
+.classpath
 
 # ================================
 # Docker
@@ -56,14 +121,9 @@ frontend/dist/
 postgres_data/
 
 # ================================
-# Logs (all locations)
+# Project-Specific Debug/Temp
 # ================================
-*.log
-db_debug.log
-
-# ================================
-# Debug / Temp text outputs (root)
-# ================================
+# Text outputs (root)
 /debug*.txt
 /traceback*.txt
 /backend_logs*.txt
@@ -73,9 +133,14 @@ db_debug.log
 /debug_output*.txt
 /debug_pymysql.txt
 
-# ================================
+# Text outputs (backend)
+backend/debug_output.txt
+backend/full_output.txt
+backend/mock_results*.txt
+backend/schema_output.txt
+backend/temp_*.txt
+
 # Debug / One-off Scripts (root)
-# ================================
 /debug_connection.py
 /test_get_clients.py
 /universal_connector.py
@@ -83,9 +148,7 @@ db_debug.log
 /verify_v2_live.py
 /diagnostic.md
 
-# ================================
 # Debug / One-off Scripts (backend)
-# ================================
 backend/add_column.py
 backend/check_*.py
 backend/create_admin.py
@@ -106,28 +169,21 @@ backend/test_*.py
 backend/update_client_url.py
 backend/verify_*.py
 
-# Backend temp text outputs
-backend/debug_output.txt
-backend/full_output.txt
-backend/mock_results*.txt
-backend/schema_output.txt
-backend/temp_*.txt
-
 # ================================
-# Test / Temp Databases
+# Databases & Runtime Data
 # ================================
 *.db
+*.sqlite
+*.sqlite3
 # Keep app-internal .db files if any
 !backend/app/**/*.db
 
-# ================================
-# Uploaded User Files (runtime data)
-# ================================
+# Uploaded User Files
 backend/uploads/
 backend/static/reports/
 
-# ================================
 # Build Artifacts & Archives
-# ================================
 *.zip
+*.tar.gz
+*.rar
 frontend/build_*.log

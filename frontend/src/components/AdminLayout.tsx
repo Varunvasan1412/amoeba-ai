@@ -6,32 +6,20 @@ import { LayoutDashboard, LogOut } from "lucide-react";
 import { apiFetch } from "../utils/api";
 
 export default function AdminLayout() {
-    const { clientId, setClientId, setApiKey, setClientName } = useAdmin();
+    const { clientId, setClientId, setApiKey, setClientName, clients, refreshClients } = useAdmin();
     const { logout, user, token } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
   
-      const [clients, setClients] = useState<{id: number, client_name: string, api_key: string}[]>([]);
       const [loading, setLoading] = useState(false);
-      const API_BASE = import.meta.env.DEV ? "http://localhost:8000/api" : "/api";
   
       useEffect(() => {
-          const fetchClients = async () => {
-              if (!token) return;
+          const init = async () => {
               setLoading(true);
-              try {
-                  const res = await apiFetch(`${API_BASE}/clients`);
-                  if (res.ok) {
-                      const data = await res.json();
-                      setClients(data.clients || []);
-                  }
-              } catch (err) {
-                  console.error("Failed to fetch clients", err);
-              } finally {
-                  setLoading(false);
-              }
+              await refreshClients();
+              setLoading(false);
           };
-          fetchClients();
+          init();
       }, [token]);
   
       const handleClientChange = (e: React.ChangeEvent<HTMLSelectElement>) => {

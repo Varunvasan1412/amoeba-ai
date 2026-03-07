@@ -17,7 +17,7 @@ async def add_navigation_item_db(label: str, path: str, icon: str = "Circle"):
             result = await session.execute(select(NavigationItem).where(NavigationItem.label == label))
             existing = result.scalars().first()
             
-            if existing:
+            if existing is not None:
                 return f"Navigation item '{label}' already exists."
                 
             item = NavigationItem(label=label, path=path, icon=icon)
@@ -40,7 +40,7 @@ async def delete_navigation_item_db(label: str):
             result = await session.execute(select(NavigationItem).where(NavigationItem.label == label))
             item = result.scalars().first()
             
-            if not item:
+            if item is None:
                 return f"Navigation item '{label}' not found."
             
             await session.delete(item)
