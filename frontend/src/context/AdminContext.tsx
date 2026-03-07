@@ -7,6 +7,8 @@ interface AdminContextType {
   setApiKey: (key: string | null) => void;
   clientName: string;
   setClientName: (name: string) => void;
+  clients: any[];
+  refreshClients: () => Promise<void>;
 }
 
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
@@ -26,6 +28,22 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     return localStorage.getItem("admin_clientName") || "";
   });
 
+  const [clients, setClients] = useState<any[]>([]);
+
+  const refreshClients = async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+    try {
+      const response = await fetch('http://localhost:8000/api/clients', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      setClients(data.clients || []);
+    } catch (err) {
+      console.error('Failed to refresh clients in context', err);
+    }
+  };
+
   const setClientId = (id: number | null) => {
       setClientIdState(id);
       if (id) localStorage.setItem("admin_clientId", id.toString());
@@ -44,7 +62,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AdminContext.Provider value={{ clientId, setClientId, apiKey, setApiKey, clientName, setClientName }}>
+    <AdminContext.Provider value={{ clientId, setClientId, apiKey, setApiKey, clientName, setClientName, clients, refreshClients }}>
       {children}
     </AdminContext.Provider>
   );

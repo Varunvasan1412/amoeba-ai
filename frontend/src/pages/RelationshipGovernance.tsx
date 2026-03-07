@@ -1,373 +1,174 @@
-
 import { useState, useEffect } from "react";
-import { ArrowLeft, Shield, CheckCircle, XCircle, AlertTriangle, RefreshCw, Lock, Zap, BarChart, HardDrive, LayoutGrid, List as ListIcon } from "lucide-react";
+import { 
+  ArrowLeft, Shield, CheckCircle, XCircle, AlertTriangle, 
+  RefreshCw, Lock, Zap, BarChart, HardDrive, LayoutGrid, 
+  List as ListIcon, Wand2, Unlock, ShieldCheck, Ghost
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAdmin } from "../context/AdminContext";
 import { apiFetch } from "../utils/api";
 import RelationshipGraph from "./admin/RelationshipGraph";
-import RelationshipBulkPanel from "./admin/RelationshipBulkPanel";
-
-interface AllowedRelationship {
-  id: number;
-  client_id: number;
-  parent_table: string;
-  parent_column: string;
-  child_table: string;
-  child_column: string;
-  is_enabled: boolean;
-  is_restricted: boolean;
-  created_at: string;
-}
-
-type GovernanceMode = "simple" | "guided" | "strict";
+import { RelationshipList } from "../components/admin/RelationshipList";
 
 export default function RelationshipGovernance() {
-  const { apiKey, clientId } = useAdmin();
-  const [relationships, setRelationships] = useState<AllowedRelationship[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  
-  const [mode, setMode] = useState<GovernanceMode>("guided");
-  const [modeLoading, setModeLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
+  const { apiKey } = useAdmin();
+  const [loading, setLoading] = useState(false);
+  const [magicLoading, setMagicLoading] = useState<string | null>(null);
+  const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
+  const [viewMode, setViewViewMode] = useState<"graph" | "list">("graph");
 
-  // Fetch Logic
-  const fetchAll = async () => {
-      setLoading(true);
-      setError(null);
+  const showMessage = (type: "success" | "error", text: string) => {
+      setMessage({ type, text });
+      setTimeout(() => setMessage(null), 5000);
+  };
+
+  const handleMagicAction = async (action: string) => {
+      if (!apiKey) return showMessage("error", "No API Key found. Select a client first.");
+      setMagicLoading(action);
       try {
-          if (!apiKey || !clientId) throw new Error("No Client Selected");
-          const apiUrl = import.meta.env.VITE_API_URL || "";
-
-          // 1. Fetch Client Mode
-          // We don't have a direct GET /client/{id} public endpoint easily accessible 
-          // without refactoring. We'll use list_clients for now as it's an admin page.
-          const clientRes = await apiFetch(`${apiUrl}/api/clients`, {
-              headers: { "X-API-Key": apiKey } 
+          const API_BASE = import.meta.env.VITE_API_URL || "";
+          const url = `${API_BASE}/api/v2/relationships/bulk-update`.replace(/\/\//g, '/').replace(':/', '://');
+          
+          const res = await apiFetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+              body: JSON.stringify({ action })
           });
-          if (clientRes.ok) {
-              const clientData = await clientRes.json();
-              const myClient = clientData.clients.find((c: any) => c.id === clientId);
-              if (myClient) setMode(myClient.governance_mode || "guided");
+          const data = await res.json();
+          if (res.ok) {
+              showMessage("success", `Magic Complete! Updated ${data.updated_count} connections.`);
+              setLoading(true);
+              setTimeout(() => setLoading(false), 100);
           }
-
-          // 2. Fetch Relationships
-          const relRes = await apiFetch(`${apiUrl}/api/v2/relationships`, {
-            headers: { "X-API-Key": apiKey }
-          });
-          
-          if (!relRes.ok) {
-               const text = await relRes.text();
-               try {
-                   const json = JSON.parse(text);
-                   throw new Error(json.detail || "Failed to fetch relationships");
-               } catch (e) {
-                   throw new Error(`Failed to fetch relationships: ${relRes.status} ${relRes.statusText}`);
-               }
-          }
-          
-          const data = await relRes.json();
-          setRelationships(data);
-
-      } catch (err: any) {
-          setError(err.message);
-      } finally {
-          setLoading(false);
-      }
-  };
-
-  useEffect(() => {
-    fetchAll();
-  }, [apiKey, clientId]);
-
-  const updateMode = async (newMode: GovernanceMode) => {
-      if (!clientId) return;
-      if (!confirm(`Switch to ${newMode.toUpperCase()} mode? This will re-run discovery.`)) return;
-
-      setModeLoading(true);
-      try {
-          const apiUrl = import.meta.env.VITE_API_URL || "";
-          const response = await apiFetch(`${apiUrl}/api/clients/${clientId}/governance-mode`, {
-              method: "PATCH",
-              headers: {
-                  "Content-Type": "application/json",
-                  "X-API-Key": apiKey || ""
-              },
-              body: JSON.stringify({ governance_mode: newMode })
-          });
-
-          if (!response.ok) throw new Error("Failed to update mode");
-          
-          setMode(newMode);
-          await fetchAll(); // Refresh relationships
-      } catch (err: any) {
-          alert(err.message);
-      } finally {
-          setModeLoading(false);
-      }
-  };
-
-  const toggleRelationship = async (id: number, currentStatus: boolean) => {
-    try {
-      if (!apiKey) return;
-      if (mode === "simple") return; // Read-only in simple mode
-
-      const apiUrl = import.meta.env.VITE_API_URL || "";
-
-      // Optimistic update
-      setRelationships(prev => prev.map(r => 
-        r.id === id ? { ...r, is_enabled: !currentStatus } : r
-      ));
-
-      const response = await apiFetch(`${apiUrl}/api/v2/relationships/${id}/toggle`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey
-        },
-        body: JSON.stringify({ is_enabled: !currentStatus })
-      });
-
-      if (!response.ok) {
-        // Revert on failure
-        setRelationships(prev => prev.map(r => 
-            r.id === id ? { ...r, is_enabled: currentStatus } : r
-        ));
-        throw new Error("Failed to toggle relationship");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Failed to update relationship status.");
-    }
-  };
-
-  const toggleRestriction = async (id: number, currentStatus: boolean) => {
-    try {
-        if (!apiKey) return;
-        
-        const apiUrl = import.meta.env.VITE_API_URL || "";
-
-        // Optimistic update
-        setRelationships(prev => prev.map(r => 
-          r.id === id ? { ...r, is_restricted: !currentStatus } : r
-        ));
-  
-        const response = await apiFetch(`${apiUrl}/api/v2/relationships/${id}/restrict`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-API-Key": apiKey
-          },
-          body: JSON.stringify({ is_restricted: !currentStatus })
-        });
-  
-        if (!response.ok) {
-          // Revert
-          setRelationships(prev => prev.map(r => 
-              r.id === id ? { ...r, is_restricted: currentStatus } : r
-          ));
-          throw new Error("Failed to restrict relationship");
-        }
       } catch (err) {
-        console.error(err);
-        alert("Failed to update restriction status.");
+          showMessage("error", "Magic failed. Try manual mode.");
+      } finally {
+          setMagicLoading(null);
       }
   };
-
-  if (!apiKey) return <div className="p-8">Please select a client first.</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="flex items-center mb-8">
-          <Link to="/admin" className="mr-4 p-2 bg-white rounded-full shadow-sm hover:bg-gray-50 transition-colors">
-            <ArrowLeft size={20} className="text-gray-600" />
+    <div className="max-w-7xl mx-auto py-6 px-4">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-4">
+          <Link to="/admin" className="p-2 hover:bg-gray-100 rounded-xl transition-colors">
+            <ArrowLeft size={20} className="text-gray-500" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-2">
-              <Shield className="text-purple-600" />
-              Relationship Governance
+            <h1 className="text-2xl font-black text-gray-800 flex items-center gap-2">
+              <Shield className="text-blue-600" /> Data Connections
             </h1>
-            <p className="text-gray-500">Manage allowed database joins for the Query Builder.</p>
+            <p className="text-sm text-gray-500 font-medium tracking-tight">Decide which tables are allowed to talk to each other.</p>
           </div>
-          <div className="ml-auto flex gap-3">
-              <button 
-                onClick={fetchAll} 
-                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 text-gray-600"
-              >
-                  <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-                  Refresh
-              </button>
-              
-              <div className="flex bg-gray-200 p-1 rounded-lg">
-                  <button
-                    onClick={() => setViewMode("list")}
-                    className={`p-2 rounded-md ${viewMode === "list" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-900"}`}
-                    title="List View"
-                  >
-                      <ListIcon size={18} />
-                  </button>
-                  <button
-                    onClick={() => setViewMode("graph")}
-                    className={`p-2 rounded-md ${viewMode === "graph" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-900"}`}
-                    title="Graph View"
-                  >
-                      <LayoutGrid size={18} />
-                  </button>
+        </div>
+
+        <div className="flex bg-gray-100 p-1 rounded-2xl">
+            <button 
+                onClick={() => setViewViewMode("graph")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${viewMode === "graph" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
+            >
+                <LayoutGrid size={14} /> Mindmap
+            </button>
+            <button 
+                onClick={() => setViewViewMode("list")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${viewMode === "list" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
+            >
+                <ListIcon size={14} /> Detail List
+            </button>
+        </div>
+      </div>
+
+      {/* Magic Action Bar */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <button 
+            onClick={() => handleMagicAction("auto_unlock_safe")}
+            disabled={!!magicLoading}
+            className="group relative bg-white p-5 rounded-3xl border-2 border-green-50 hover:border-green-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+          >
+              {magicLoading === "auto_unlock_safe" && <div className="absolute inset-0 bg-green-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-green-600" /></div>}
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-green-100 text-green-600 rounded-xl group-hover:scale-110 transition-transform">
+                      <ShieldCheck size={20} />
+                  </div>
+                  <span className="font-black text-xs uppercase tracking-widest text-green-700">Level 1</span>
               </div>
+              <h3 className="font-bold text-gray-800 text-sm">Auto-Unlock Safe FKs</h3>
+              <p className="text-[10px] text-gray-500 mt-1">Enable all standard Foreign Keys detected in your database.</p>
+          </button>
+
+          <button 
+            onClick={() => handleMagicAction("auto_unlock_heuristics")}
+            disabled={!!magicLoading}
+            className="group relative bg-white p-5 rounded-3xl border-2 border-purple-50 hover:border-purple-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+          >
+              {magicLoading === "auto_unlock_heuristics" && <div className="absolute inset-0 bg-purple-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-purple-600" /></div>}
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-purple-100 text-purple-600 rounded-xl group-hover:scale-110 transition-transform">
+                      <Zap size={20} />
+                  </div>
+                  <span className="font-black text-xs uppercase tracking-widest text-purple-700">Level 2</span>
+              </div>
+              <h3 className="font-bold text-gray-800 text-sm">Apply AI Heuristics</h3>
+              <p className="text-[10px] text-gray-500 mt-1">Connect tables by matching IDs and names (e.g. customer_id).</p>
+          </button>
+
+          <button 
+            onClick={() => handleMagicAction("enable_all")}
+            disabled={!!magicLoading}
+            className="group relative bg-white p-5 rounded-3xl border-2 border-blue-50 hover:border-blue-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+          >
+              {magicLoading === "enable_all" && <div className="absolute inset-0 bg-blue-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-blue-600" /></div>}
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
+                      <Unlock size={20} />
+                  </div>
+                  <span className="font-black text-xs uppercase tracking-widest text-blue-700">Simple Mode</span>
+              </div>
+              <h3 className="font-bold text-gray-800 text-sm">Trust Everything</h3>
+              <p className="text-[10px] text-gray-500 mt-1">Enable every possible connection for maximum flexibility.</p>
+          </button>
+
+          <button 
+            onClick={() => {
+                if (confirm("FACTORY RESET: This will delete ALL manual joins and reset everything to AI discovery. Are you sure?")) {
+                    handleMagicAction("disable_all");
+                }
+            }}
+            disabled={!!magicLoading}
+            className="group relative bg-white p-5 rounded-3xl border-2 border-red-50 hover:border-red-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+          >
+              {magicLoading === "disable_all" && <div className="absolute inset-0 bg-red-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-red-600" /></div>}
+              <div className="flex items-center gap-3 mb-2">
+                  <div className="p-2 bg-red-100 text-red-600 rounded-xl group-hover:scale-110 transition-transform">
+                      <RefreshCw size={20} />
+                  </div>
+                  <span className="font-black text-xs uppercase tracking-widest text-red-700">Danger Zone</span>
+              </div>
+              <h3 className="font-bold text-gray-800 text-sm">Factory Reset</h3>
+              <p className="text-[10px] text-gray-500 mt-1">Wipe all custom rules and re-run discovery from scratch.</p>
+          </button>
+      </div>
+
+      {message && (
+          <div className={`mb-6 p-4 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-4 ${message.type === "success" ? "bg-green-50 text-green-700 border border-green-100" : "bg-red-50 text-red-700 border border-red-100"}`}>
+              {message.type === "success" ? <CheckCircle size={18}/> : <AlertTriangle size={18}/>}
+              <span className="text-sm font-bold">{message.text}</span>
           </div>
-        </div>
+      )}
 
-        {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl mb-6 flex items-center gap-2">
-                <AlertTriangle size={20} />
-                {error}
-            </div>
-        )}
-
-        {/* MODE BANNER */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-8">
-            <div className="flex items-center justify-between">
-                <div>
-                     <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Governance Mode</h3>
-                     <div className="flex items-center gap-2">
-                        {mode === "simple" && <Zap className="text-blue-500" size={24} fill="currentColor" fillOpacity={0.1} />}
-                        {mode === "guided" && <BarChart className="text-orange-500" size={24} />}
-                        {mode === "strict" && <HardDrive className="text-red-600" size={24} />}
-                        
-                        <span className="text-2xl font-bold text-gray-800 capitalize">{mode} Mode</span>
-                     </div>
-                     <p className="text-gray-500 text-sm mt-1">
-                         {mode === "simple" && "Zero friction. Relationships are auto-enabled (max depth 5). Controls hidden."}
-                         {mode === "guided" && "Balanced control. Safe defaults enabled. Admin can override."}
-                         {mode === "strict" && "Enterprise security. Default deny. Full manual control required."}
-                     </p>
-                </div>
-
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                    {["simple", "guided", "strict"].map((m) => (
-                        <button
-                            key={m}
-                            disabled={modeLoading}
-                            onClick={() => updateMode(m as GovernanceMode)}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                                mode === m 
-                                    ? "bg-white text-gray-900 shadow-sm" 
-                                    : "text-gray-500 hover:text-gray-900"
-                            }`}
-                        >
-                            {m.charAt(0).toUpperCase() + m.slice(1)}
-                        </button>
-                    ))}
-                </div>
-            </div>
-        </div>
-
-
-        
-        {/* Main Content Area */}
-        {viewMode === "list" ? (
-             /* Table */
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead className="bg-gray-50 text-gray-500 text-sm font-medium border-b border-gray-100">
-                            <tr>
-                                <th className="px-6 py-4">Parent Table (One)</th>
-                                <th className="px-6 py-4">Join On</th>
-                                <th className="px-6 py-4">Child Table (Many)</th>
-                                <th className="px-6 py-4 text-center">Status</th>
-                                <th className="px-6 py-4 text-center">Restricted</th>
-                                {mode !== "simple" && <th className="px-6 py-4 text-right">Actions</th>}
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
-                            {loading && relationships.length === 0 ? (
-                                <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400">Loading governance rules...</td></tr>
-                            ) : relationships.length === 0 ? (
-                                <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-400">No relationships discovered yet. Ensure database has data.</td></tr>
-                            ) : (
-                                relationships.map((rel) => (
-                                    <tr key={rel.id} className="hover:bg-gray-50/50 transition-colors group">
-                                        <td className="px-6 py-4 font-medium text-gray-800">
-                                            {rel.parent_table}
-                                            <div className="text-xs text-gray-400 font-mono mt-0.5">{rel.parent_column}</div>
-                                        </td>
-                                        <td className="px-6 py-4 text-gray-400">
-                                            <div className="flex items-center gap-2 text-xs bg-gray-100 px-2 py-1 rounded w-fit">
-                                                One to Many
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 font-medium text-gray-800">
-                                            {rel.child_table}
-                                            <div className="text-xs text-gray-400 font-mono mt-0.5">{rel.child_column}</div>
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                                rel.is_enabled 
-                                                    ? "bg-green-50 text-green-700 border border-green-100" 
-                                                    : "bg-gray-100 text-gray-500 border border-gray-200"
-                                            }`}>
-                                                {rel.is_enabled ? (
-                                                    <><CheckCircle size={12} /> Enabled</>
-                                                ) : (
-                                                    <><XCircle size={12} /> Disabled</>
-                                                )}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                           {rel.is_restricted && (
-                                               <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-xs border border-red-100">
-                                                   <Lock size={10} /> Restricted
-                                               </span>
-                                           )}
-                                        </td>
-                                        {mode !== "simple" && (
-                                            <td className="px-6 py-4 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <button 
-                                                        onClick={() => toggleRelationship(rel.id, rel.is_enabled)}
-                                                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                                                            rel.is_enabled 
-                                                                ? "bg-white border-gray-200 text-gray-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200" 
-                                                                : "bg-purple-600 border-purple-600 text-white hover:bg-purple-700"
-                                                        }`}
-                                                    >
-                                                        {rel.is_enabled ? "Disable" : "Enable"}
-                                                    </button>
-                                                    
-                                                    <button 
-                                                        onClick={() => toggleRestriction(rel.id, rel.is_restricted)}
-                                                        className={`p-1.5 rounded-lg border transition-colors ${
-                                                            rel.is_restricted
-                                                                ? "bg-red-50 border-red-200 text-red-600"
-                                                                : "bg-white border-gray-200 text-gray-400 hover:text-gray-600"
-                                                        }`}
-                                                        title="Restrict"
-                                                    >
-                                                        <Lock size={14} />
-                                                    </button>
-                                                </div>
-                                            </td>
-                                        )}
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        ) : (
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-1">
-                <RelationshipGraph apiKey={apiKey} />
-            </div>
-        )}
-        
-        <RelationshipBulkPanel apiKey={apiKey} onUpdate={fetchAll} />
+      {/* Main View Area */}
+      <div className="bg-white rounded-[40px] shadow-2xl border border-gray-100 overflow-hidden relative min-h-[700px]">
+          {loading ? (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
+                  <Wand2 className="animate-bounce text-blue-600" size={48} />
+              </div>
+          ) : viewMode === "graph" ? (
+              <RelationshipGraph apiKey={apiKey} />
+          ) : (
+              <RelationshipList apiKey={apiKey} />
+          )}
       </div>
     </div>
   );
 }
-
-

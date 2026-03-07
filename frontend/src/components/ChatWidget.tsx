@@ -9,16 +9,15 @@ type ChatMessage = {
   actions?: any[]; 
 };
 
-  //Memoized Message Bubble to prevent re-renders on typing
-const MessageBubble = memo(({ msg, onSelect }: { msg: ChatMessage, onSelect?: (val: string) => void }) => {
+// Memoized Message Bubble for performance
+const MessageBubble = memo(({ msg, onSelect, onSubmitForm }: { msg: ChatMessage, onSelect?: (val: string) => void, onSubmitForm?: (data: any) => void }) => {
   // Extract actions if present
   const choices = msg.actions?.find(a => a.type === "CHOICE");
+  const formRequest = msg.actions?.find(a => a.type === "form_request");
+  const confirmation = msg.actions?.find(a => a.type === "confirmation");
+  const success = msg.actions?.find(a => a.type === "success");
   
-  // Debug Log
-  if (msg.sender === "ai" && msg.actions) {
-      console.log("💬 Message Actions:", msg.actions);
-      console.log("🔍 Choices Found:", choices);
-  }
+  const [formData, setFormData] = useState<Record<string, string>>({});
 
   return (
     <div className={`flex flex-col gap-2 max-w-[85%] ${msg.sender === "user" ? "self-end items-end" : "self-start items-start"}`}> 
@@ -32,9 +31,14 @@ const MessageBubble = memo(({ msg, onSelect }: { msg: ChatMessage, onSelect?: (v
         >
         {msg.sender === "user" ? (
             msg.text
-        ) : choices ? (
+        ) : (choices || formRequest || confirmation || success) ? (
             <div className="whitespace-pre-wrap text-gray-800 font-sans text-sm">
                 {msg.text}
+                {success && (
+                    <div className="mt-2 text-green-600 font-bold flex items-center gap-2">
+                        <span>✅</span> {success.payload}
+                    </div>
+                )}
             </div>
         ) : (
             <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 prose-pre:bg-gray-50 prose-pre:text-gray-700 overflow-hidden">
@@ -56,6 +60,48 @@ const MessageBubble = memo(({ msg, onSelect }: { msg: ChatMessage, onSelect?: (v
                         <span className="font-medium text-gray-700 group-hover:text-blue-800">{opt.label}</span>
                     </button>
                 ))}
+            </div>
+        )}
+
+        {/* Dynamic Form Request */}
+        {msg.sender === "ai" && formRequest && formRequest.payload && (
+            <div className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm mt-1 w-full max-w-xs flex flex-col gap-3">
+                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Enter Details: {formRequest.payload.entity}</h4>
+                {formRequest.payload.fields.map((field: string) => (
+                    <div key={field} className="flex flex-col gap-1">
+                        <label className="text-[10px] font-semibold text-gray-400 uppercase ml-1">{field}</label>
+                        <input 
+                            type="text"
+                            placeholder={`Enter ${field}...`}
+                            onChange={(e) => setFormData(prev => ({...prev, [field]: e.target.value}))}
+                            className="bg-gray-50 border border-gray-100 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-100 outline-none"
+                        />
+                    </div>
+                ))}
+                <button 
+                    onClick={() => onSubmitForm && onSubmitForm(formData)}
+                    className="mt-2 bg-blue-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm"
+                >
+                    Submit Details
+                </button>
+            </div>
+        )}
+
+        {/* Confirmation Buttons */}
+        {msg.sender === "ai" && confirmation && (
+            <div className="flex gap-2 mt-2">
+                <button 
+                    onClick={() => onSelect && onSelect("Yes")}
+                    className="bg-red-600 text-white px-6 py-2 rounded-xl text-sm font-semibold hover:bg-red-700 transition-all shadow-md"
+                >
+                    Confirm
+                </button>
+                <button 
+                    onClick={() => onSelect && onSelect("Cancel")}
+                    className="bg-gray-100 text-gray-600 px-6 py-2 rounded-xl text-sm font-semibold hover:bg-gray-200 transition-all border border-gray-200"
+                >
+                    Cancel
+                </button>
             </div>
         )}
     </div>
@@ -125,6 +171,8 @@ export default function ChatWidget() {
       const history = data.map((msg: any) => ({
         sender: msg.sender,
         text: msg.content,
+        actions: msg.actions || [], // 🔥 Preserve actions from history if they exist
+        timestamp: msg.timestamp || Date.now()
       }));
 
       setMessages(history);
@@ -162,15 +210,21 @@ export default function ChatWidget() {
       try {
         const payload = JSON.parse(event.data);
         
-        // 1. Text Response
+        // 1. Text & Action Response
         if (payload.text) {
-             setMessages((prev) => [...prev, { sender: "ai", text: payload.text }]);
+             const newMessage = { 
+                 sender: "ai" as const, 
+                 text: payload.text,
+                 actions: payload.actions || [],
+                 timestamp: Date.now()
+             };
+             setMessages((prev) => [...prev, newMessage]);
         }
         
-        // 2. Action Handling
+        // 2. Parent Dispatch (for Navigation/etc)
         if (payload.actions && Array.isArray(payload.actions)) {
             payload.actions.forEach((action: any) => {
-                console.log("📢 Dispatching Action to Parent:", action);
+                // ... (existing logging)
                 window.parent.postMessage({
                     type: "AMOEBA_ACTION",
                     action: action.type,
@@ -179,7 +233,7 @@ export default function ChatWidget() {
             });
         }
       } catch (e) {
-        setMessages((prev) => [...prev, { sender: "ai", text: event.data }]);
+        setMessages((prev) => [...prev, { sender: "ai", text: event.data, timestamp: Date.now() }]);
       }
     };
 
@@ -289,6 +343,18 @@ export default function ChatWidget() {
         }
     }, [isConnected]);
 
+    /* Helper to handle form submission */
+    const handleFormSubmit = useCallback((data: any) => {
+        const text = JSON.stringify(data);
+        const userMessage = { sender: "user" as const, text: "Submitted form details." };
+        setMessages((prev) => [...prev, userMessage]);
+        
+        if (socketRef.current && isConnected) {
+             socketRef.current.send(text);
+             setIsTyping(true);
+        }
+    }, [isConnected]);
+
   return (
     <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end font-sans">
       {isOpen && (
@@ -352,7 +418,7 @@ export default function ChatWidget() {
             ) : (
               <>
                 {messages.map((msg, i) => (
-                  <MessageBubble key={i} msg={msg} onSelect={handleChoiceSelect} />
+                  <MessageBubble key={i} msg={msg} onSelect={handleChoiceSelect} onSubmitForm={handleFormSubmit} />
                 ))}
                 
                 {/* Typing Indicator Bubble */}

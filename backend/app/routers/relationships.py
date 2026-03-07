@@ -26,6 +26,52 @@ async def list_relationships(
     # This ensures sync runs if not already
     return await get_all_relationships(session, client_id)
 
+from pydantic import BaseModel
+
+class ManualRelationshipCreate(BaseModel):
+    parent_table: str
+    parent_column: str
+    child_table: str
+    child_column: str
+
+@router.post("", response_model=AllowedRelationship)
+async def create_manual_relationship(
+    payload: ManualRelationshipCreate,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Manually define a relationship between two tables.
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    # Check if exists
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.client_id == client_id,
+        AllowedRelationship.parent_table == payload.parent_table,
+        AllowedRelationship.child_table == payload.child_table
+    )
+    existing = (await session.execute(stmt)).scalars().first()
+    if existing:
+        return existing
+        
+    new_rel = AllowedRelationship(
+        client_id=client_id,
+        parent_table=payload.parent_table,
+        parent_column=payload.parent_column,
+        child_table=payload.child_table,
+        child_column=payload.child_column,
+        is_enabled=True,
+        risk_level="manual",
+        confidence_score=1.0
+    )
+    session.add(new_rel)
+    await session.commit()
+    await session.refresh(new_rel)
+    
+    clear_relationship_cache(client_id)
+    return new_rel
+
 @router.post("/{rel_id}/toggle")
 async def toggle_relationship(
     rel_id: int,

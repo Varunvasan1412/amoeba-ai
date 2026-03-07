@@ -39,6 +39,12 @@ async def create_client(
     """
     Step 1: Create a new Client and return their API Key.
     """
+    # Check for existing name
+    existing_stmt = select(ClientConfig).where(ClientConfig.client_name == payload.client_name)
+    existing = (await session.execute(existing_stmt)).scalars().first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"A company named '{payload.client_name}' is already registered.")
+
     # Generate Key
     new_api_key = generate_api_key()
     
@@ -73,7 +79,7 @@ async def connect_database(
     """
     # 1. Get Client
     client = await session.get(ClientConfig, client_id)
-    if not client:
+    if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
         
     # 2. Build URL
@@ -107,7 +113,7 @@ async def get_client_tables(
     Step 3: Discover Tables and Columns from ERP.
     """
     client = await session.get(ClientConfig, client_id)
-    if not client or not client.db_connection_url:
+    if client is None or not client.db_connection_url:
         raise HTTPException(status_code=404, detail="Client or Database connection not found")
         
     try:
@@ -152,7 +158,7 @@ async def update_governance_mode(
         raise HTTPException(status_code=400, detail=f"Invalid mode. Must be one of {valid_modes}")
 
     client = await session.get(ClientConfig, client_id)
-    if not client:
+    if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
         
     old_mode = client.governance_mode

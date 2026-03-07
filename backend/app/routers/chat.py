@@ -105,6 +105,7 @@ async def websocket_endpoint(
                 # 2. Receive User Message
                 user_text = await websocket.receive_text()
                 print(f"📨 WEBSOCKET RECEIVED: {user_text}", flush=True)
+                print("DEBUG: STEP 1 - Starting Message Processing")
                 
                 # Save User Message
                 user_msg = ChatMessage(sender="user", content=user_text)
@@ -117,30 +118,22 @@ async def websocket_endpoint(
                 from app.services.fastpath_service import execute_fastpath
                 
                 # Check for Fast-Path FIRST (with Context)
-                # 'fastpath_context' should be initialized before the while loop
-                # 'fastpath_context' should be initialized before the while loop
                 if 'fastpath_context' not in locals():
                     fastpath_context = {"client_id": client_context_id}
                 else:
-                    # Enforce sticky client_id just in case
                     fastpath_context["client_id"] = client_context_id
                 
                 fast_text, fast_actions = await execute_fastpath(user_text, fastpath_context, db_session=session)
                 
                 if fast_text:
-                     print(f"⚡ FAST-PATH TRIGGERED. Bypassing LLM.")
-                     
                      # Check for State Updates in Actions
                      new_actions_for_client = []
                      for action in fast_actions:
                          if action["type"] == "SET_AMBIGUITY":
-                             print(f"🤔 Setting Ambiguity Context with {len(action['payload'])} candidates.")
                              fastpath_context["ambiguity_candidates"] = action["payload"]
                          elif action["type"] == "CLEAR_AMBIGUITY":
-                             print("🧹 Clearing Ambiguity Context.")
                              fastpath_context = {}
                          elif action["type"] == "SET_PENDING_REPORT":
-                             print(f"📄 Setting Pending Report Context: report_id={action['payload']['report_id']}")
                              fastpath_context["pending_report"] = action["payload"]
                          else:
                              new_actions_for_client.append(action)
@@ -150,7 +143,7 @@ async def websocket_endpoint(
                                  fastpath_context = {}
 
                      # Save AI Message
-                     ai_msg = ChatMessage(sender="ai", content=fast_text)
+                     ai_msg = ChatMessage(sender="ai", content=fast_text, actions=fast_actions)
                      session.add(ai_msg)
                      await session.commit()
                      
@@ -161,11 +154,45 @@ async def websocket_endpoint(
                      }
                      await websocket.send_json(response_payload)
                      continue # 🛑 TERMINAL: Skip get_response()
+
+                # -----------------------------------------------------------------
+                # 🆕 CRUD ASSISTANT (v3 - NO LLM)
+                # -----------------------------------------------------------------
+                from app.services.intent_service import resolve_crud_intent
+                from app.services.conversation_service import process_conversation, get_active_conversation
+                
+                session_id = f"sess_{client_context_id}" 
+                
+                # A. Resolve Intent (Keywords + Entity)
+                crud_intent = await resolve_crud_intent(user_text, int(client_context_id), session)
+                
+                # B. Check for existing active CRUD session
+                active_crud_state = await get_active_conversation(session, int(client_context_id), session_id)
+                
+                # C. CRUD HARD GUARD: If keyword found OR active session exists -> BLOCK LLM
+                if crud_intent or active_crud_state:
+                    crud_text, crud_actions = await process_conversation(user_text, crud_intent, int(client_context_id), session_id, session)
+                    
+                    if crud_text:
+                        ai_msg = ChatMessage(sender="ai", content=crud_text, actions=crud_actions)
+                        session.add(ai_msg)
+                        await session.commit()
+                        
+                        await websocket.send_json({
+                            "text": crud_text,
+                            "actions": crud_actions
+                        })
+                        continue # 🛑 TERMINAL: Request handled by CRUD engine
+                    else:
+                        # Safety fallback
+                        await websocket.send_json({
+                            "text": "I understood your CRUD request but encountered a logic error. Please try a different phrasing.",
+                            "actions": []
+                        })
+                        continue
                 # -----------------------------------------------------------------
 
-                # 3. Generate AI Response (SLOW PATH)
-                # FETCH HISTORY (Last 10 messages for context)
-                print("🔍 Debug: Executing generic history select...", flush=True)
+                # 3. Generate AI Response (SLOW PATH - General Chat Only)
                 history_result = await session.execute(
                     select(ChatMessage)
                     .order_by(ChatMessage.timestamp.desc())
@@ -206,7 +233,7 @@ async def websocket_endpoint(
                                  ai_text += f"\n\n[System Output]: {tool_output}"
 
                 # Save AI Message
-                ai_msg = ChatMessage(sender="ai", content=ai_text)
+                ai_msg = ChatMessage(sender="ai", content=ai_text, actions=actions)
                 session.add(ai_msg)
                 await session.commit()
 

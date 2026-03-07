@@ -6,7 +6,7 @@ import SemanticMapper from "./pages/SemanticMapper";
 import ReportBuilder from "./pages/ReportBuilder";
 import SavedReports from "./pages/SavedReports";
 import RelationshipGovernance from "./pages/RelationshipGovernance";
-import ClientSetup from "./pages/ClientSetup";
+import OnboardingWizard from "./pages/admin/OnboardingWizard";
 import LegacyOnboarding from "./pages/LegacyOnboarding";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -30,7 +30,7 @@ export default function App() {
                         </ProtectedRoute>
                     }>
                         <Route index element={<AdminDashboard />} />
-                        <Route path="setup" element={<ClientSetup />} />
+                        <Route path="wizard" element={<OnboardingWizard />} />
                         <Route path="legacy" element={<LegacyOnboarding />} />
                         <Route path="semantic" element={<SemanticMapper />} />
                         <Route path="builder" element={<ReportBuilder />} />

@@ -13,6 +13,7 @@ import os
 from app.tools.reporting import calculate_sales, generate_pdf_report, generate_excel_report, display_data_table, export_sql_to_excel
 from app.tools.files import read_file_content
 from app.tools.database import get_database_schema, execute_sql_query, execute_sql_write, execute_ddl
+from app.tools.crud import tool_create_erp_record, tool_read_erp_records, tool_update_erp_records, tool_delete_erp_records
 from app.tools.management import create_blog_post, update_user_bio
 from app.tools.content import search_unsplash_image
 from app.tools.ui import add_navigation_item_db, delete_navigation_item_db
@@ -269,6 +270,7 @@ def tool_learn_route(label: str, path: str, keywords: str = ""):
 MY_TOOLS = [
     tool_calculate_sales, tool_generate_pdf, tool_generate_excel, tool_display_table,
     tool_execute_sql, tool_execute_sql_write, tool_inspect_database,
+    tool_create_erp_record, tool_read_erp_records, tool_update_erp_records, tool_delete_erp_records,
     tool_create_blog, tool_update_bio,
     tool_search_unsplash,
     tool_navigate_frontend,
@@ -288,7 +290,7 @@ def get_brain():
         if provider == "GEMINI":
             if settings.GOOGLE_API_KEY:
                 llm = ChatGoogleGenerativeAI(
-                    model="gemini-2.0-flash-lite-preview-02-05", 
+                    model="gemini-2.0-flash-lite", 
                     google_api_key=settings.GOOGLE_API_KEY,
                     temperature=0,
                     max_retries=5
@@ -447,11 +449,17 @@ EOE
    - The Backend will handle the data transfer and file generation. You just define the 'WHAT' (the SQL).
 
 8. DYNAMIC DATABASE ACTIONS:
-   - If the user asks to "Add/Update" data and you don't know the table structure:
-     - Step 1: Call `tool_inspect_database()` to see tables/columns.
-     - Step 2: Call `tool_execute_sql_write(query="INSERT INTO ...")` using the correct table name.
-   - ALWAYS inspect before guessing table names.
-8. NO NESTED TOOL CALLS: You cannot put a function call inside a parameter.
+   - If the user asks to "Add/Update/Delete/Read" ERP records (data in tables):
+     - Step 1: Call `tool_inspect_database()` to see tables/columns if you don't know them.
+     - Step 2: Use the specialized CRUD tools:
+       - `tool_create_erp_record` (Create)
+       - `tool_read_erp_records` (Read)
+       - `tool_update_erp_records` (Update)
+       - `tool_delete_erp_records` (Delete)
+     - 🛑 CRITICAL: For standard record management, YOU MUST NOT use raw SQL tools (`tool_execute_sql_write`). Use the dedicated CRUD tools instead. 
+     - 🛑 CRITICAL: ONLY use raw SQL tools for complex JOINs or structural changes (DDL).
+
+9. NO NESTED TOOL CALLS: You cannot put a function call inside a parameter.
    - INCORRECT: tool_create_blog(..., image_url=tool_search_unsplash(...))
    - CORRECT LOOP:
      Step 1: Call tool_search_unsplash(query="...")
@@ -515,7 +523,7 @@ AI: [Calls tool_generate_excel(sql_query="SELECT * FROM sales_data", report_name
             # 🛑 MANDATORY LOGGER
             logger = logging.getLogger("uvicorn")
             logger.critical("LLM CALLED — THIS SHOULD NOT HAPPEN")
-            raise RuntimeError("LLM CALLED — FAST-PATH VIOLATION")
+            # raise RuntimeError("LLM CALLED — FAST-PATH VIOLATION")
             
             print("⏳ Calling LLM ainvoke...", flush=True)
             ai_msg = await llm_with_tools.ainvoke(messages)

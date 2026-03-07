@@ -139,124 +139,98 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
                                     }
                             break 
 
-    # 4. Sync with Governance Layer (AllowedRelationship) of the Database
-    # We will iterate through the raw graph and check/update the DB.
-    # Only ENABLED relationships will be added to the final builder_graph.
+    # 4. Sync with Governance Layer & Include Manual Joins
+    # We will build the builder_graph directly from the ENABLED records in the database.
+    # This ensures that both Discovered and Manual joins work.
 
     from sqlmodel import select
-    # AllowedRelationship imported at top level now
-
-    # Fetch existing rules
+    
+    # Fetch all relationships from DB for this client
     stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)
-    existing_rels = (await session.execute(stmt)).scalars().all()
-    # Map (parent, child) -> rel object
-    rel_map = {(r.parent_table, r.child_table): r for r in existing_rels}
+    all_db_rels = (await session.execute(stmt)).scalars().all()
+    
+    # Track existing pairs to avoid duplicates during discovery sync
+    db_rel_map = {(r.parent_table.lower(), r.child_table.lower()): r for r in all_db_rels}
     
     # ---------------------------------------------------------
-    # GOVERNANCE MODE LOGIC (Phase 2.18)
+    # A. Sync New Discoveries to DB first
     # ---------------------------------------------------------
+    new_rels_to_add = []
     mode = client_config.governance_mode or "guided"
-    print(f"DEBUG: Applying Governance Mode: {mode.upper()}")
     
     def determine_default_status(parent: str, child: str, method: str) -> bool:
-        """
-        Returns True if relationship should be ENABLED by default.
-        """
-        # Global Rule: Never auto-enable system tables or PII (simplified check)
         if "password" in child or "secret" in child: return False
-        
-        if mode == "strict":
-            return False # Default Deny
-            
-        if mode == "simple":
-            return True # Auto-enable everything (except global blocks)
-            
-        if mode == "guided":
-            # Enable "safe" links (explicit FKs are usually safe)
-            # Heuristics are safer if they match exact patterns
-            if method == "explicit": return True
-            if method == "heuristic": return True # For now, allow heuristic too in guided
-            return False
-            
-        return False # Fallback
-
-    builder_graph = {}
-    new_rels_to_add = []
-    
-    # Helper to init builder graph nodes
-    for t in graph.keys():
-        builder_graph[t] = {}
-
-    # Iterate raw graph
-    processed_pairs = set()
+        if mode == "strict": return False
+        if mode == "simple": return True
+        if mode == "guided": return True
+        return False
 
     for table_a, relations in graph.items():
         for table_b, meta in relations.items():
             if meta["direction"] == "forward":
-                child = table_a
-                parent = table_b
-                local_col_name = meta["local_column"] # FK on child
-                remote_col_name = meta["remote_column"] # PK on parent
+                child, parent = table_a, table_b
+                local_col, remote_col = meta["local_column"], meta["remote_column"]
             else:
-                parent = table_a
-                child = table_b
-                local_col_name = meta["remote_column"] # FK on child
-                remote_col_name = meta["local_column"] # PK on parent
+                parent, child = table_a, table_b
+                remote_col, local_col = meta["local_column"], meta["remote_column"]
             
-            method = meta.get("method", "heuristic")
-
-            pair_key = (parent, child)
-            if pair_key in processed_pairs:
-                continue
-            processed_pairs.add(pair_key)
-
-            # Check DB
-            allowed_rel = rel_map.get(pair_key)
-            
-            if not allowed_rel:
-                # New Discovery! Apply Mode Logic.
-                is_auto_enabled = determine_default_status(parent, child, method)
-                risk_level, confidence = _calculate_risk(method, parent, child)
-
-                print(f"DEBUG: New Relationship: {parent}->{child} ({method}). Mode={mode}, Enabled={is_auto_enabled}, Risk={risk_level}")
+            pair_key = (parent.lower(), child.lower())
+            if pair_key not in db_rel_map:
+                risk_level, confidence = _calculate_risk(meta.get("method", "heuristic"), parent, child)
+                is_auto_enabled = determine_default_status(parent, child, meta.get("method", "heuristic"))
                 
                 new_rel = AllowedRelationship(
                     client_id=client_id,
                     parent_table=parent,
-                    parent_column=remote_col_name,
+                    parent_column=remote_col,
                     child_table=child,
-                    child_column=local_col_name,
-                    is_enabled=is_auto_enabled, 
-                    is_restricted=False,
+                    child_column=local_col,
+                    is_enabled=is_auto_enabled,
                     risk_level=risk_level,
                     confidence_score=confidence
                 )
                 new_rels_to_add.append(new_rel)
-                # Cache it locally so we don't re-add
-                rel_map[pair_key] = new_rel 
-                is_enabled = is_auto_enabled
-            else:
-                # Existing rule: Respect DB unless forced override (not implementing force override yet)
-                # In Strict/Guided, user manual toggle prevails.
-                is_enabled = allowed_rel.is_enabled and not allowed_rel.is_restricted
+                db_rel_map[pair_key] = new_rel
 
-            # Add to Builder Graph if Enabled
-            if is_enabled:
-                # Add Forward Link (table_a -> table_b)
-                if table_b in graph.get(table_a, {}):
-                    builder_graph[table_a][table_b] = graph[table_a][table_b]
-                
-                # Check B -> A in raw graph
-                if table_a in graph.get(table_b, {}):
-                    builder_graph[table_b][table_a] = graph[table_b][table_a]
-    
-    # Bulk Insert New Rels
     if new_rels_to_add:
         session.add_all(new_rels_to_add)
         await session.commit()
-        print(f"DEBUG: Persisted {len(new_rels_to_add)} new relationships.")
+        # Refresh to get IDs
+        stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)
+        all_db_rels = (await session.execute(stmt)).scalars().all()
 
-    print(f"DEBUG: Discovery Complete. Raw Joins: {sum(len(v) for v in graph.values())}. Licensed Joins: {sum(len(v) for v in builder_graph.values())}")
+    # ---------------------------------------------------------
+    # B. Build FINAL Bidirectional Graph from ALL Enabled DB Records
+    # ---------------------------------------------------------
+    builder_graph = {}
+    
+    # Initialize all possible tables as nodes
+    all_tables = set()
+    for r in all_db_rels:
+        all_tables.add(r.parent_table)
+        all_tables.add(r.child_table)
+    
+    for t in all_tables:
+        builder_graph[t] = {}
+
+    for rel in all_db_rels:
+        if rel.is_enabled and not rel.is_restricted:
+            # Add Forward: Child -> Parent (Natural Join Path)
+            builder_graph[rel.child_table][rel.parent_table] = {
+                "local_column": rel.child_column,
+                "remote_column": rel.parent_column,
+                "direction": "forward",
+                "method": rel.risk_level
+            }
+            # Add Reverse: Parent -> Child (Discovery Path)
+            builder_graph[rel.parent_table][rel.child_table] = {
+                "local_column": rel.parent_column,
+                "remote_column": rel.child_column,
+                "direction": "reverse",
+                "method": rel.risk_level
+            }
+
+    print(f"DEBUG: Discovery & DB Sync Complete. Enabled Bidirectional Joins: {sum(len(v) for v in builder_graph.values())}")
     
     _RELATIONSHIP_CACHE[client_id] = builder_graph
     return builder_graph
@@ -264,7 +238,6 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
 async def bulk_update_relationships(session: AsyncSession, client_id: int, action: str) -> dict:
     """
     Bulk update relationship statuses based on action.
-    actions: 'enable_safe', 'disable_heuristic', 'reset_defaults'
     """
     from sqlmodel import select
     stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)
@@ -272,15 +245,24 @@ async def bulk_update_relationships(session: AsyncSession, client_id: int, actio
     
     count = 0
     for rel in rels:
-        if action == "enable_safe":
+        if action == "auto_unlock_safe":
+            # Enable all standard Foreign Keys (risk_level: safe)
             if rel.risk_level == "safe":
                 rel.is_enabled = True
                 count += 1
-        elif action == "disable_heuristic":
-            if rel.risk_level == "heuristic":
-                rel.is_enabled = False
+        elif action == "auto_unlock_heuristics":
+            # Enable naming-based matches (risk_level: heuristic)
+            if rel.risk_level == "heuristic" and rel.confidence_score >= 0.5:
+                rel.is_enabled = True
                 count += 1
-        # Add more actions as needed
+        elif action == "enable_all":
+            # Maximum freedom mode
+            rel.is_enabled = True
+            count += 1
+        elif action == "disable_all":
+            # Reset to zero
+            rel.is_enabled = False
+            count += 1
         
         session.add(rel)
     
@@ -332,102 +314,80 @@ def clear_relationship_cache(client_id: Optional[int] = None):
     else:
         _RELATIONSHIP_CACHE = {}
 
-async def validate_join_path(session: AsyncSession, client_id: int, graph: Dict[str, Any], base_table: str, joins: List[str]) -> List[Dict[str, Any]]:
+async def validate_join_path(session: AsyncSession, client_id: int, graph: Dict[str, Any], base_table: str, joins: List[Any]) -> List[Dict[str, Any]]:
     """
-    Validates a linear join path: Base -> Join1 -> Join2 ...
+    Validates a join path. Now supports both linear (List[str]) and branched (List[Dict]) joins.
+    Branched format: [ {"table": "customers", "parent": "sales"}, {"table": "products", "parent": "sales"} ]
     Returns a list of join details [ {from_table, to_table, local_column, remote_column} ]
-    Ensures path is either fully enabled OR explicitly approved.
     """
     if not joins:
         return []
 
-    # 1. Path Signature construction
-    path_tables = [base_table] + joins
-    path_signature = "->".join(path_tables)
-
-    # 2. Check for Path Approval Override
-    from sqlmodel import select
-    stmt = select(ApprovedJoinPath).where(
-        ApprovedJoinPath.client_id == client_id,
-        ApprovedJoinPath.path_signature == path_signature,
-        ApprovedJoinPath.is_enabled == True
-    )
-    approved_path = (await session.execute(stmt)).scalars().first()
-    is_path_approved = approved_path is not None
-
     validated_steps = []
-    current_table = base_table
-    visited = {base_table}
+    visited = {base_table.lower()}
+    
+    # Normalize joins to branched format if they are linear strings
+    normalized_joins = []
+    current_linear_parent = base_table
+    for j in joins:
+        if isinstance(j, str):
+            normalized_joins.append({"table": j, "parent": current_linear_parent})
+            current_linear_parent = j
+        else:
+            normalized_joins.append(j)
 
-    if len(joins) > 10: # Safety Cap
-         raise HTTPException(status_code=400, detail=f"Join path too long (Max 10). Simplify your report.")
+    if len(normalized_joins) > 15: # Increased cap for branched joins
+         raise HTTPException(status_code=400, detail=f"Too many joins (Max 15).")
 
-    for target_table in joins:
-        if target_table in visited:
-            raise HTTPException(status_code=400, detail=f"Circular or redundant join detected: {target_table}")
+    for join_def in normalized_joins:
+        target_table = join_def["table"]
+        parent_table = join_def.get("parent", base_table)
         
-        # Determine Relationship (Enabled or definitions from DB if path approved)
+        if target_table.lower() in visited:
+            # We allow multiple paths to the same table if needed? 
+            # Standard SQL might need aliases. For simplicity, we block for now unless parent is different.
+            continue
+            
+        if parent_table.lower() not in visited:
+             raise HTTPException(status_code=400, detail=f"Invalid join: parent table '{parent_table}' must be connected before '{target_table}'.")
+
+        # Determine Relationship
         rel_meta = None
         
-        # A. Check Enabled Graph
-        if current_table in graph and target_table in graph[current_table]:
-            rel_meta = graph[current_table][target_table]
-        
-        # B. If not in graph, but path approved, fetch definition from DB
-        elif is_path_approved:
-            # We need to find the definition. 
-            # We assume it exists in AllowedRelationship but is disabled.
-            # We need to query AllowedRelationship for (current, target)
+        # Check Graph (Case Insensitive)
+        # The graph keys are actual table names from DB. 
+        # We need to find the correct casing.
+        actual_parent = next((t for t in graph.keys() if t.lower() == parent_table.lower()), None)
+        actual_target = next((t for t in graph.keys() if t.lower() == target_table.lower()), None)
+
+        if actual_parent and actual_target and actual_target in graph[actual_parent]:
+            rel_meta = graph[actual_parent][actual_target]
+        else:
+            # Check DB for disabled but existing relationship (for path approval logic)
             stmt = select(AllowedRelationship).where(
                 AllowedRelationship.client_id == client_id,
-                AllowedRelationship.parent_table == target_table, # Parent is target in standard FK view? 
-                AllowedRelationship.child_table == current_table 
-                # Note: AllowedRelationship stores Parent->Child.
-                # In graph, we normalize forward/reverse.
-                # Here we need to find *data* to join.
-                # Use helper or extensive search? 
-                # Simplest: Fetch any relationship between these two.
-            )
-            # Actually, let's try both directions
-            stmt = select(AllowedRelationship).where(
-                AllowedRelationship.client_id == client_id,
-                ((AllowedRelationship.parent_table == current_table) & (AllowedRelationship.child_table == target_table)) |
-                ((AllowedRelationship.parent_table == target_table) & (AllowedRelationship.child_table == current_table))
+                ((AllowedRelationship.parent_table.ilike(parent_table)) & (AllowedRelationship.child_table.ilike(target_table))) |
+                ((AllowedRelationship.parent_table.ilike(target_table)) & (AllowedRelationship.child_table.ilike(parent_table)))
             )
             db_rel = (await session.execute(stmt)).scalars().first()
             
-            if db_rel:
-                # Construct meta on fly
-                if db_rel.parent_table == target_table:
-                     # Join Current(Child) -> Target(Parent)
-                     rel_meta = {
-                         "local_column": db_rel.child_column,
-                         "remote_column": db_rel.parent_column,
-                         "direction": "forward" # Arbitrary, effectively we enable it
-                     }
+            if db_rel is not None:
+                if db_rel.parent_table.lower() == actual_target.lower():
+                     rel_meta = {"local_column": db_rel.child_column, "remote_column": db_rel.parent_column}
                 else:
-                     # Join Current(Parent) -> Target(Child)
-                     rel_meta = {
-                         "local_column": db_rel.parent_column,
-                         "remote_column": db_rel.child_column,
-                         "direction": "reverse"
-                     }
+                     rel_meta = {"local_column": db_rel.parent_column, "remote_column": db_rel.child_column}
 
         if not rel_meta:
-             if is_path_approved:
-                  raise HTTPException(status_code=500, detail=f"Approved path contains missing relationship definition: {current_table}->{target_table}")
-             else:
-                  raise HTTPException(status_code=400, detail=f"No enabled foreign key found between '{current_table}' and '{target_table}'. Path not approved.")
+             raise HTTPException(status_code=400, detail=f"No relationship found between '{parent_table}' and '{target_table}'.")
         
         validated_steps.append({
-            "from_table": current_table,
+            "from_table": parent_table,
             "to_table": target_table,
             "local_column": rel_meta["local_column"],
             "remote_column": rel_meta["remote_column"]
         })
         
-        visited.add(target_table)
-        current_table = target_table 
+        visited.add(target_table.lower())
 
     return validated_steps
 

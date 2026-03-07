@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from app.routers import chat, upload, navigation, reports, clients, auth
+from app.routers import chat, upload, navigation, reports, clients, auth, onboarding
 from app.core.database import init_db
 from app.tools.navigation import load_sitemap
 
@@ -44,6 +44,7 @@ app.include_router(upload.router, prefix="/api")
 app.include_router(navigation.router, prefix="/api/navigation")
 app.include_router(reports.router, prefix="/api")
 app.include_router(clients.router, prefix="/api")
+app.include_router(onboarding.router)
 
 # v2 Semantic Layer (Feature Flagged)
 ENABLE_SEMANTIC_LAYER = True # In production, use env var

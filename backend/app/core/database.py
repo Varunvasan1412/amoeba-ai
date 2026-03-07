@@ -12,6 +12,7 @@ from app.models.report_registry import ReportRegistry
 from app.models.audit_log import AuditLog # Ensure registration
 from app.models.semantic_metadata import SemanticMetadata # [NEW] v2 Semantic Layer
 from app.models.allowed_relationship import AllowedRelationship # [NEW] v2 Governance Layer
+from app.models.conversation_state import ConversationState # [NEW] v3 CRUD Layer
 import asyncio
 
 # 1. Create the Link
