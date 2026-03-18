@@ -203,14 +203,14 @@
     },
     {
         "label": "Product Category",
-        "path": "http://localhost:8080/master/productcategorylist",
+        "path": "http://localhost/demopower04/master/productCategory",
         "keywords": [
             "product category"
         ]
     },
     {
         "label": "Product",
-        "path": "http://localhost:8080/master/productlist",
+        "path": "http://localhost/demopower04/master/product",
         "keywords": [
             "product"
         ]
@@ -252,7 +252,7 @@
     },
     {
         "label": "Tax Master",
-        "path": "http://localhost:8080/master/tax_master",
+        "path": "http://localhost/demopower04/master/taxMaster",
         "keywords": [
             "tax master"
         ]
@@ -266,7 +266,7 @@
     },
     {
         "label": "Payment Mode",
-        "path": "http://localhost:8080/master/paymentmode",
+        "path": "http://localhost/demopower04/master/paymentMode",
         "keywords": [
             "payment mode"
         ]
@@ -308,7 +308,7 @@
     },
     {
         "label": "Company",
-        "path": "http://localhost/varun_sterling/Master/company",
+        "path": "http://localhost/demopower04/master",
         "keywords": [
             "company"
         ]
@@ -329,42 +329,42 @@
     },
     {
         "label": "Employee",
-        "path": "http://localhost:8080/master/employee",
+        "path": "http://localhost/demopower04/master/employee",
         "keywords": [
             "employee"
         ]
     },
     {
         "label": "Customer Category",
-        "path": "http://localhost:8080/master/customercategorylist",
+        "path": "http://localhost/demopower04/master/customerCategory",
         "keywords": [
             "customer category"
         ]
     },
     {
         "label": "Customer",
-        "path": "http://localhost:8080/master/customerlist",
+        "path": "http://localhost/demopower04/master/customer",
         "keywords": [
             "customer"
         ]
     },
     {
         "label": "Vendor",
-        "path": "http://localhost:8080/master/vendorlist",
+        "path": "http://localhost/demopower04/master/vendor",
         "keywords": [
             "vendor"
         ]
     },
     {
         "label": "User Group",
-        "path": "http://localhost/varun_sterling/master/usergroup",
+        "path": "http://localhost/demopower04/master/userGroup",
         "keywords": [
             "user group"
         ]
     },
     {
         "label": "User Rights",
-        "path": "http://localhost:8080/master/userrightlist",
+        "path": "http://localhost/demopower04/master/userRights",
         "keywords": [
             "user rights"
         ]
@@ -9611,7 +9611,7 @@
     },
     {
         "label": "Branch",
-        "path": "http://localhost/varun_sterling/application/views/master/branch.php",
+        "path": "http://localhost/demopower04/master/branch",
         "keywords": [
             "branch"
         ]
@@ -9842,7 +9842,7 @@
     },
     {
         "label": "Designation",
-        "path": "http://localhost:8080/master/designationlist",
+        "path": "http://localhost/demopower04/master/designation",
         "keywords": [
             "designation"
         ]
@@ -10878,7 +10878,7 @@
     },
     {
         "label": "Sms",
-        "path": "http://localhost/varun_sterling/application/views/master/sms.php",
+        "path": "http://localhost/demopower04/master/sms",
         "keywords": [
             "sms"
         ]
@@ -10941,7 +10941,7 @@
     },
     {
         "label": "Unit",
-        "path": "http://localhost:8080/master/unitlist",
+        "path": "http://localhost/demopower04/master/unit",
         "keywords": [
             "unit"
         ]
@@ -11844,7 +11844,7 @@
     },
     {
         "label": "Test",
-        "path": "http://localhost/varun_sterling/barcode/New folder/test.php",
+        "path": "http://localhost/amoeba-ai/frontend/public/test.html",
         "keywords": [
             "test"
         ]
@@ -13643,7 +13643,7 @@
     },
     {
         "label": "Email",
-        "path": "http://localhost/varun_sterling/system/libraries/Email.php",
+        "path": "http://localhost/demopower04/master/email",
         "keywords": [
             "email"
         ]
@@ -13895,7 +13895,7 @@
     },
     {
         "label": "Index",
-        "path": "http://localhost/varun_sterling/system/libraries/Session/drivers/index.html",
+        "path": "http://localhost/amoeba-ai/frontend/index.html",
         "keywords": [
             "index"
         ]
@@ -14098,7 +14098,7 @@
     },
     {
         "label": "Bank",
-        "path": "http://localhost:8080/master/bankview",
+        "path": "http://localhost/demopower04/master/bank",
         "keywords": [
             "bank"
         ]
@@ -14119,7 +14119,7 @@
     },
     {
         "label": "Vendor category",
-        "path": "http://localhost:8080/master/vendorcategorylist",
+        "path": "http://localhost/demopower04/master/vendorCategory",
         "keywords": [
             "vendor category"
         ]
@@ -14735,35 +14735,35 @@
     },
     {
         "label": "Department",
-        "path": "http://localhost:8080/master/departmentlist",
+        "path": "http://localhost/demopower04/master/department",
         "keywords": [
             "department"
         ]
     },
     {
         "label": "Country",
-        "path": "http://localhost:8080/master/country",
+        "path": "http://localhost/demopower04/master/country",
         "keywords": [
             "country"
         ]
     },
     {
         "label": "State",
-        "path": "http://localhost:8080/master/state",
+        "path": "http://localhost/demopower04/master/state",
         "keywords": [
             "state"
         ]
     },
     {
         "label": "District",
-        "path": "http://localhost:8080/master/district",
+        "path": "http://localhost/demopower04/master/district",
         "keywords": [
             "district"
         ]
     },
     {
         "label": "City",
-        "path": "http://localhost:8080/master/city",
+        "path": "http://localhost/demopower04/master/city",
         "keywords": [
             "city"
         ]
@@ -14784,7 +14784,7 @@
     },
     {
         "label": "User Master",
-        "path": "http://localhost:8080/master/usermasterlist",
+        "path": "http://localhost/demopower04/master/userMaster",
         "keywords": [
             "user master"
         ]
@@ -14875,14 +14875,14 @@
     },
     {
         "label": "Employee Type",
-        "path": "http://localhost:8080/master/employeetypelist",
+        "path": "http://localhost/demopower04/master/employeeType",
         "keywords": [
             "employee type"
         ]
     },
     {
         "label": "Account Details",
-        "path": "http://localhost:8080/master/account_details",
+        "path": "http://localhost/demopower04/master/accountDetails",
         "keywords": [
             "account details"
         ]
@@ -14903,7 +14903,7 @@
     },
     {
         "label": "Create New",
-        "path": "http://localhost/demopower04/enquiry/createEnquiry",
+        "path": "http://localhost/demopower04/enquiry/contactReporting",
         "keywords": [
             "create new"
         ]
@@ -15001,7 +15001,7 @@
     },
     {
         "label": "Product Sub Category",
-        "path": "http://localhost:8080/master/productsubcategorylist",
+        "path": "http://localhost/demopower04/master/productSubCategory",
         "keywords": [
             "product sub category"
         ]
@@ -15417,6 +15417,328 @@
         "path": "tel:9876542345",
         "keywords": [
             "9876542345"
+        ]
+    },
+    {
+        "label": "Cheque Transaction",
+        "path": "http://localhost/demopower04/bank",
+        "keywords": [
+            "cheque transaction"
+        ]
+    },
+    {
+        "label": "Payment Voucher",
+        "path": "http://localhost/demopower04/bank/paymentVoucher",
+        "keywords": [
+            "payment voucher"
+        ]
+    },
+    {
+        "label": "Reconciliation",
+        "path": "http://localhost/demopower04/bank/recancellation",
+        "keywords": [
+            "reconciliation"
+        ]
+    },
+    {
+        "label": "Customer Opening Receipt",
+        "path": "http://localhost/demopower04/bank/OpeningReceiptList",
+        "keywords": [
+            "customer opening receipt"
+        ]
+    },
+    {
+        "label": "Debit Note",
+        "path": "http://localhost/demopower04/bank/debitView",
+        "keywords": [
+            "debit note"
+        ]
+    },
+    {
+        "label": "Daywise Report",
+        "path": "http://localhost/demopower04/bank/daywiseReport",
+        "keywords": [
+            "daywise report"
+        ]
+    },
+    {
+        "label": "Receipt",
+        "path": "http://localhost/demopower04/bank/receipt",
+        "keywords": [
+            "receipt"
+        ]
+    },
+    {
+        "label": "Project",
+        "path": "http://localhost/demopower04/master/projectlist",
+        "keywords": [
+            "project"
+        ]
+    },
+    {
+        "label": "Enquiry Source",
+        "path": "http://localhost/demopower04/master/enquirySource",
+        "keywords": [
+            "enquiry source"
+        ]
+    },
+    {
+        "label": "P&F Notes",
+        "path": "http://localhost/demopower04/master/p_and_f",
+        "keywords": [
+            "p&f notes"
+        ]
+    },
+    {
+        "label": "Tax Notes",
+        "path": "http://localhost/demopower04/master/taxnotes",
+        "keywords": [
+            "tax notes"
+        ]
+    },
+    {
+        "label": "Payment Notes",
+        "path": "http://localhost/demopower04/master/paymentnotes",
+        "keywords": [
+            "payment notes"
+        ]
+    },
+    {
+        "label": "Delivery Notes",
+        "path": "http://localhost/demopower04/master/deliverynotes",
+        "keywords": [
+            "delivery notes"
+        ]
+    },
+    {
+        "label": "Warranty Notes",
+        "path": "http://localhost/demopower04/master/warrantynotes",
+        "keywords": [
+            "warranty notes"
+        ]
+    },
+    {
+        "label": "Fright Notes",
+        "path": "http://localhost/demopower04/master/frightnotes",
+        "keywords": [
+            "fright notes"
+        ]
+    },
+    {
+        "label": "HR Category",
+        "path": "http://localhost/demopower04/master/hrCategory",
+        "keywords": [
+            "hr category"
+        ]
+    },
+    {
+        "label": "Marketing Person",
+        "path": "http://localhost/demopower04/master/marketingPerson",
+        "keywords": [
+            "marketing person"
+        ]
+    },
+    {
+        "label": "Area Marketing Person",
+        "path": "http://localhost/demopower04/master/areaMarketingPerson",
+        "keywords": [
+            "area marketing person"
+        ]
+    },
+    {
+        "label": "Labour Charges",
+        "path": "http://localhost/demopower04/master/labourCharges",
+        "keywords": [
+            "labour charges"
+        ]
+    },
+    {
+        "label": "Area",
+        "path": "http://localhost/demopower04/master/area",
+        "keywords": [
+            "area"
+        ]
+    },
+    {
+        "label": "Employee Brand Mapping",
+        "path": "http://localhost/demopower04/master/employeeBrandMapping",
+        "keywords": [
+            "employee brand mapping"
+        ]
+    },
+    {
+        "label": "Employee Business Vertical Mapping",
+        "path": "http://localhost/demopower04/master/employeeBusinessVerticalMapping",
+        "keywords": [
+            "employee business vertical mapping"
+        ]
+    },
+    {
+        "label": "Menu List",
+        "path": "http://localhost/demopower04/master/menuList",
+        "keywords": [
+            "menu list"
+        ]
+    },
+    {
+        "label": "Contra Person",
+        "path": "http://localhost/demopower04/master/ContraPerson",
+        "keywords": [
+            "contra person"
+        ]
+    },
+    {
+        "label": "Cheque Book Maintenance",
+        "path": "http://localhost/demopower04/master/chequeBookMaintenance",
+        "keywords": [
+            "cheque book maintenance"
+        ]
+    },
+    {
+        "label": "Accounts Category",
+        "path": "http://localhost/demopower04/master/accountsCategory",
+        "keywords": [
+            "accounts category"
+        ]
+    },
+    {
+        "label": "Accounts Head",
+        "path": "http://localhost/demopower04/master/accountsHead",
+        "keywords": [
+            "accounts head"
+        ]
+    },
+    {
+        "label": "Budget Details",
+        "path": "http://localhost/demopower04/master/budgetDetails",
+        "keywords": [
+            "budget details"
+        ]
+    },
+    {
+        "label": "Customer Sub Category",
+        "path": "http://localhost/demopower04/master/customerSubCategory",
+        "keywords": [
+            "customer sub category"
+        ]
+    },
+    {
+        "label": "Customer Group",
+        "path": "http://localhost/demopower04/master/customerGroup",
+        "keywords": [
+            "customer group"
+        ]
+    },
+    {
+        "label": "Customer Grading",
+        "path": "http://localhost/demopower04/master/customerGrading",
+        "keywords": [
+            "customer grading"
+        ]
+    },
+    {
+        "label": "Brand",
+        "path": "http://localhost/demopower04/master/brand",
+        "keywords": [
+            "brand"
+        ]
+    },
+    {
+        "label": "Product Group",
+        "path": "http://localhost/demopower04/master/productGroup",
+        "keywords": [
+            "product group"
+        ]
+    },
+    {
+        "label": "Product Model",
+        "path": "http://localhost/demopower04/master/productModel",
+        "keywords": [
+            "product model"
+        ]
+    },
+    {
+        "label": "Stock Location",
+        "path": "http://localhost/demopower04/master/stockLocation",
+        "keywords": [
+            "stock location"
+        ]
+    },
+    {
+        "label": "Inspection Questions",
+        "path": "http://localhost/demopower04/master/inspectionQuestions",
+        "keywords": [
+            "inspection questions"
+        ]
+    },
+    {
+        "label": "Product Inspection Mapping",
+        "path": "http://localhost/demopower04/master/productInspectionMapping",
+        "keywords": [
+            "product inspection mapping"
+        ]
+    },
+    {
+        "label": "Vendor Sub Category",
+        "path": "http://localhost/demopower04/master/vendorSubCategory",
+        "keywords": [
+            "vendor sub category"
+        ]
+    },
+    {
+        "label": "Vendor Group",
+        "path": "http://localhost/demopower04/master/vendorGroup",
+        "keywords": [
+            "vendor group"
+        ]
+    },
+    {
+        "label": "Vendor Product Mapping",
+        "path": "http://localhost/demopower04/master/vendorProductMapping",
+        "keywords": [
+            "vendor product mapping"
+        ]
+    },
+    {
+        "label": "Feedback Parameter",
+        "path": "http://localhost/demopower04/master/feedbackParameter",
+        "keywords": [
+            "feedback parameter"
+        ]
+    },
+    {
+        "label": "BULK SMS",
+        "path": "http://localhost/demopower04/master/bulkSms",
+        "keywords": [
+            "bulk sms"
+        ]
+    },
+    {
+        "label": "Transporter Mode",
+        "path": "http://localhost/demopower04/master/transporterMode",
+        "keywords": [
+            "transporter mode"
+        ]
+    },
+    {
+        "label": "Transporter Details",
+        "path": "http://localhost/demopower04/master/transporterDetails",
+        "keywords": [
+            "transporter details"
+        ]
+    },
+    {
+        "label": "Enquiry Edit Config",
+        "path": "http://localhost/demopower04/master/enquiryEditConfig",
+        "keywords": [
+            "enquiry edit config"
+        ]
+    },
+    {
+        "label": "Upgrade 40% OFF",
+        "path": "https://sider.ai/pricing?trigger=ext_chrome_btm_upgrd",
+        "keywords": [
+            "upgrade 40% off"
         ]
     }
 ]

@@ -1,36 +1,28 @@
-import json
-import os
-from typing import List, Optional, Dict, Tuple, Any
+from __future__ import annotations
+from typing import List, Optional, Tuple, Any
+from app.models.navigation import NavigationItem
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-SITEMAP_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "external_sitemap.json")
+# Global Cache (Optional, but let's stick to DB for strictly fresh multi-tenant data)
+# We can still keep a small cache for static system defaults if needed.
 
-# Global Cache
-_SITEMAP_CACHE = None
-
-def load_sitemap(refresh: bool = False) -> List[dict]:
+async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dict]:
     """
-    Loads the sitemap from disk or cache.
-    Args:
-        refresh (bool): If True, forces reload from disk.
+    Loads all discovered and mapped routes for a specific client from the DB.
     """
-    global _SITEMAP_CACHE
+    statement = select(NavigationItem).where(NavigationItem.client_id == client_id)
+    result = await session.execute(statement)
+    items = result.scalars().all()
     
-    if _SITEMAP_CACHE is not None and not refresh:
-        return _SITEMAP_CACHE
-        
-    try:
-        if not os.path.exists(SITEMAP_PATH):
-            _SITEMAP_CACHE = []
-            return []
-            
-        with open(SITEMAP_PATH, "r") as f:
-            _SITEMAP_CACHE = json.load(f)
-            print(f"🗺️  [Navigation] Sitemap loaded into memory ({len(_SITEMAP_CACHE)} routes).")
-            return _SITEMAP_CACHE
-            
-    except Exception as e:
-        print(f"[ERROR] Error loading sitemap: {e}")
-        return []
+    return [
+        {
+            "label": item.label,
+            "path": item.path,
+            "module": item.module,
+            "is_custom": not item.is_discovered # Manual mappings are 'custom'
+        } for item in items
+    ]
 
 def _infer_parents_from_path(path: str) -> List[str]:
     """
@@ -69,21 +61,13 @@ def _infer_parents_from_path(path: str) -> List[str]:
     
     return parents
 
-def fast_lookup_route(query: str) -> Tuple[Optional[str], Optional[List[dict]]]:
+async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -> Tuple[Optional[str], Optional[List[dict]]]:
     """
-    Deterministic In-Memory Lookup for Navigation Fast-Path.
-    
-    Returns:
-        (path, None): Single, confident match.
-        (None, candidates_list): Ambiguous matches (List of FULL route objects).
-        (None, None): No match.
+    Deterministic In-Memory Lookup for Navigation Fast-Path (Tenant-Aware).
     """
-    routes = load_sitemap()
+    routes = await load_client_sitemap(session, client_id)
     query_tokens = set(query.lower().strip().split())
     
-    # ---------------------------------------------------------
-    # 0. PRE-PROCESS: Ensure parents exist (Shim for legacy data)
-    # ---------------------------------------------------------
     processed_routes = []
     for r in routes:
         r_mod = r.copy()
@@ -99,12 +83,31 @@ def fast_lookup_route(query: str) -> Tuple[Optional[str], Optional[List[dict]]]:
         if r["label"].lower() == query.lower().strip():
             exact_matches.append(r)
     
+    # Priority A: If there is an EXACT match that is CUSTOM, return it immediately
+    custom_exact = [r for r in exact_matches if r.get("is_custom")]
+    if len(custom_exact) == 1:
+        print(f"🎯 [Navigation] Prioritizing Custom Route: {custom_exact[0]['path']}")
+        return custom_exact[0]["path"], None
+
     if len(exact_matches) == 1:
         return exact_matches[0]["path"], None # Single match
         
     if len(exact_matches) > 1:
         # Deep ambiguity (Same label, different path) -> Return FULL objects
-        return None, exact_matches
+        
+        # Deduplicate identical paths (e.g. same menu item in different nav trees)
+        unique_matches = []
+        seen_paths = set()
+        for m in sorted(exact_matches, key=lambda x: x.get("is_custom", False), reverse=True):
+            if m["path"] not in seen_paths:
+                unique_matches.append(m)
+                seen_paths.add(m["path"])
+                
+        if len(unique_matches) == 1:
+             return unique_matches[0]["path"], None
+             
+        print(f"⚖️ [Navigation] Found {len(unique_matches)} unique candidates for '{query}'")
+        return None, unique_matches
 
     # ---------------------------------------------------------
     # 2. TOKEN-BASED COMPOUND MATCH (Order-Independent)
@@ -138,7 +141,17 @@ def fast_lookup_route(query: str) -> Tuple[Optional[str], Optional[List[dict]]]:
         if len(best_matches) == 1:
             return best_matches[0]["path"], None
         else:
-            return None, best_matches
+            # Deduplicate by path
+            unique_best = []
+            seen_paths = set()
+            for m in best_matches:
+                if m["path"] not in seen_paths:
+                    unique_best.append(m)
+                    seen_paths.add(m["path"])
+            
+            if len(unique_best) == 1:
+                return unique_best[0]["path"], None
+            return None, unique_best
 
     # ---------------------------------------------------------
     # 3. SUBSTRING/FUZZY FALLBACK (Lower Priority)
@@ -151,18 +164,26 @@ def fast_lookup_route(query: str) -> Tuple[Optional[str], Optional[List[dict]]]:
     if len(substring_matches) == 1:
         return substring_matches[0]["path"], None
     if len(substring_matches) > 1:
-        return None, substring_matches # Ambiguous substring
+        # Deduplicate by path
+        unique_sub = []
+        seen_paths = set()
+        for m in substring_matches:
+            if m["path"] not in seen_paths:
+                unique_sub.append(m)
+                seen_paths.add(m["path"])
+        
+        if len(unique_sub) == 1:
+             return unique_sub[0]["path"], None
+        return None, unique_sub # Ambiguous substring
         
     return None, None
 
 
-def lookup_external_route(query: str) -> str:
+async def lookup_external_route(query: str, session: AsyncSession, client_id: int) -> str:
     """
-    Legacy/Tool Dictionary Search (Used by LLM as fallback).
-    Searches the sitemap for a route matching the query.
-    Returns a string describing the match or suggestions.
+    Tenant-Aware fallback search for a route.
     """
-    routes = load_sitemap()
+    routes = await load_client_sitemap(session, client_id)
     query = query.lower().strip()
     
     # 1. Exact Name/Label Match
@@ -221,49 +242,37 @@ def lookup_external_route(query: str) -> str:
         
     return json.dumps(final_matches)
 
-def add_external_route(label: str, path: str, keywords: List[str] = []) -> str:
-    """Adds a new route to the sitemap."""
-    routes = load_sitemap() # Gets cache
+async def add_external_route(label: str, path: str, session: AsyncSession, client_id: int, keywords: List[str] = []) -> str:
+    """Adds a new manual route to the DB for a client."""
+    # Logic: Check if exact path exists, if so update label. 
+    # But usually admin uses the RouteMap UI for this.
+    statement = select(NavigationItem).where(
+        NavigationItem.client_id == client_id,
+        NavigationItem.path == path
+    )
+    result = await session.execute(statement)
+    item = result.scalars().first()
     
-    # Check duplicate
-    updated = False
-    for r in routes:
-        if r["label"].lower() == label.lower():
-            r["path"] = path 
-            if keywords: r["keywords"] = keywords
-            updated = True
-            break
-            
-    if not updated:
-        new_route = {
-            "label": label,
-            "path": path,
-            "keywords": keywords if keywords else [label.lower()]
-        }
-        routes.append(new_route)
-    
-    # Write to Disk
-    try:
-        with open(SITEMAP_PATH, "w") as f:
-            json.dump(routes, f, indent=4)
+    if item:
+        item.label = label
+        action = "Updated"
+    else:
+        new_item = NavigationItem(
+            label=label,
+            path=path,
+            client_id=client_id,
+            is_discovered=False # Manually added
+        )
+        session.add(new_item)
+        action = "Added"
         
-        # Update Cache
-        global _SITEMAP_CACHE
-        _SITEMAP_CACHE = routes
-        
-        action = "Updated" if updated else "Added"
-        return f"{action} route '{label}' pointing to {path}"
-    except Exception as e:
-        return f"Error saving route: {e}"
+    await session.commit()
+    return f"{action} route '{label}' pointing to {path}"
 
-def batch_learn_routes(new_routes: List[dict]) -> str:
+async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, client_id: int) -> str:
     """
-    Bulk adds routes. 
-    Input: [{"label": "Home", "path": "/"}, ...]
+    Bulk adds discovered routes to the database for a specific client.
     """
-    routes = load_sitemap()
-    existing_labels = {r["label"].lower(): r for r in routes}
-    
     count = 0
     for item in new_routes:
         label = item.get("label", "").strip()
@@ -274,23 +283,31 @@ def batch_learn_routes(new_routes: List[dict]) -> str:
         if "javascript:" in path or path == "#" or "void(0)" in path:
             continue
             
-        if label.lower() in existing_labels:
-            existing_labels[label.lower()]["path"] = path
-        else:
-            routes.append({
-                "label": label,
-                "path": path,
-                "keywords": [label.lower()]
-            })
+        # Normalization: Strip host if full URL provided
+        if "://" in path:
+            try:
+                from urllib.parse import urlparse
+                path = urlparse(path).path
+            except:
+                pass
+            
+        # Check if this path already exists for this client
+        statement = select(NavigationItem).where(
+            NavigationItem.client_id == client_id,
+            NavigationItem.path == path
+        )
+        result = await session.execute(statement)
+        existing = result.scalars().first()
+        
+        if not existing:
+            new_item = NavigationItem(
+                label=label,
+                path=path,
+                client_id=client_id,
+                is_discovered=True
+            )
+            session.add(new_item)
             count += 1
             
-    try:
-        with open(SITEMAP_PATH, "w") as f:
-            json.dump(routes, f, indent=4)
-        
-        global _SITEMAP_CACHE
-        _SITEMAP_CACHE = routes
-        
-        return f"Learned {count} new routes."
-    except Exception as e:
-        return f"Error saving routes: {e}"
+    await session.commit()
+    return f"Learned {count} new routes for Client {client_id}."

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Database, FileText, LayoutTemplate, Settings, PlayCircle, Shield, Rocket } from "lucide-react";
+import { Database, FileText, LayoutTemplate, Settings, PlayCircle, Shield, Rocket, Map, Cpu } from "lucide-react";
 import { useAdmin } from "../context/AdminContext";
 import { useState, useEffect } from "react";
 
@@ -62,6 +62,20 @@ export default function AdminDashboard() {
       icon: FileText,
       to: "/admin/reports",
       color: "blue"
+    },
+    {
+      title: "Route Map",
+      description: "Map conversational intents and modules to specific ERP tables.",
+      icon: Map,
+      to: "/admin/routes",
+      color: "indigo"
+    },
+    {
+      title: "AI Infrastructure",
+      description: "Switch between LLM providers (Gemini, OpenAI, Ollama) and configure model settings.",
+      icon: Cpu,
+      to: "/admin/ai-settings",
+      color: "indigo"
     }
   ];
 

@@ -8,6 +8,7 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { apiFetch } from "../utils/api";
 import { JoinGraph } from "../components/admin/JoinGraph";
+import { SearchableDropdown } from "../components/admin/SearchableDropdown";
 
 interface SemanticColumn {
   table: string;
@@ -243,22 +244,20 @@ export default function ReportBuilder() {
                         <Database size={20} className="text-blue-500" /> 1. Select Starting Table
                     </h2>
                     <div className="max-w-md">
-                        <select 
-                            className="w-full border-2 border-gray-100 p-4 rounded-2xl bg-gray-50 focus:border-blue-500 outline-none transition text-lg font-medium"
+                        <SearchableDropdown
+                            options={tables.map(t => ({ value: t, label: t }))}
                             value={baseTable}
-                            onChange={e => {
-                                setBaseTable(e.target.value);
+                            onChange={val => {
+                                setBaseTable(val);
                                 setJoins([]);
                                 setSelectedColumns([]);
                             }}
-                        >
-                            <option value="">-- Choose Base Table (e.g. Sales) --</option>
-                            {tables.map(t => <option key={t} value={t}>{t}</option>)}
-                        </select>
+                            placeholder="-- Choose Base Table (e.g. Sales) --"
+                        />
                     </div>
                 </div>
 
-                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
+                <div className="bg-white rounded-3xl border border-gray-100 shadow-sm">
                     <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-slate-50/50">
                         <div>
                             <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
@@ -355,10 +354,15 @@ export default function ReportBuilder() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         <div>
                             <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Time-Series Field</label>
-                            <select className="w-full border-2 border-gray-100 p-3 rounded-2xl bg-gray-50 focus:border-orange-500 outline-none transition font-medium" value={dateColumn} onChange={e => setDateColumn(e.target.value)}>
-                                <option value="">-- No Date Filter --</option>
-                                {availableColumns.map(col => <option key={`${col.table}:${col.label}`} value={`${col.table}:${col.label}`}>{col.table}: {col.label}</option>)}
-                            </select>
+                            <SearchableDropdown
+                                options={availableColumns.map(col => ({
+                                    value: `${col.table}:${col.label}`,
+                                    label: `${col.table}: ${col.label}`
+                                }))}
+                                value={dateColumn}
+                                onChange={val => setDateColumn(val)}
+                                placeholder="-- No Date Filter --"
+                            />
                         </div>
                         {dateColumn && (
                             <div>

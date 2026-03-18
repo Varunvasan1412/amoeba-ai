@@ -3,10 +3,11 @@ import json
 import asyncio
 import numpy as np
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.tools.database import get_database_schema
-from app.tools.navigation import load_sitemap
+# load_sitemap removed in favor of load_client_sitemap (DB-based)
 
 # Import Embedding Providers
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -135,16 +136,9 @@ class RagEngine:
             print(f"❌ RAG: Schema ingestion failed: {e}")
 
     def _ingest_navigation(self):
-        """Ingests Sitemap."""
-        try:
-            routes = load_sitemap()
-            self.nav_docs = []
-            for r in routes:
-                content = f"Page: {r.get('label')} | Path: {r.get('path')} | Keywords: {', '.join(r.get('keywords', []))}"
-                self.nav_docs.append({"content": content, "type": "navigation", "metadata": r})
-            print(f"📦 RAG: Ingested {len(self.nav_docs)} navigation items.")
-        except Exception as e:
-            print(f"❌ RAG: Navigation ingestion failed: {e}")
+        """Sitemap ingestion is now handled per-session/tenant during retrieval."""
+        self.nav_docs = []
+        print("📦 RAG: Navigation ingestion skipped (Global sitemap deprecated).")
 
     def _ingest_business_rules(self):
         """Ingests Business Rules."""
@@ -201,7 +195,7 @@ class RagEngine:
             pass
         return "unknown"
 
-    async def retrieve_context(self, query: str) -> str:
+    async def retrieve_context(self, query: str, client_id: Optional[int] = None, session: Optional[AsyncSession] = None, fast_mode: bool = False) -> str:
         """
         Master retrieval function.
         Returns a formatted string of ALL relevant context.
@@ -209,49 +203,85 @@ class RagEngine:
         if not self.initialized:
             await self.initialize()
 
-        print(f"🔍 RAG Retrieval for: '{query}'")
+        print(f"🔍 RAG Retrieval for: '{query}' [Client: {client_id}, Fast: {fast_mode}]")
         
-        query_embedding = await self._get_embedding(query)
+        query_embedding = None
+        if not fast_mode:
+            query_embedding = await self._get_embedding(query)
         
-        # Combine all docs
-        # Partition docs: Vector Search for Schema/Reports/Rules (Small), Keyword for Nav (Large)
+        # 1. Fetch Tenant-Specific Navigation from DB
+        current_nav_docs = []
+        # ... (rest of the navigation fetching logic remains same)
+        if client_id and session:
+            try:
+                from app.models.navigation import NavigationItem
+                from app.tools.navigation import _infer_parents_from_path
+                from sqlmodel import select
+                
+                stmt = select(NavigationItem).where(NavigationItem.client_id == client_id)
+                res = await session.execute(stmt)
+                items = res.scalars().all()
+                
+                for item in items:
+                    parents = _infer_parents_from_path(item.path)
+                    parents_str = " -> ".join(parents)
+                    content = f"Page: {item.label} | Path: {item.path} | Module: {item.module} | Navigation: {parents_str} -> {item.label}"
+                    current_nav_docs.append({
+                        "content": content, 
+                        "type": "navigation", 
+                        "metadata": {"label": item.label, "path": item.path}
+                    })
+                print(f"📦 RAG: Loaded {len(current_nav_docs)} navigation items for Client {client_id}")
+            except Exception as e:
+                print(f"⚠️ RAG: Failed to load tenant navigation: {e}")
+        
+        # Combine all docs for vector search (Small < 100 items usually)
         vector_docs = self.schema_docs + self.rules_docs + self.report_docs + self.template_docs
         
         scored_docs = []
         
-        # 1. Vector Search (Small < 50 items)
+        # 2. Vector Search
         if query_embedding:
             for doc in vector_docs:
                 doc_embedding = await self._get_embedding(doc["content"])
                 score = self._cosine_similarity(query_embedding, doc_embedding)
-                if score > 0.4:
+                if score > 0.35:
                     scored_docs.append((score, doc))
         
-        # 2. Keyword Search for Navigation (Large ~2000 items)
-        # Avoid embedding all 2000 items. Use fast string matching.
-        query_parts = query.lower().split()
-        for doc in self.nav_docs:
+        # 3. Keyword Search for Navigation (Large)
+        # Use current_nav_docs (tenant-specific) or fallback to self.nav_docs (global)
+        nav_source = current_nav_docs if current_nav_docs else self.nav_docs
+        
+        query_parts = [p for p in query.lower().split() if len(p) > 2]
+        for doc in nav_source:
             content_lower = doc["content"].lower()
             score = 0
+            
+            label = doc.get("metadata", {}).get("label", "").lower()
+            if query.lower() in label or label in query.lower():
+                score += 10
+            
+            if query.lower() in content_lower:
+                score += 5
+                
             for part in query_parts:
                 if part in content_lower:
                     score += 1
-            # Boost exact substring matches
-            if query.lower() in content_lower:
-                score += 2
                 
             if score > 0:
-                # Normalize score to be comparable to cosine (0-1 range approx)
-                # Max score is likely len(query_parts) + 2. Flatten it.
-                norm_score = min(score * 0.2, 0.9)
+                norm_score = min(score * 0.1, 0.95)
                 scored_docs.append((norm_score, doc))
 
         # Sort and Top-K
         scored_docs.sort(key=lambda x: x[0], reverse=True)
-        top_docs = scored_docs[:8] # Take top 8 chunks
+        top_docs = scored_docs[:3] # REDUCED from 8 to 3 for speed
         
         if not top_docs:
-            return "No relevant context found in RAG knowledge base."
+            if fast_mode:
+                # Fallback to general rules if no keyword match in fast mode
+                top_docs = [(0.5, doc) for doc in self.rules_docs[:2]]
+            else:
+                return "No relevant context found."
 
         # Format Output
         v_rules = self._get_config_hash(RULES_PATH)
@@ -275,8 +305,6 @@ class RagEngine:
             context_str += "\n\n[REPORTS]\n" + "\n".join(f"- {r}" for r in groups["report"])
         if groups["navigation"]:
             context_str += "\n\n[NAVIGATION]\n" + "\n".join(f"- {n}" for n in groups["navigation"])
-        if groups["report"]:
-            context_str += "\n\n[REPORTS]\n" + "\n".join(f"- {r}" for r in groups["report"])
             
         return context_str
 

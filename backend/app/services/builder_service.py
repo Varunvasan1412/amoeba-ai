@@ -99,7 +99,39 @@ async def generate_safe_sql(session: AsyncSession, client_id: int, request: Dict
             requested_labels = request.get("columns", [])
             aggregations = request.get("aggregations", [])
             
-            if len(requested_labels) == 0 and len(aggregations) == 0:
+            # Helper to get active tables from labels
+            def get_tables_with_requested_columns():
+                tbls = set()
+                for l in requested_labels:
+                    actual_l = l
+                    table_hint = None
+                    if ":" in l:
+                        parts = l.split(":", 1)
+                        table_hint = parts[0]
+                        actual_l = parts[1]
+                    meta = _resolve_meta(actual_l, table_hint)
+                    tbls.add(meta.table_name.lower())
+                return tbls
+
+            tables_with_columns = get_tables_with_requested_columns()
+
+            # Add Payload Columns from Joins (if not already covered)
+            for step in join_steps:
+                target_table = step["to_table"].lower()
+                payload = step.get("payload_columns", [])
+                
+                if target_table not in tables_with_columns and payload:
+                    t_obj = table_map.get(target_table)
+                    if t_obj is not None:
+                        for col_name in payload:
+                            if col_name in t_obj.columns:
+                                # Find semantic label for this column to use as alias
+                                # We search metadata_list
+                                col_meta = next((m for m in metadata_list if m.table_name.lower() == target_table and m.column_name.lower() == col_name.lower()), None)
+                                alias = col_meta.label if col_meta else col_name
+                                sa_cols.append(t_obj.columns[col_name].label(f"{target_table}:{alias}"))
+
+            if len(requested_labels) == 0 and len(aggregations) == 0 and len(sa_cols) == 0:
                 raise HTTPException(status_code=400, detail="No columns or aggregations selected.")
 
             for label in requested_labels:

@@ -132,3 +132,62 @@ async def restrict_relationship(
     clear_relationship_cache(client_id)
     
     return {"status": "success", "data": rel}
+
+@router.delete("/{rel_id}")
+async def delete_relationship(
+    rel_id: int,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Permanently remove a relationship.
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.id == rel_id, 
+        AllowedRelationship.client_id == client_id
+    )
+    rel = (await session.execute(stmt)).scalars().first()
+    
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+        
+    await session.delete(rel)
+    await session.commit()
+    
+    clear_relationship_cache(client_id)
+    return {"status": "success", "message": "Relationship deleted"}
+
+class ColumnSelectionRequest(BaseModel):
+    columns: List[str]
+
+@router.post("/{rel_id}/columns")
+async def update_relationship_columns(
+    rel_id: int,
+    payload: ColumnSelectionRequest,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Save which columns from the joined table should be included.
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.id == rel_id, 
+        AllowedRelationship.client_id == client_id
+    )
+    rel = (await session.execute(stmt)).scalars().first()
+    
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+        
+    rel.selected_columns = payload.columns
+    session.add(rel)
+    await session.commit()
+    await session.refresh(rel)
+    
+    clear_relationship_cache(client_id)
+    
+    return {"status": "success", "data": rel}

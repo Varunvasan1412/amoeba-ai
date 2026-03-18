@@ -4,6 +4,7 @@ import { useAdmin } from "../context/AdminContext";
 import { useAuth } from "../context/AuthContext";
 import { LayoutDashboard, LogOut } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { SearchableDropdown } from "./admin/SearchableDropdown";
 
 export default function AdminLayout() {
     const { clientId, setClientId, setApiKey, setClientName, clients, refreshClients } = useAdmin();
@@ -53,17 +54,22 @@ export default function AdminLayout() {
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
                   <span className="text-slate-400 text-sm hidden sm:inline">Active Client:</span>
-                  <select 
-                      className="bg-slate-800 text-white border border-slate-700 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-500 min-w-[150px]"
-                      value={clientId || ""}
-                      onChange={handleClientChange}
+                  <SearchableDropdown
+                      theme="dark"
+                      className="min-w-[180px]"
+                      options={clients.map(c => ({ value: c.id, label: c.client_name }))}
+                      value={clientId}
+                      onChange={(id) => {
+                          const client = clients.find(c => c.id === id);
+                          if (client) {
+                              setClientId(client.id);
+                              setApiKey(client.api_key);
+                              setClientName(client.client_name);
+                          }
+                      }}
                       disabled={loading}
-                  >
-                      <option value="" disabled>-- Select Client --</option>
-                      {clients.map(c => (
-                          <option key={c.id} value={c.id}>{c.client_name}</option>
-                      ))}
-                  </select>
+                      placeholder="-- Select Client --"
+                  />
                   {loading && <span className="text-xs text-slate-500 animate-pulse">Loading...</span>}
               </div>
 

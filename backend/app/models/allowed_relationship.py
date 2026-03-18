@@ -1,5 +1,5 @@
-from typing import Optional
-from sqlmodel import SQLModel, Field
+from typing import Optional, List
+from sqlmodel import SQLModel, Field, Column, JSON
 from datetime import datetime
 
 class AllowedRelationship(SQLModel, table=True):
@@ -16,6 +16,10 @@ class AllowedRelationship(SQLModel, table=True):
 
     is_enabled: bool = Field(default=False)
     is_restricted: bool = Field(default=False)
+
+    # NEW: Store which columns from the related table should be included
+    # Format: ["col1", "col2", "col3"]
+    selected_columns: List[str] = Field(default=[], sa_column=Column(JSON))
 
     # Risk Classification (v3)
     risk_level: str = Field(default="safe") # safe | heuristic | circular | high_cardinality
