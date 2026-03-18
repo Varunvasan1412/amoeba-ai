@@ -85,39 +85,130 @@
     }
   });
 
-  // 4. Auto-Discovery: Scan User's Page for Navigation Links
-  // This fulfills the "analyze the codebase" requirement by analyzing the RENDERED result (The Menu).
+  // 4. Auto-Discovery Engine v9.0 (Atomic Scan)
   function scanAndLearn() {
-      console.log("🕵️ Amoeba: Scanning page for navigation links...");
-      const links = document.querySelectorAll("a");
-      const discovered = [];
-      const seen = new Set();
-      
-      links.forEach(link => {
-          const text = link.innerText.trim();
-          const href = link.getAttribute('href'); // Get raw attribute to capture relative paths
-          
-          if (!text || !href) return;
-          if (text.length < 2) return; // Skip icons/single chars
-          if (href.startsWith("#") || href.startsWith("javascript")) return;
-          if (seen.has(text + href)) return;
-          
-          seen.add(text + href);
-          discovered.push({ label: text, path: href });
-      });
+      const discoveredRoutes = [];
+      const seenRoutes = new Set();
+      const discoveredFields = [];
+      const seenElements = new Set();
+      const rawInputDetails = [];
 
-      if (discovered.length > 0) {
-          console.log(`🕵️ Amoeba: Found ${discovered.length} links. Sending to Brain.`);
-          
-          // Wait for iframe to accept messages
-          setTimeout(() => {
-              iframe.contentWindow.postMessage({
-                  type: "AMOEBA_DISCOVERED_ROUTES",
-                  routes: discovered
-              }, "*");
-          }, 2000);
+      function deepScan(root) {
+          if (!root || seenElements.has(root)) return;
+          seenElements.add(root);
+
+          try {
+              // 1. Scan Links
+              root.querySelectorAll("a").forEach(link => {
+                  const text = link.innerText.trim();
+                  const href = link.getAttribute('href');
+                  if (!text || !href || text.length < 2 || href.startsWith("#")) return;
+                  if (seenRoutes.has(text + href)) return;
+                  seenRoutes.add(text + href);
+                  discoveredRoutes.push({ label: text, path: href });
+              });
+
+              // 2. Scan Form Elements
+              const selector = "input, select, textarea, [role='textbox'], [role='combobox']";
+              const candidates = root.querySelectorAll(selector);
+              
+              candidates.forEach(el => {
+                  if (el.type === "hidden" || el.tagName === "A") return;
+                  
+                  const name = el.name || el.id || el.getAttribute("data-field");
+                  rawInputDetails.push({ id: el.id, name: el.name, type: el.tagName, class: el.className });
+
+                  if (!name || name.includes("DataTables") || name.startsWith("_")) return;
+
+                  let labelText = "";
+                  // Aggressive Label Search
+                  const linked = document.querySelector(`label[for="${el.id}"]`) || el.closest("label");
+                  if (linked) labelText = linked.innerText;
+
+                  if (!labelText || labelText.trim().length < 2) {
+                      let prev = el.previousElementSibling;
+                      if (prev && prev.innerText && prev.innerText.trim().length > 1) labelText = prev.innerText;
+                  }
+
+                  if (!labelText || labelText.trim().length < 2) {
+                      let p = el.parentElement;
+                      if (p && p.innerText && p.innerText.trim().length > 1) labelText = p.innerText.split("\n")[0];
+                  }
+
+                  if (!labelText || labelText.trim().length < 2) {
+                      labelText = el.placeholder || el.title || el.getAttribute("aria-label");
+                  }
+
+                  if (labelText) {
+                      const cleanLabel = labelText.replace(/[:*]/g, "").trim();
+                      if (cleanLabel.length >= 2) {
+                          discoveredFields.push({
+                              label: cleanLabel,
+                              name: name,
+                              type: el.type || el.tagName.toLowerCase(),
+                              required: el.required || false
+                          });
+                      }
+                  }
+              });
+
+              // 3. Shadow DOM
+              root.querySelectorAll("*").forEach(el => {
+                  if (el.shadowRoot) deepScan(el.shadowRoot);
+              });
+
+              // 4. Iframe / Frameset Scan
+              root.querySelectorAll("iframe, frame").forEach(frame => {
+                  if (frame.id === IFRAME_ID) return;
+                  try {
+                      if (frame.contentDocument) deepScan(frame.contentDocument);
+                  } catch (e) {}
+              });
+
+          } catch (e) {}
+      }
+
+      // Try absolute top window if possible, otherwise current
+      deepScan(document);
+      
+      // DIAGNOSTIC LOG
+      console.log(`🔬 Amoeba diagnostics: Seen inputs:`, rawInputDetails);
+      console.log(`🔬 Amoeba Result: Mapped ${discoveredFields.length} fields.`);
+
+      if (discoveredFields.length > 0 || discoveredRoutes.length > 0) {
+          const payload = {
+              type: "AMOEBA_DISCOVERED_FIELDS",
+              fields: discoveredFields,
+              path: window.location.pathname
+          };
+          iframe.contentWindow.postMessage(payload, "*");
+          if (discoveredRoutes.length > 0) {
+              iframe.contentWindow.postMessage({ type: "AMOEBA_DISCOVERED_ROUTES", routes: discoveredRoutes }, "*");
+          }
       }
   }
+
+  setInterval(scanAndLearn, 10000); 
+  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
+  setTimeout(scanAndLearn, 2000);
+
+
+  setInterval(scanAndLearn, 8000); 
+  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
+  setTimeout(scanAndLearn, 2000);
+
+
+  setInterval(scanAndLearn, 8000); 
+  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
+  setTimeout(scanAndLearn, 2000);
+
+
+  setInterval(scanAndLearn, 8000); 
+  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
+  setTimeout(scanAndLearn, 2000);
+
+
+
 
   // Run scan after slight delay to ensure dynamic menus load
   window.addEventListener("load", () => setTimeout(scanAndLearn, 1500));

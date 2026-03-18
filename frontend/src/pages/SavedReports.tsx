@@ -74,6 +74,34 @@ export default function SavedReports() {
       navigate("/admin/builder", { state: { report } });
   };
 
+  const handleRunReport = async (reportId: number) => {
+      setLoading(true);
+      try {
+          const res = await apiFetch(`${API_BASE}/v2/builder/reports/${reportId}/run`, {
+              method: "POST",
+              headers: { "X-API-Key": apiKey! },
+              body: JSON.stringify({}) // Future expandability for dates
+          });
+          
+          if (res.ok) {
+              const data = await res.json();
+              if (data.file_url) {
+                  window.open(data.file_url, '_blank');
+              } else {
+                  alert("Failed to get file URL");
+              }
+          } else {
+              const errData = await res.json();
+              alert(errData.detail || "Failed to generate report");
+          }
+      } catch (err) {
+          console.error("Run report failed", err);
+          alert("Internal server error");
+      } finally {
+          setLoading(false);
+      }
+  };
+
   if (!clientId) return <div className="p-8 text-center text-gray-500">Please select a client from the dashboard.</div>;
 
   return (
@@ -117,8 +145,9 @@ export default function SavedReports() {
                                 <Trash2 size={18}/>
                             </button>
                             <button 
-                                className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-4 py-2 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors"
-                                onClick={() => alert("Run Report logic coming in Phase 3!")}
+                                className="text-sm font-medium text-emerald-600 hover:text-emerald-700 px-4 py-2 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                                onClick={() => handleRunReport(report.id)}
+                                disabled={loading}
                             >
                                 Run Report
                             </button>

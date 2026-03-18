@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.models.client_config import ClientConfig
 from app.services.onboarding import generate_api_key, build_connection_url, test_db_connection, discover_tables
+from app.services.field_metadata_service import generate_field_metadata
 from app.services.audit_service import log_audit
 from app.services.relationship_service import clear_relationship_cache
 from app.core.auth_deps import get_current_active_admin
@@ -118,10 +119,15 @@ async def get_client_tables(
         
     try:
         tables = discover_tables(client.db_connection_url)
+        # Auto-generate UX metadata
+        count = await generate_field_metadata(client_id, session)
+        log_audit(client_id, "field_metadata_generated", {"count": count})
+        
         log_audit(client_id, "tables_discovered", {"count": len(tables)})
         return {"tables": tables}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Discovery failed: {str(e)}")
+
 
 @router.get("/clients")
 async def list_clients(session: AsyncSession = Depends(get_session)):

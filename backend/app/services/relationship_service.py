@@ -220,14 +220,16 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
                 "local_column": rel.child_column,
                 "remote_column": rel.parent_column,
                 "direction": "forward",
-                "method": rel.risk_level
+                "method": rel.risk_level,
+                "selected_columns": rel.selected_columns or []
             }
             # Add Reverse: Parent -> Child (Discovery Path)
             builder_graph[rel.parent_table][rel.child_table] = {
                 "local_column": rel.parent_column,
                 "remote_column": rel.child_column,
                 "direction": "reverse",
-                "method": rel.risk_level
+                "method": rel.risk_level,
+                "selected_columns": rel.selected_columns or []
             }
 
     print(f"DEBUG: Discovery & DB Sync Complete. Enabled Bidirectional Joins: {sum(len(v) for v in builder_graph.values())}")
@@ -384,7 +386,8 @@ async def validate_join_path(session: AsyncSession, client_id: int, graph: Dict[
             "from_table": parent_table,
             "to_table": target_table,
             "local_column": rel_meta["local_column"],
-            "remote_column": rel_meta["remote_column"]
+            "remote_column": rel_meta["remote_column"],
+            "payload_columns": rel_meta.get("selected_columns", [])
         })
         
         visited.add(target_table.lower())

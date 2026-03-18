@@ -241,6 +241,76 @@ async def delete_report(
     
     return {"status": "success", "message": "Report deleted"}
 
+@router.post("/reports/{report_id}/run")
+async def run_report(
+    report_id: int,
+    payload: Dict[str, Any] = {},
+    x_api_key: str = Header(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Executes a saved report and returns a link to the generated Excel file.
+    """
+    api_client_id = await get_client_id_by_key(x_api_key, session)
+    from app.models.report_registry import ReportRegistry
+    from app.tools.reporting import export_sql_to_excel
+    from app.tools.filenames import generate_deterministic_filename
+    from app.core.config import settings
+    import os
+    from datetime import datetime
+    
+    stmt = select(ReportRegistry).where(
+        ReportRegistry.id == report_id,
+        ReportRegistry.client_id == api_client_id
+    )
+    result = await session.execute(stmt)
+    report = result.scalars().first()
+    
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+        
+    sql_query = report.sql_template
+    
+    # Simple Parameter Replacement (if needed in Phase 3)
+    if ":start_date" in sql_query:
+        start_date = payload.get("start_date") or "1970-01-01"
+        end_date = payload.get("end_date") or datetime.now().strftime("%Y-%m-%d")
+        sql_query = sql_query.replace(":start_date", f"'{start_date}'").replace(":end_date", f"'{end_date}'")
+        
+    try:
+        # We need the client config to set the current_db_url context for export_sql_to_excel
+        stmt_client = select(ClientConfig).where(ClientConfig.id == api_client_id)
+        res_client = await session.execute(stmt_client)
+        client_conf = res_client.scalars().first()
+        
+        from app.core.context import current_db_url
+        current_db_url.set(client_conf.db_connection_url)
+        
+        filename = generate_deterministic_filename(report.display_name, extension="xlsx")
+        file_path = export_sql_to_excel(sql_query, filename_override=filename)
+        
+        if "Error" in file_path:
+             raise Exception(file_path)
+             
+        # Build public URL
+        if "static" in file_path:
+            clean_path = file_path[file_path.find("static"):].replace(os.path.sep, "/")
+            file_url = f"{settings.PUBLIC_BASE_URL}/{clean_path}"
+        else:
+            file_url = file_path
+            
+        log_audit(api_client_id, "report_manual_run", {"report_id": report.id})
+        
+        return {
+            "status": "success", 
+            "file_url": file_url,
+            "message": "Report generated successfully"
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to run report: {e}")
+
 from app.services.relationship_service import get_relationship_graph, validate_join_path, clear_relationship_cache
 
 @router.post("/reset-cache")

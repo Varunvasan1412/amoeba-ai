@@ -34,7 +34,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     const token = localStorage.getItem('token');
     if (!token) return;
     try {
-      const response = await fetch('http://localhost:8000/api/clients', {
+      const response = await fetch('/api/clients', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await response.json();
