@@ -1,13 +1,23 @@
+import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from contextlib import asynccontextmanager
-from app.routers import chat, chat_history, upload, navigation, reports, clients, auth, onboarding, ui_schema, ai_settings
+from app.routers import chat, chat_history, upload, navigation, reports, clients, auth, onboarding, ui_schema, ai_settings, admin_validation, documents, system_health
 from app.core.database import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🐘 Connecting to Database...")
     await init_db()
+    
+    # 🧹 Start Background Cleanup Service
+    from app.services.cleanup_service import cleanup_loop
+    asyncio.create_task(cleanup_loop())
+    
+    # 📈 Start Daily Usage Logger (Step 7)
+    from app.services.usage_service import usage_logger_loop
+    asyncio.create_task(usage_logger_loop())
+    
     yield
     print("🐘 Database connection closed.")
 
@@ -44,6 +54,9 @@ app.include_router(reports.router, prefix="/api")
 app.include_router(clients.router, prefix="/api")
 app.include_router(onboarding.router, prefix="/api")
 app.include_router(ai_settings.router, prefix="/api")
+app.include_router(admin_validation.router, prefix="/api")
+app.include_router(documents.router, prefix="/api")
+app.include_router(system_health.router, prefix="/api")
 app.include_router(ui_schema.router, prefix="/api/ui-schema", tags=["UI Learning"])
 
 from app.routers import field_metadata

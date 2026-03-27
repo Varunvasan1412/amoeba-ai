@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List
 from app.core.database import get_session
@@ -244,7 +244,7 @@ async def delete_report(
 @router.post("/reports/{report_id}/run")
 async def run_report(
     report_id: int,
-    payload: Dict[str, Any] = {},
+    payload: Dict[str, Any] = Body(default={}),
     x_api_key: str = Header(...),
     session: AsyncSession = Depends(get_session)
 ):
@@ -270,6 +270,7 @@ async def run_report(
         raise HTTPException(status_code=404, detail="Report not found")
         
     sql_query = report.sql_template
+    print(f"🚀 Running Report ID {report_id} with SQL: {sql_query[:100]}...", flush=True)
     
     # Simple Parameter Replacement (if needed in Phase 3)
     if ":start_date" in sql_query:

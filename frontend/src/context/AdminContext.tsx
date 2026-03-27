@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 
 interface AdminContextType {
   clientId: number | null;
@@ -9,6 +9,8 @@ interface AdminContextType {
   setClientName: (name: string) => void;
   clients: any[];
   refreshClients: () => Promise<void>;
+  darkMode: boolean;
+  setDarkMode: (val: boolean) => void;
 }
 
 const AdminContext = createContext<AdminContextType | undefined>(undefined);
@@ -27,6 +29,18 @@ export function AdminProvider({ children }: { children: ReactNode }) {
   const [clientName, setClientNameState] = useState(() => {
     return localStorage.getItem("admin_clientName") || "";
   });
+
+  const [darkMode, setDarkModeState] = useState(() => {
+    return localStorage.getItem("amoeba_dark_mode") === "true";
+  });
+
+  useEffect(() => {
+    if (darkMode) {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
+  }, []);
 
   const [clients, setClients] = useState<any[]>([]);
 
@@ -61,8 +75,24 @@ export function AdminProvider({ children }: { children: ReactNode }) {
       localStorage.setItem("admin_clientName", name);
   };
 
+  const setDarkMode = (val: boolean) => {
+      setDarkModeState(val);
+      localStorage.setItem("amoeba_dark_mode", val.toString());
+      if (val) {
+          document.documentElement.classList.add('dark');
+      } else {
+          document.documentElement.classList.remove('dark');
+      }
+  };
+
   return (
-    <AdminContext.Provider value={{ clientId, setClientId, apiKey, setApiKey, clientName, setClientName, clients, refreshClients }}>
+    <AdminContext.Provider value={{ 
+        clientId, setClientId, 
+        apiKey, setApiKey, 
+        clientName, setClientName, 
+        clients, refreshClients,
+        darkMode, setDarkMode
+    }}>
       {children}
     </AdminContext.Provider>
   );

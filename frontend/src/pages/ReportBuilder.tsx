@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAdmin } from "../context/AdminContext";
 import { 
-  LayoutTemplate, Play, Save, Code, Loader2, Check, 
+  LayoutTemplate, Code, Loader2, Check,
   AlertTriangle, ArrowRight, ArrowLeft, Database, 
-  Table, ChevronRight, Settings2, Eye, Rocket, GitBranch
+  Table, ChevronRight, Settings2, Eye, Rocket, GitBranch,
+  GripVertical, X, Wand2
 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { apiFetch } from "../utils/api";
@@ -31,17 +32,20 @@ export default function ReportBuilder() {
   const [baseTable, setBaseTable] = useState("");
   const [tables, setTables] = useState<string[]>([]);
   const [semanticColumns, setSemanticColumns] = useState<SemanticColumn[]>([]);
-  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+  const [selectedColumns, setSelectedColumns] = useState<{name: string, label: string}[]>([]);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [dateColumn, setDateColumn] = useState<string>("");
   const [dateRange, setDateRange] = useState<string>("last_30_days");
   const [relationships, setRelationships] = useState<any>({});
   const [joins, setJoins] = useState<JoinDefinition[]>([]);
   const [previewSql, setPreviewSql] = useState("");
   const [previewData, setPreviewData] = useState<any[]>([]); 
-  const [loading, setLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
+
+  const dragItem = useRef<number | null>(null);
+  const dragOverItem = useRef<number | null>(null);
 
   useEffect(() => {
       if (location.state?.report) {
@@ -49,7 +53,16 @@ export default function ReportBuilder() {
           const def = report.builder_definition || {};
           setReportName(report.display_name);
           if (def.base_table) setBaseTable(def.base_table);
-          if (def.columns) setSelectedColumns(def.columns);
+          if (def.columns) {
+              const cols = def.columns.map((c: any) => {
+                  if (typeof c === 'string') {
+                      const cleanLabel = c.includes(':') ? c.split(':')[1] : c;
+                      return { name: c, label: cleanLabel };
+                  }
+                  return c;
+              });
+              setSelectedColumns(cols);
+          }
           if (def.date_filter) {
               setDateColumn(def.date_filter.column);
               setDateRange(def.date_filter.range);
@@ -66,17 +79,72 @@ export default function ReportBuilder() {
       }
   }, [location.state]);
 
-  const API_BASE = import.meta.env.DEV ? "http://localhost:8000/api" : "/api";
+  const API_BASE = import.meta.env.DEV ? "/api" : "/api";
 
   const showMessage = (type: "success" | "error", text: string) => {
       setMessage({ type, text });
       setTimeout(() => setMessage(null), 5000);
   };
 
+  // Sanitize labels to ensure they are clean by default (no table prefixes)
+  useEffect(() => {
+    if (selectedColumns.length > 0) {
+        const hasDirtyLabel = selectedColumns.some(c => c.label.includes(':') && c.label === c.name);
+        if (hasDirtyLabel) {
+            setSelectedColumns(prev => prev.map(c => {
+                if (c.label.includes(':') && c.label === c.name) {
+                    return { ...c, label: c.label.split(':')[1] };
+                }
+                return c;
+            }));
+        }
+    }
+  }, [selectedColumns]);
+
+  const handleAutoMap = useCallback(() => {
+    console.log("🛠️ Starting Auto-Map...", { joins, hasRelationships: !!relationships });
+    if (!relationships || joins.length === 0) return;
+
+    const newSelected = [...selectedColumns];
+    let count = 0;
+
+    joins.forEach(join => {
+        const relMeta = relationships[join.parent]?.[join.table];
+        if (relMeta && relMeta.selected_columns && relMeta.selected_columns.length > 0) {
+            console.log(`📍 Found ${relMeta.selected_columns.length} preset(s) for ${join.table}`);
+            relMeta.selected_columns.forEach((colName: string) => {
+                // Find the semantic label for this column in this table
+                const semanticCol = semanticColumns.find(c => 
+                    c.table.toLowerCase() === join.table.toLowerCase() && 
+                    c.column.toLowerCase() === colName.toLowerCase()
+                );
+                
+                if (semanticCol) {
+                    const uniqueKey = `${join.table}:${semanticCol.label}`;
+                    if (!newSelected.some(sc => sc.name === uniqueKey)) {
+                        const cleanLabel = semanticCol.label.includes(':') ? semanticCol.label.split(':')[1] : semanticCol.label;
+                        newSelected.push({ name: uniqueKey, label: cleanLabel });
+                        count++;
+                        console.log(`✅ Auto-selected: ${uniqueKey}`);
+                    }
+                } else {
+                    console.warn(`⚠️ Could not find semantic metadata for ${join.table}.${colName}`);
+                }
+            });
+        }
+    });
+
+    if (count > 0) {
+        setSelectedColumns(newSelected);
+        showMessage("success", `Auto-mapped ${count} fields from Governance!`);
+    } else {
+        showMessage("info" as any, "No new fields to map from Governance. Check your Relationship Governance 'Data Payload' settings.");
+    }
+  }, [joins, relationships, semanticColumns, selectedColumns]);
+
   useEffect(() => {
     if (!apiKey) return;
     const fetchData = async () => {
-        setLoading(true);
         try {
             const schemaRes = await apiFetch(`${API_BASE}/v2/semantic/schema`, {
                 headers: { "X-API-Key": apiKey }
@@ -101,7 +169,6 @@ export default function ReportBuilder() {
         } catch (err) {
             console.error("Failed to fetch data", err);
         } finally {
-            setLoading(false);
         }
     };
     fetchData();
@@ -117,12 +184,12 @@ export default function ReportBuilder() {
               client_id: clientId,
               request: {
                   base_table: baseTable,
-                  columns: selectedColumns,
+                  columns: selectedColumns, // Now sending objects!
                   date_filter: dateColumn ? { column: dateColumn, range: dateRange } : undefined,
                   joins: joins
               }
           };
-          const res = await apiFetch(`${API_BASE}/v2/builder/preview/data`, {
+          const res = await fetch(`/api/reports/build?client_id=${clientId}`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-API-Key": apiKey! },
               body: JSON.stringify(payload)
@@ -167,8 +234,34 @@ export default function ReportBuilder() {
       }
   };
 
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+      dragItem.current = index;
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      setTimeout(() => { if (e.target instanceof HTMLElement) e.target.classList.add("opacity-50", "scale-95"); }, 0);
+  };
+
+  const handleDragEnter = (e: React.DragEvent, index: number) => {
+      e.preventDefault();
+      dragOverItem.current = index;
+      if (dragItem.current !== null && dragOverItem.current !== null && dragItem.current !== dragOverItem.current) {
+          const newCols = [...selectedColumns];
+          const draggedContent = newCols[dragItem.current];
+          newCols.splice(dragItem.current, 1);
+          newCols.splice(dragOverItem.current, 0, draggedContent);
+          dragItem.current = dragOverItem.current;
+          setSelectedColumns(newCols);
+      }
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+      dragItem.current = null;
+      dragOverItem.current = null;
+      if (e.target instanceof HTMLElement) e.target.classList.remove("opacity-50", "scale-95");
+  };
+
   const activeTables = [baseTable, ...joins.map(j => j.table)].filter(Boolean);
   const availableColumns = semanticColumns.filter(c => activeTables.includes(c.table));
+  const previewCols = selectedColumns.map(sc => sc.label);
 
   return (
     <div className="max-w-7xl mx-auto py-6 px-4">
@@ -292,25 +385,37 @@ export default function ReportBuilder() {
 
         {step === 2 && (
             <div className="space-y-8 animate-in fade-in duration-500">
-                <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 mb-2">
-                    <h3 className="text-blue-900 font-bold flex items-center gap-2 mb-1 text-sm uppercase tracking-wider">
-                        <Settings2 size={18} /> Step 2: Field Mapping
-                    </h3>
-                    <p className="text-blue-700 text-xs leading-relaxed max-w-2xl">
-                        Pick your signals. Select the specific business fields you want to include in this report from each connected table. 
-                        You can toggle entire tables instantly to build wide reports comfortably and efficiently.
-                    </p>
-                </div>
+                    <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-slate-50/50">
+                        <div>
+                            <h3 className="text-blue-900 font-bold flex items-center gap-2 mb-1 text-sm uppercase tracking-wider">
+                                <Settings2 size={18} /> Step 2: Field Mapping
+                            </h3>
+                            <p className="text-blue-700 text-xs leading-relaxed max-w-2xl">
+                                Pick your signals. Select the specific business fields you want to include in this report from each connected table. 
+                            </p>
+                        </div>
+                        <button 
+                            onClick={handleAutoMap}
+                            className="bg-white text-purple-600 border-2 border-purple-100 px-6 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:border-purple-500 hover:bg-purple-50 transition-all flex items-center gap-2 shadow-sm"
+                        >
+                            <Wand2 size={14} /> ✨ Auto-Map from Governance
+                        </button>
+                    </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {activeTables.map(tableName => {
                         const tableCols = semanticColumns.filter(c => c.table === tableName);
-                        const allSelected = tableCols.every(c => selectedColumns.includes(`${tableName}:${c.label}`));
+                        const allSelected = tableCols.every(c => selectedColumns.some(sc => sc.name === `${tableName}:${c.label}`));
                         const toggleTable = () => {
                             if (allSelected) {
-                                setSelectedColumns(selectedColumns.filter(sc => !sc.startsWith(`${tableName}:`)));
+                                setSelectedColumns(selectedColumns.filter(sc => !sc.name.startsWith(`${tableName}:`)));
                             } else {
-                                const newQualified = tableCols.map(c => `${tableName}:${c.label}`).filter(q => !selectedColumns.includes(q));
+                                const newQualified = tableCols
+                                    .map(c => {
+                                        const cleanLabel = c.label.includes(':') ? c.label.split(':')[1] : c.label;
+                                        return { name: `${tableName}:${c.label}`, label: cleanLabel };
+                                    })
+                                    .filter(q => !selectedColumns.some(sc => sc.name === q.name));
                                 setSelectedColumns([...selectedColumns, ...newQualified]);
                             }
                         };
@@ -328,11 +433,15 @@ export default function ReportBuilder() {
                                 <div className="p-4 flex-1 max-h-[400px] overflow-y-auto space-y-1 bg-gray-50/30">
                                     {tableCols.map(col => {
                                         const uniqueKey = `${tableName}:${col.label}`;
+                                        const isSelected = selectedColumns.some(c => c.name === uniqueKey);
                                         return (
                                             <label key={uniqueKey} className="flex items-center gap-3 p-3 hover:bg-white hover:shadow-md rounded-2xl cursor-pointer transition-all group border border-transparent hover:border-purple-100">
-                                                <input type="checkbox" className="w-5 h-5 rounded-lg border-2 border-gray-200 text-purple-600 focus:ring-purple-500 transition-all" checked={selectedColumns.includes(uniqueKey)} onChange={e => {
-                                                    if (e.target.checked) setSelectedColumns([...selectedColumns, uniqueKey]);
-                                                    else setSelectedColumns(selectedColumns.filter(c => c !== uniqueKey));
+                                                <input type="checkbox" className="w-5 h-5 rounded-lg border-2 border-gray-200 text-purple-600 focus:ring-purple-500 transition-all" checked={isSelected} onChange={e => {
+                                                    if (e.target.checked) {
+                                                        const cleanLabel = col.label.includes(':') ? col.label.split(':')[1] : col.label;
+                                                        setSelectedColumns(prev => [...prev, { name: uniqueKey, label: cleanLabel }]);
+                                                    }
+                                                    else setSelectedColumns(prev => prev.filter(c => c.name !== uniqueKey));
                                                 }} />
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-bold text-gray-700 group-hover:text-purple-700 transition-colors">{col.label}</span>
@@ -364,17 +473,20 @@ export default function ReportBuilder() {
                                 placeholder="-- No Date Filter --"
                             />
                         </div>
-                        {dateColumn && (
                             <div>
                                 <label className="block text-xs font-bold text-gray-400 uppercase mb-2">Default Range</label>
-                                <select className="w-full border-2 border-gray-100 p-3 rounded-2xl bg-gray-50 focus:border-orange-500 outline-none transition font-medium" value={dateRange} onChange={e => setDateRange(e.target.value)}>
-                                    <option value="last_30_days">Last 30 Days</option>
-                                    <option value="last_7_days">Last 7 Days</option>
-                                    <option value="this_month">This Month</option>
-                                    <option value="today">Today</option>
-                                </select>
+                                <SearchableDropdown
+                                    options={[
+                                        { value: "last_30_days", label: "Last 30 Days" },
+                                        { value: "last_7_days", label: "Last 7 Days" },
+                                        { value: "this_month", label: "This Month" },
+                                        { value: "today", label: "Today" }
+                                    ]}
+                                    value={dateRange}
+                                    onChange={val => setDateRange(val)}
+                                    placeholder="Select range..."
+                                />
                             </div>
-                        )}
                     </div>
                 </div>
             </div>
@@ -416,14 +528,14 @@ export default function ReportBuilder() {
                                     <Loader2 className="animate-spin text-purple-600" size={32}/>
                                 </div>
                             ) : previewData.length > 0 ? (
-                                <table className="w-full text-left text-xs whitespace-nowrap">
-                                    <thead className="bg-slate-50 sticky top-0 font-bold text-slate-600 border-b shadow-sm">
-                                        <tr>{Object.keys(previewData[0]).map(key => (<th key={key} className="p-4">{key}</th>))}</tr>
-                                    </thead>
+                                 <table className="w-full text-left text-xs whitespace-nowrap">
+                                     <thead className="bg-slate-50 sticky top-0 font-bold text-slate-600 border-b shadow-sm">
+                                         <tr>{previewCols.map(col => (<th key={col} className="p-4 font-black uppercase tracking-wider">{col}</th>))}</tr>
+                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
                                         {previewData.map((row, i) => (
                                             <tr key={i} className="hover:bg-blue-50/30 transition-colors">
-                                                {Object.values(row).map((val: any, j) => (<td key={j} className="p-4 text-gray-600">{val === null ? <span className="text-gray-300 italic font-mono">null</span> : String(val)}</td>))}
+                                                {previewCols.map((col, j) => (<td key={j} className="p-4 text-gray-600">{row[col] === null || row[col] === undefined ? <span className="text-gray-300 italic font-mono">null</span> : String(row[col])}</td>))}
                                             </tr>
                                         ))}
                                     </tbody>
@@ -452,8 +564,60 @@ export default function ReportBuilder() {
                             <div className="p-5 bg-purple-50 rounded-2xl border border-purple-100 text-purple-700 space-y-3 shadow-sm">
                                 <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest opacity-60"><span>Deployment Summary</span></div>
                                 <div className="space-y-1">
-                                    <p className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{selectedColumns.length}</strong> Semantic Fields</p>
-                                    <p className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{activeTables.length}</strong> Tables Joined</p>
+                                    <div className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{selectedColumns.length}</strong> Semantic Fields</div>
+                                    <div className="text-xs font-medium flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-purple-400" /><strong>{activeTables.length}</strong> Tables Joined</div>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 mb-4">
+                                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 ml-1">Column Order</label>
+                                <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                                    {selectedColumns.map((col, idx) => (
+                                        <div 
+                                            key={col.name} 
+                                            draggable
+                                            onDragStart={(e) => handleDragStart(e, idx)}
+                                            onDragEnter={(e) => handleDragEnter(e, idx)}
+                                            onDragEnd={handleDragEnd}
+                                            onDragOver={(e) => e.preventDefault()}
+                                            className="group flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-xl hover:border-purple-200 hover:bg-purple-50/30 transition-all cursor-move active:scale-95 shadow-sm"
+                                        >
+                                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                                                <GripVertical size={14} className="text-gray-300 group-hover:text-purple-400 shrink-0" />
+                                                <div className="flex flex-col flex-1 overflow-hidden">
+                                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter truncate opacity-70 mb-0.5">{col.name}</span>
+                                                    {editingIdx === idx ? (
+                                                        <input 
+                                                            autoFocus
+                                                            className="w-full bg-white border border-purple-300 rounded px-2 py-0.5 text-xs font-bold outline-none text-purple-700 shadow-[0_0_10px_rgba(147,51,234,0.1)]"
+                                                            value={col.label}
+                                                            onChange={(e) => {
+                                                                const newCols = [...selectedColumns];
+                                                                newCols[idx].label = e.target.value;
+                                                                setSelectedColumns(newCols);
+                                                            }}
+                                                            onBlur={() => setEditingIdx(null)}
+                                                            onKeyDown={(e) => e.key === 'Enter' && setEditingIdx(null)}
+                                                        />
+                                                    ) : (
+                                                        <div 
+                                                            className="flex items-center gap-2 group/edit"
+                                                            onDoubleClick={() => setEditingIdx(idx)}
+                                                            title="Double click to rename Export Heading"
+                                                        >
+                                                            <span className="text-xs font-black text-purple-600 truncate cursor-text">
+                                                                {col.label}
+                                                            </span>
+                                                            <Code size={10} className="text-purple-300 opacity-0 group-hover/edit:opacity-100 transition-opacity" />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <button onClick={() => setSelectedColumns(prev => prev.filter(c => c.name !== col.name))} className="p-1 hover:bg-red-100 rounded-lg text-gray-300 hover:text-red-500 transition-colors ml-2">
+                                                <X size={12}/>
+                                            </button>
+                                        </div>
+                                    ))}
                                 </div>
                             </div>
                             {message && (

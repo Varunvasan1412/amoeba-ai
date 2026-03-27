@@ -8,5 +8,6 @@ class ChatMessage(SQLModel, table=True):
     session_id: Optional[str] = Field(default=None, index=True)
     role: str
     content: str
+    is_edited: bool = Field(default=False)
     actions: Optional[List[Dict[str, Any]]] = Field(default=[], sa_column=Column(JSON))
     timestamp: datetime = Field(default_factory=datetime.utcnow)

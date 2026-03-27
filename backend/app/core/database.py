@@ -15,6 +15,7 @@ from app.models.approved_join_path import ApprovedJoinPath # [NEW] v3 Governance
 from app.models.conversation_state import ConversationState # [NEW] v3 CRUD Layer
 from app.models.field_metadata import FieldMetadata # [NEW] v4 Field Metadata Layer
 from app.models.ai_settings import AISettings # [NEW] v6 AI Infrastructure Layer
+from app.models.document import Document, DocumentChunk # [NEW] Document Knowledge Layer
 import asyncio
 
 # 1. Create the Link

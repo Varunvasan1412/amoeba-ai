@@ -84,6 +84,7 @@ async def generate_field_metadata(client_id: int, session: AsyncSession):
                 storage_type=storage_type,
                 required=not col.get("nullable", True),
                 readonly=readonly,
+                is_visible=True,
                 default_value=str(col.get("default")) if col.get("default") is not None else None
             )
             new_metadata.append(new_meta)

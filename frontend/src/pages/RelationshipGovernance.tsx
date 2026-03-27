@@ -1,14 +1,11 @@
 import { useState, useEffect } from "react";
 import { 
-  ArrowLeft, Shield, CheckCircle, XCircle, AlertTriangle, 
-  RefreshCw, Lock, Zap, BarChart, HardDrive, LayoutGrid, 
-  List as ListIcon, Wand2, Unlock, ShieldCheck, Ghost, GitBranch, Check, X
+  ArrowLeft, Shield, CheckCircle, AlertTriangle, 
+  RefreshCw, Zap, Wand2, Unlock, ShieldCheck, Check, X
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useAdmin } from "../context/AdminContext";
 import { apiFetch } from "../utils/api";
-import RelationshipGraph from "./admin/RelationshipGraph";
-import { RelationshipList } from "../components/admin/RelationshipList";
 import { JoinExplorer } from "../components/admin/JoinExplorer";
 
 export default function RelationshipGovernance() {
@@ -16,7 +13,6 @@ export default function RelationshipGovernance() {
   const [loading, setLoading] = useState(false);
   const [magicLoading, setMagicLoading] = useState<string | null>(null);
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
-  const [viewMode, setViewViewMode] = useState<"graph" | "list" | "explorer">("graph");
   const [allRels, setAllRels] = useState<any[]>([]);
   const [fullSchema, setFullSchema] = useState<any[]>([]);
   const [activeRelForPayload, setActiveRelForPayload] = useState<any | null>(null);
@@ -90,27 +86,6 @@ export default function RelationshipGovernance() {
             </h1>
             <p className="text-sm text-gray-500 font-medium tracking-tight">Decide which tables are allowed to talk to each other.</p>
           </div>
-        </div>
-
-        <div className="flex bg-gray-100 p-1 rounded-2xl">
-            <button 
-                onClick={() => setViewViewMode("graph")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${viewMode === "graph" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
-            >
-                <LayoutGrid size={14} /> Mindmap
-            </button>
-            <button 
-                onClick={() => setViewViewMode("list")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${viewMode === "list" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
-            >
-                <ListIcon size={14} /> Detail List
-            </button>
-            <button 
-                onClick={() => setViewViewMode("explorer")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${viewMode === "explorer" ? "bg-white text-blue-600 shadow-sm" : "text-gray-500"}`}
-            >
-                <GitBranch size={14} /> Join Explorer
-            </button>
         </div>
       </div>
 
@@ -198,16 +173,6 @@ export default function RelationshipGovernance() {
               <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
                   <Wand2 className="animate-bounce text-blue-600" size={48} />
               </div>
-          ) : viewMode === "graph" ? (
-              <RelationshipGraph apiKey={apiKey} />
-          ) : viewMode === "list" ? (
-              <RelationshipList 
-                apiKey={apiKey} 
-                onDataLoaded={(rels, schema) => {
-                    setAllRels(rels);
-                    setFullSchema(schema);
-                }}
-              />
           ) : (
               <JoinExplorer 
                 rels={allRels} 

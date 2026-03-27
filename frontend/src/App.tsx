@@ -16,6 +16,10 @@ import { AdminProvider } from "./context/AdminContext";
 import { AuthProvider } from "./context/AuthContext";
 
 import AISettings from "./pages/AISettings";
+import SystemHealth from "./pages/SystemHealth";
+import DocumentsPage from "./pages/admin/DocumentsPage";
+import DocumentSettingsPage from "./pages/admin/DocumentSettingsPage";
+import SourceSettingsPage from "./pages/admin/SourceSettingsPage";
 
 export default function App() {
   const location = useLocation();
@@ -42,6 +46,10 @@ export default function App() {
                         <Route path="relationships" element={<RelationshipGovernance />} />
                         <Route path="routes" element={<RouteMap />} />
                         <Route path="ai-settings" element={<AISettings />} />
+                        <Route path="health" element={<SystemHealth />} />
+                        <Route path="documents" element={<DocumentsPage />} />
+                        <Route path="settings/documents" element={<DocumentSettingsPage />} />
+                        <Route path="settings/sources" element={<SourceSettingsPage />} />
                     </Route>
 
                     <Route path="/ai" element={<AmoebaChat />} />

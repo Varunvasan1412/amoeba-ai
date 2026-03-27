@@ -239,9 +239,10 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
     if client_id and db_session and client_id != "default":
         # Check Registry (Async DB Call)
         matched_report = await match_report(db_session, int(client_id), user_input)
+        print(f"📁 [ROUTER] Searching report for Client {client_id}: '{user_input}'", flush=True)
         
         if matched_report:
-            print(f"[ROUTER] Registry Match: {matched_report.display_name}")
+            print(f"✅ [ROUTER] Registry Match: {matched_report.display_name} (ID: {matched_report.id})")
             
             # Check Parameters (Assuming simple date Logic for now)
             # We can check sql_template for parameters

@@ -1,8 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import ReactFlow, {
   Background,
   Controls,
-  MiniMap,
   useNodesState,
   useEdgesState,
   type Node,
@@ -13,7 +12,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { TableNode } from './TableNode';
-import { Plus, X, Search, GitBranch, Info, Zap } from 'lucide-react';
+import { X, Zap, Info } from 'lucide-react';
 
 interface JoinDefinition {
   table: string;
@@ -33,7 +32,7 @@ const nodeTypes = {
 
 export const JoinGraph: React.FC<JoinGraphProps> = ({ baseTable, relationships, onJoinsChange, initialJoins = [] }) => {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [edges, setEdges] = useEdgesState([]);
 
   const handleAddJoin = useCallback((table: string, parent: string) => {
       onJoinsChange([...initialJoins, { table, parent }]);
@@ -87,7 +86,11 @@ export const JoinGraph: React.FC<JoinGraphProps> = ({ baseTable, relationships, 
             newNodes.push({
                 id: child.table,
                 type: 'tableNode',
-                data: { label: child.table, columns: [] },
+                data: { 
+                    label: child.table, 
+                    columns: [],
+                    onRemoveClick: () => handleRemoveJoin(child.table)
+                },
                 position: { x: childX, y: childY },
             });
 
@@ -143,7 +146,7 @@ export const JoinGraph: React.FC<JoinGraphProps> = ({ baseTable, relationships, 
 
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [baseTable, initialJoins, relationships, setNodes, setEdges, handleAddJoin]);
+  }, [baseTable, initialJoins, relationships, setNodes, setEdges, handleAddJoin, handleRemoveJoin]);
 
   return (
     <div className="h-full bg-slate-50 relative rounded-3xl overflow-hidden border-2 border-slate-100 shadow-inner">
@@ -157,6 +160,11 @@ export const JoinGraph: React.FC<JoinGraphProps> = ({ baseTable, relationships, 
         onNodeContextMenu={(e, node) => {
             e.preventDefault();
             if (node.id !== baseTable && !node.id.startsWith('ghost-')) handleRemoveJoin(node.id);
+        }}
+        onEdgesDelete={(deletedEdges) => {
+            deletedEdges.forEach(edge => {
+                if (!edge.target.startsWith('ghost-')) handleRemoveJoin(edge.target);
+            });
         }}
         nodesDraggable={true}
         zoomOnScroll={true}
@@ -192,9 +200,11 @@ export const JoinGraph: React.FC<JoinGraphProps> = ({ baseTable, relationships, 
 
         <Panel position="bottom-center" className="mb-8">
             <div className="bg-slate-900/80 backdrop-blur-md px-6 py-3 rounded-full text-white text-[10px] font-bold flex items-center gap-6 shadow-2xl border border-white/10">
-                <span className="flex items-center gap-2"><Zap size={14} className="text-yellow-400" /> Click Ghost Nodes to add them</span>
+                <span className="flex items-center gap-2"><Zap size={14} className="text-yellow-400" /> Click Ghost Nodes to add</span>
                 <div className="w-px h-4 bg-white/20" />
-                <span className="flex items-center gap-2"><Info size={14} className="text-blue-400" /> Right-click active table to remove</span>
+                <span className="flex items-center gap-2"><X size={14} className="text-red-400" /> Click or Del to remove connection</span>
+                <div className="w-px h-4 bg-white/20" />
+                <span className="flex items-center gap-2"><Info size={14} className="text-blue-400" /> Right-click to remove table</span>
             </div>
         </Panel>
       </ReactFlow>

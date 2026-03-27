@@ -30,7 +30,7 @@ export default function LegacyOnboarding() {
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
 
   // API Base
-  const API_BASE = import.meta.env.DEV ? "http://localhost:8000/api" : "/api";
+  const API_BASE = "/api";
 
   const showMessage = (type: "success" | "error", text: string) => {
       setMessage({ type, text });

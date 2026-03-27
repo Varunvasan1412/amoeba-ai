@@ -20,6 +20,7 @@ class FieldMetadataUpdate(BaseModel):
     display_column: str = None
     required: bool = False
     readonly: bool = False
+    is_visible: bool = True
     default_value: str = None
 
 class FieldMetadataCreate(FieldMetadataUpdate):

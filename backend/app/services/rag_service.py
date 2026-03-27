@@ -63,10 +63,9 @@ class RagEngine:
             print(f"🧠 [RAG DEBUG] Rules Ingested (T={time.time() - start_time:.2f}s)")
             
             self._ingest_reports()
-            print(f"🧠 [RAG DEBUG] Reports Ingested (T={time.time() - start_time:.2f}s)")
             
-            # self._ingest_templates() # Assuming reports covers this or redundant calls removed?
-            # Wait, original code had duplicate calls. I'll clean that up.
+            # 3. Generate Embeddings for all static knowledge in parallel
+            await self._generate_embeddings()
             
             self.initialized = True
             print(f"🧠 [RAG DEBUG] READY! Total Init Time: {time.time() - start_time:.2f}s")
@@ -74,12 +73,33 @@ class RagEngine:
         except Exception as e:
             print(f"❌ [RAG CRASH] Initialization Failed at {time.time() - start_time:.2f}s: {e}")
 
+    async def _generate_embeddings(self):
+        """Generates embeddings for all ingested documents in parallel."""
+        docs = self.schema_docs + self.rules_docs + self.report_docs + self.template_docs
+        to_embed = [d for d in docs if d.get("embedding") is None]
+        
+        if not to_embed or not self.embedding_model:
+            return
+
+        print(f"📦 RAG: Generating embeddings for {len(to_embed)} items...")
+        
+        # Process in batches of 10 to avoid rate limits/overload
+        batch_size = 10
+        for i in range(0, len(to_embed), batch_size):
+            batch = to_embed[i:i + batch_size]
+            tasks = [self._get_embedding(d["content"]) for d in batch]
+            results = await asyncio.gather(*tasks)
+            for j, emb in enumerate(results):
+                batch[j]["embedding"] = emb
+        
+        print(f"✅ RAG: Pre-computed all embeddings.")
+
     def _setup_embeddings(self):
         """Selects the embedding provider based on config."""
         try:
             if settings.AI_PROVIDER == "GEMINI" and settings.GOOGLE_API_KEY:
                 self.embedding_model = GoogleGenerativeAIEmbeddings(
-                    model="models/text-embedding-004",
+                    model="models/gemini-embedding-001",
                     google_api_key=settings.GOOGLE_API_KEY
                 )
             elif (settings.AI_PROVIDER == "GPT4" or settings.OPENAI_API_KEY):
@@ -95,25 +115,37 @@ class RagEngine:
             self.embedding_model = None
 
     async def _get_embedding(self, text: str) -> List[float]:
-        """Wrapper to get embedding from the configured provider."""
+        """Wrapper to get embedding from the configured provider with retry logic."""
         if not self.embedding_model:
-            return None # Fallback to keyword search
-        try:
-            # Check for cache
-            if text in self.embeddings_cache:
-                return self.embeddings_cache[text]
-            
-            # Call API
-            emb = await self.embedding_model.aembed_query(text)
-            
-            # Cache (Limit size for MVP)
-            if len(self.embeddings_cache) < 1000:
-                self.embeddings_cache[text] = emb
-                
-            return emb
-        except Exception as e:
-            print(f"⚠️ Embedding Error: {e}")
             return None
+            
+        # Check for cache
+        if text in self.embeddings_cache:
+            return self.embeddings_cache[text]
+
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Call API
+                emb = await self.embedding_model.aembed_query(text)
+                
+                # Cache (Limit size for MVP)
+                if len(self.embeddings_cache) < 1000:
+                    self.embeddings_cache[text] = emb
+                    
+                return emb
+            except Exception as e:
+                err_msg = str(e)
+                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 2
+                        print(f"⚠️ [RAG] Rate limit hit. Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                        await asyncio.sleep(wait_time)
+                        continue
+                
+                print(f"⚠️ Embedding Error: {e}")
+                return None
+        return None
 
     def _cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
         """Computes cosine similarity between two vectors."""
@@ -127,10 +159,10 @@ class RagEngine:
             # Schema is usually a list of "Table: X, Columns: ..." strings or similar.
             # If it's a list:
             if isinstance(schema, list):
-                self.schema_docs = [{"content": s, "type": "schema"} for s in schema]
+                self.schema_docs = [{"content": s, "type": "schema", "embedding": None} for s in schema]
             else:
                 # If it's a big string, split by table headers or newlines
-                 self.schema_docs = [{"content": line, "type": "schema"} for line in schema.split("\n\n") if line.strip()]
+                 self.schema_docs = [{"content": line, "type": "schema", "embedding": None} for line in schema.split("\n\n") if line.strip()]
             print(f"📦 RAG: Ingested {len(self.schema_docs)} schema items.")
         except Exception as e:
             print(f"❌ RAG: Schema ingestion failed: {e}")
@@ -148,7 +180,7 @@ class RagEngine:
                     content = f.read()
                 # Split by rules
                 rules = [r.strip() for r in content.split("\n") if r.strip() and not r.startswith("#") and not r.startswith("[")]
-                self.rules_docs = [{"content": r, "type": "rule"} for r in rules]
+                self.rules_docs = [{"content": r, "type": "rule", "embedding": None} for r in rules]
                 print(f"📦 RAG: Ingested {len(self.rules_docs)} business rules.")
             else:
                 print("⚠️ RAG: No business_rules.txt found.")
@@ -164,7 +196,7 @@ class RagEngine:
                 self.report_docs = []
                 for r in reports:
                     content = f"Report: {r.get('name')} | Desc: {r.get('description')} | Tables: {r.get('supported_tables')}"
-                    self.report_docs.append({"content": content, "type": "report", "metadata": r})
+                    self.report_docs.append({"content": content, "type": "report", "metadata": r, "embedding": None})
                 print(f"📦 RAG: Ingested {len(self.report_docs)} report definitions.")
             else:
                  print("⚠️ RAG: No report_definitions.json found.")
@@ -179,7 +211,7 @@ class RagEngine:
                 # templates is a dict: "Report Name": { ... }
                 for name, details in templates.items():
                     content = f"Template: {name} | Base Table: {details.get('base_table')} | Where: {details.get('base_where')} | Aggregations: {details.get('allowed_aggregations')}"
-                    self.template_docs.append({"content": content, "type": "template", "metadata": details})
+                    self.template_docs.append({"content": content, "type": "template", "metadata": details, "embedding": None})
                 print(f"📦 RAG: Ingested {len(self.template_docs)} report templates.")
             except Exception as e:
                 print(f"❌ RAG: Template ingestion failed (Inline): {e}")
@@ -233,6 +265,7 @@ class RagEngine:
                     })
                 print(f"📦 RAG: Loaded {len(current_nav_docs)} navigation items for Client {client_id}")
             except Exception as e:
+                await session.rollback()
                 print(f"⚠️ RAG: Failed to load tenant navigation: {e}")
         
         # Combine all docs for vector search (Small < 100 items usually)
@@ -243,7 +276,10 @@ class RagEngine:
         # 2. Vector Search
         if query_embedding:
             for doc in vector_docs:
-                doc_embedding = await self._get_embedding(doc["content"])
+                doc_embedding = doc.get("embedding")
+                if not doc_embedding:
+                    doc_embedding = await self._get_embedding(doc["content"])
+                
                 score = self._cosine_similarity(query_embedding, doc_embedding)
                 if score > 0.35:
                     scored_docs.append((score, doc))

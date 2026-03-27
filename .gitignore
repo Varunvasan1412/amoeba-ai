@@ -2,7 +2,13 @@
 # Tooling & Documentation
 # ================================
 .gemini/
-*.md
+# Debug/ChatGPT report MDs (not real docs)
+AMOEBA_AI_DIAGNOSIS.md
+AMOEBA_AI_REFERENCE_FOR_CHATGPT.md
+AMOEBA_CHATGPT_DEBUG_REPORT.md
+AMOEBA_SYSTEM_REPORT_FOR_CHATGPT.md
+DEBUG_REPORT_LLM_LEAK.md
+architecture_v2.md
 
 # ================================
 # OS-Specific
@@ -132,6 +138,16 @@ postgres_data/
 /migration_output.txt
 /debug_output*.txt
 /debug_pymysql.txt
+/diag_report.txt
+/diagnose_results.txt
+/docker_status.txt
+/backend_error.txt
+/backend_full_logs.txt
+/frontend_logs.txt
+/test.txt
+/test_db_out.txt
+/test_knowledge.txt
+/empty.txt
 
 # Text outputs (backend)
 backend/debug_output.txt
@@ -139,6 +155,9 @@ backend/full_output.txt
 backend/mock_results*.txt
 backend/schema_output.txt
 backend/temp_*.txt
+backend/pdf_search_results.txt
+backend/search_results.txt
+backend/*.log
 
 # Debug / One-off Scripts (root)
 /debug_connection.py
@@ -147,27 +166,59 @@ backend/temp_*.txt
 /verify_builder_live.py
 /verify_v2_live.py
 /diagnostic.md
+/audit_clients.py
+/check_client_79.py
+/check_db.py
+/find_injected.py
+/inject_test_client.py
+/inject_test_warnings.py
+/final_inject_test_client.py
+/list_all_clients.py
+/map_clients.py
+/test_client_79_api.py
+/test_docs_api.py
+/test_mysql_discovery.py
+/test_score.py
 
 # Debug / One-off Scripts (backend)
 backend/add_column.py
+backend/apply_migration.py
 backend/check_*.py
+backend/cleanup_route.py
 backend/create_admin.py
 backend/create_client.py
 backend/debug_*.py
 backend/diagnose_models.py
 backend/dump_metadata.py
+backend/fix_*.py
 backend/fix_metadata.py
 backend/force_init.py
 backend/get_key.py
 backend/inspect_*.py
 backend/manual_fix.py
 backend/migrate_*.py
+backend/migration.py
 backend/mock_preview.py
+backend/prober.py
 backend/repair_metadata.py
+backend/search_pdfs.py
 backend/target_debug.py
 backend/test_*.py
+backend/tmp_test_*.py
 backend/update_client_url.py
 backend/verify_*.py
+
+# Debug scripts in scripts/
+scripts/diagnose_*.py
+scripts/repro_*.py
+scripts/test_*.py
+scripts/fix_env.py
+scripts/check_gemini_models.py
+
+# Frontend test/debug HTML
+frontend/public/test_*.html
+frontend/build_*.log
+frontend/error.log
 
 # ================================
 # Databases & Runtime Data

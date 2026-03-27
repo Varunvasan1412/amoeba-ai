@@ -3,7 +3,6 @@ import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
 import { useAuth } from "../context/AuthContext";
 import { LayoutDashboard, LogOut } from "lucide-react";
-import { apiFetch } from "../utils/api";
 import { SearchableDropdown } from "./admin/SearchableDropdown";
 
 export default function AdminLayout() {
@@ -23,15 +22,6 @@ export default function AdminLayout() {
           init();
       }, [token]);
   
-      const handleClientChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-          const id = parseInt(e.target.value);
-          const client = clients.find(c => c.id === id);
-          if (client) {
-              setClientId(client.id);
-              setApiKey(client.api_key);
-              setClientName(client.client_name);
-          }
-      };
 
       const handleLogout = () => {
           logout();
@@ -39,7 +29,7 @@ export default function AdminLayout() {
       };
       
     return (
-      <div className="min-h-screen bg-gray-50 font-sans text-gray-800 flex flex-col">
+      <div className="h-screen bg-gray-50 font-sans text-gray-800 flex flex-col overflow-hidden">
         {/* Header */}
         <div className="bg-slate-900 text-white p-4 px-8 flex justify-between items-center shadow-lg z-10">
             <div className="flex items-center gap-4">
@@ -72,6 +62,7 @@ export default function AdminLayout() {
                   />
                   {loading && <span className="text-xs text-slate-500 animate-pulse">Loading...</span>}
               </div>
+
 
               <div className="h-6 w-px bg-slate-700 mx-2"></div>
 

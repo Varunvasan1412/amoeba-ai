@@ -124,19 +124,23 @@ Output only valid JSON."""
 
 async def get_semantic_schema(session: AsyncSession, client_id: int) -> List[SemanticMetadata]:
     """
-    Fetch all semantic mappings for a client.
+    Fetch all semantic mappings for a client, filtering out known UI junk (like debugbars).
     """
-    statement = select(SemanticMetadata).where(SemanticMetadata.client_id == client_id)
+    statement = select(SemanticMetadata).where(
+        SemanticMetadata.client_id == client_id,
+        ~SemanticMetadata.column_name.contains("debugbar_")
+    )
     result = await session.execute(statement)
     return result.scalars().all()
 
 async def get_table_semantics(session: AsyncSession, client_id: int, table_name: str) -> List[SemanticMetadata]:
     """
-    Fetch semantic mappings for a specific table.
+    Fetch semantic mappings for a specific table, filtering out known UI junk.
     """
     statement = select(SemanticMetadata).where(
         SemanticMetadata.client_id == client_id,
-        SemanticMetadata.table_name == table_name
+        SemanticMetadata.table_name == table_name,
+        ~SemanticMetadata.column_name.contains("debugbar_")
     )
     result = await session.execute(statement)
     return result.scalars().all()

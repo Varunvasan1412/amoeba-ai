@@ -93,6 +93,7 @@ const OnboardingWizard: React.FC = () => {
           {currentStep === 3 && (
             <SemanticSuggestionStep 
               selectedTables={onboardingData.selectedTables || []} 
+              initialMappings={onboardingData.semanticMappings}
               onSuccess={(mappings) => handleStepComplete({ semanticMappings: mappings })} 
             />
           )}
