@@ -1,0 +1,26 @@
+[
+  {
+    "name": "Sales Summary",
+    "description": "Total sales amount and count of orders aggregated by time.",
+    "supported_tables": ["sales_orders", "invoices"],
+    "allowed_aggregations": ["SUM(amount)", "COUNT(id)", "AVG(amount)"],
+    "required_filters": ["date_range"],
+    "generated_file_types": ["PDF", "EXCEL"]
+  },
+  {
+    "name": "User Activity Log",
+    "description": "List of user actions and login history.",
+    "supported_tables": ["users", "audit_logs"],
+    "allowed_aggregations": ["COUNT(*)"],
+    "required_filters": ["user_id", "date_range"],
+    "generated_file_types": ["CSV", "EXCEL"]
+  },
+  {
+    "name": "Inventory Status",
+    "description": "Current stock levels and low-stock alerts.",
+    "supported_tables": ["products", "inventory"],
+    "allowed_aggregations": ["SUM(quantity)"],
+    "required_filters": ["category"],
+    "generated_file_types": ["PDF", "EXCEL"]
+  }
+]

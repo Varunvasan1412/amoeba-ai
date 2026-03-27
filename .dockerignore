@@ -1,0 +1,16 @@
+.git
+.gitignore
+pycache
+*.pyc
+*.pyo
+*.pyd
+venv
+env
+.env
+backend/venv
+backend/.env
+node_modules
+frontend/node_modules
+dist
+build
+postgres_data

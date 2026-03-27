@@ -1,6 +1,240 @@
-node_modules/
-venv/
-__pycache__/
-.env
+# ================================
+# Tooling & Documentation
+# ================================
+.gemini/
+# Debug/ChatGPT report MDs (not real docs)
+AMOEBA_AI_DIAGNOSIS.md
+AMOEBA_AI_REFERENCE_FOR_CHATGPT.md
+AMOEBA_CHATGPT_DEBUG_REPORT.md
+AMOEBA_SYSTEM_REPORT_FOR_CHATGPT.md
+DEBUG_REPORT_LLM_LEAK.md
+architecture_v2.md
+
+# ================================
+# OS-Specific
+# ================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ================================
+# Environment Variables & Secrets
+# ================================
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# ================================
+# Python
+# ================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+*.whl
 dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+.python-version
+.mypy_cache/
+.pyre_configuration
+.pytype/
+cython_debug/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+backend/venv/
+backend/env/
+
+# Pytest & Coverage
+.pytest_cache/
+backend/.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# ================================
+# Node / Frontend
+# ================================
+node_modules/
+frontend/node_modules/
+dist/
+dist-ssr/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.next
+.nuxt
+.svelte-kit
+.vercel
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+db_debug.log
+
+# ================================
+# IDE / Editor
+# ================================
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swo
+*.swn
+.project
+.settings/
+.classpath
+
+# ================================
+# Docker
+# ================================
+postgres_data/
+
+# ================================
+# Project-Specific Debug/Temp
+# ================================
+# Text outputs (root)
+/debug*.txt
+/traceback*.txt
+/backend_logs*.txt
+/backend_save_logs*.txt
+/backend_frontend_error_logs.txt
+/migration_output.txt
+/debug_output*.txt
+/debug_pymysql.txt
+/diag_report.txt
+/diagnose_results.txt
+/docker_status.txt
+/backend_error.txt
+/backend_full_logs.txt
+/frontend_logs.txt
+/test.txt
+/test_db_out.txt
+/test_knowledge.txt
+/empty.txt
+
+# Text outputs (backend)
+backend/debug_output.txt
+backend/full_output.txt
+backend/mock_results*.txt
+backend/schema_output.txt
+backend/temp_*.txt
+backend/pdf_search_results.txt
+backend/search_results.txt
+backend/*.log
+
+# Debug / One-off Scripts (root)
+/debug_connection.py
+/test_get_clients.py
+/universal_connector.py
+/verify_builder_live.py
+/verify_v2_live.py
+/diagnostic.md
+/audit_clients.py
+/check_client_79.py
+/check_db.py
+/find_injected.py
+/inject_test_client.py
+/inject_test_warnings.py
+/final_inject_test_client.py
+/list_all_clients.py
+/map_clients.py
+/test_client_79_api.py
+/test_docs_api.py
+/test_mysql_discovery.py
+/test_score.py
+
+# Debug / One-off Scripts (backend)
+backend/add_column.py
+backend/apply_migration.py
+backend/check_*.py
+backend/cleanup_route.py
+backend/create_admin.py
+backend/create_client.py
+backend/debug_*.py
+backend/diagnose_models.py
+backend/dump_metadata.py
+backend/fix_*.py
+backend/fix_metadata.py
+backend/force_init.py
+backend/get_key.py
+backend/inspect_*.py
+backend/manual_fix.py
+backend/migrate_*.py
+backend/migration.py
+backend/mock_preview.py
+backend/prober.py
+backend/repair_metadata.py
+backend/search_pdfs.py
+backend/target_debug.py
+backend/test_*.py
+backend/tmp_test_*.py
+backend/update_client_url.py
+backend/verify_*.py
+
+# Debug scripts in scripts/
+scripts/diagnose_*.py
+scripts/repro_*.py
+scripts/test_*.py
+scripts/fix_env.py
+scripts/check_gemini_models.py
+
+# Frontend test/debug HTML
+frontend/public/test_*.html
+frontend/build_*.log
+frontend/error.log
+
+# ================================
+# Databases & Runtime Data
+# ================================
+*.db
+*.sqlite
+*.sqlite3
+# Keep app-internal .db files if any
+!backend/app/**/*.db
+
+# Uploaded User Files
+backend/uploads/
+backend/static/reports/
+
+# Build Artifacts & Archives
+*.zip
+*.tar.gz
+*.rar
+frontend/build_*.log
