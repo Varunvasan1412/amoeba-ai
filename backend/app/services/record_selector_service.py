@@ -6,6 +6,9 @@ from app.models.client_config import ClientConfig
 class RecordSelectorService:
     @staticmethod
     async def get_records_for_selection(client_id: int, table_name: str, session: AsyncSession) -> List[Dict[str, Any]]:
+        if not table_name or " " in table_name:
+            raise ValueError(f"Invalid table name passed to selector: {table_name}")
+        
         """
         Fetches records with high-quality, human-readable labels.
         Concatenates multiple columns for better context.

@@ -30,6 +30,16 @@ class DBConnectionRequest(BaseModel):
 class GovernanceModeRequest(BaseModel):
     governance_mode: str
 
+class QuotaRequest(BaseModel):
+    max_documents: int
+    max_storage_mb: int
+    max_document_size_mb: int
+
+class SourcesRequest(BaseModel):
+    erp: bool
+    documents: bool
+    web: bool
+
 # --- Endpoints ---
 
 @router.post("/clients")
@@ -120,12 +130,22 @@ async def get_client_tables(
     try:
         tables = discover_tables(client.db_connection_url)
         # Auto-generate UX metadata
-        count = await generate_field_metadata(client_id, session)
-        log_audit(client_id, "field_metadata_generated", {"count": count})
+        try:
+            count = await generate_field_metadata(client_id, session)
+            log_audit(client_id, "field_metadata_generated", {"count": count})
+        except Exception as meta_err:
+            import traceback
+            print(f"❌ Field Metadata Generation Error: {meta_err}")
+            print(traceback.format_exc())
+            # We don't fail discovery just because metadata failed
         
         log_audit(client_id, "tables_discovered", {"count": len(tables)})
         return {"tables": tables}
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ Discovery failed for client {client_id}: {e}")
+        print(error_trace)
         raise HTTPException(status_code=500, detail=f"Discovery failed: {str(e)}")
 
 
@@ -143,12 +163,62 @@ async def list_clients(session: AsyncSession = Depends(get_session)):
             {
                 "id": c.id, 
                 "client_name": c.client_name,
-                "api_key": c.api_key, # Sending key so AdminContext can switch instantly
-                "governance_mode": c.governance_mode 
+                "api_key": c.api_key, 
+                "governance_mode": c.governance_mode,
+                "max_documents": c.max_documents,
+                "max_storage_mb": c.max_storage_mb,
+                "max_document_size_mb": c.max_document_size_mb,
+                "erp_enabled": c.erp_enabled,
+                "documents_enabled": c.documents_enabled,
+                "web_enabled": c.web_enabled
             } 
             for c in clients
         ]
     }
+
+@router.post("/clients/{client_id}/quota")
+async def update_client_quota(
+    client_id: int,
+    payload: QuotaRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Update document quotas for a client.
+    """
+    client = await session.get(ClientConfig, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+        
+    client.max_documents = payload.max_documents
+    client.max_storage_mb = payload.max_storage_mb
+    client.max_document_size_mb = payload.max_document_size_mb
+    
+    session.add(client)
+    await session.commit()
+    log_audit(client_id, "quota_updated", payload.dict())
+    return {"status": "success", "message": "Quotas updated successfully"}
+
+@router.post("/clients/{client_id}/sources")
+async def update_client_sources(
+    client_id: int,
+    payload: SourcesRequest,
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Toggle Knowledge Sources (ERP, Documents, Web).
+    """
+    client = await session.get(ClientConfig, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+        
+    client.erp_enabled = payload.erp
+    client.documents_enabled = payload.documents
+    client.web_enabled = payload.web
+    
+    session.add(client)
+    await session.commit()
+    log_audit(client_id, "sources_updated", payload.dict())
+    return {"status": "success", "message": "Knowledge sources updated"}
 
 @router.patch("/clients/{client_id}/governance-mode")
 async def update_governance_mode(

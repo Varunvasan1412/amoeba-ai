@@ -16,6 +16,7 @@ router = APIRouter(
 
 @router.get("", response_model=List[AllowedRelationship])
 async def list_relationships(
+    sync: bool = False,
     api_key: str = Header(None, alias="X-API-Key"),
     session: AsyncSession = Depends(get_session)
 ):
@@ -23,8 +24,7 @@ async def list_relationships(
     List all discovered relationships (Enabled & Disabled).
     """
     client_id = await get_client_id_by_key(api_key, session)
-    # This ensures sync runs if not already
-    return await get_all_relationships(session, client_id)
+    return await get_all_relationships(session, client_id, sync=sync)
 
 from pydantic import BaseModel
 

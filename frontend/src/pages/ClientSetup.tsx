@@ -25,7 +25,7 @@ export default function ClientSetup() {
 
   const [discoveredTables, setDiscoveredTables] = useState<string[]>([]);
 
-  const API_BASE = import.meta.env.DEV ? "http://localhost:8000/api" : "/api";
+  const API_BASE = import.meta.env.DEV ? "/api" : "/api";
 
   const showMessage = (type: "success" | "error", text: string) => {
       setMessage({ type, text });
@@ -36,7 +36,7 @@ export default function ClientSetup() {
   const handleCreateClient = async () => {
       setLoading(true);
       try {
-          const res = await apiFetch(`${API_BASE}/clients`, {
+          const res = await fetch('/api/clients/setup', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ client_name: newClientName })

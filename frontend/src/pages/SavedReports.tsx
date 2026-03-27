@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
-import { FileText, Calendar, Loader2, Trash2, Pencil } from "lucide-react";
+import { FileText, Calendar, Loader2, Trash2, Pencil, LayoutTemplate } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api";
 
@@ -19,7 +19,7 @@ export default function SavedReports() {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(false);
   
-  const API_BASE = import.meta.env.DEV ? "http://localhost:8000/api" : "/api";
+  const API_BASE = import.meta.env.DEV ? "/api" : "/api";
 
   useEffect(() => {
     if (!clientId || !apiKey) return;
@@ -28,7 +28,7 @@ export default function SavedReports() {
         try {
             // v2 uses ReportRegistry, which is compatible.
             // Using v2/builder/reports endpoint
-            const res = await apiFetch(`${API_BASE}/v2/builder/reports?client_id=${clientId}`, {
+            const res = await fetch(`/api/reports/saved?client_id=${clientId}`, {
                 headers: { "X-API-Key": apiKey }
             });
             // Wait, SavedReports doesn't have apiKey in context? 
@@ -79,7 +79,10 @@ export default function SavedReports() {
       try {
           const res = await apiFetch(`${API_BASE}/v2/builder/reports/${reportId}/run`, {
               method: "POST",
-              headers: { "X-API-Key": apiKey! },
+              headers: { 
+                  "X-API-Key": apiKey!,
+                  "Content-Type": "application/json"
+              },
               body: JSON.stringify({}) // Future expandability for dates
           });
           
@@ -92,7 +95,10 @@ export default function SavedReports() {
               }
           } else {
               const errData = await res.json();
-              alert(errData.detail || "Failed to generate report");
+              const errorMsg = typeof errData.detail === 'object' 
+                ? JSON.stringify(errData.detail, null, 2) 
+                : (errData.detail || "Failed to generate report");
+              alert(errorMsg);
           }
       } catch (err) {
           console.error("Run report failed", err);
@@ -106,9 +112,17 @@ export default function SavedReports() {
 
   return (
     <div>
-        <h1 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <FileText className="text-emerald-600"/> Saved Reports Library
-        </h1>
+        <div className="flex justify-between items-center mb-6">
+            <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <FileText className="text-emerald-600"/> Saved Reports Library
+            </h1>
+            <button 
+                onClick={() => navigate('/admin/builder')}
+                className="bg-emerald-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-sm shadow-emerald-200 hover:bg-emerald-700 transition flex items-center gap-2"
+            >
+                <LayoutTemplate size={18} /> Create New Report
+            </button>
+        </div>
 
         {loading ? (
              <div className="flex justify-center p-12"><Loader2 className="animate-spin text-emerald-600" size={32}/></div>

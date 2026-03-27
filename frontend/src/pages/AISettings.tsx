@@ -5,6 +5,7 @@ import {
     Sparkles, Zap, Shield, Bot, Terminal, Info
 } from "lucide-react";
 import { apiFetch } from "../utils/api";
+import { SearchableDropdown } from "../components/admin/SearchableDropdown";
 
 interface AISettingsData {
     provider: string;
@@ -136,16 +137,15 @@ export default function AISettings() {
                                         <Bot size={14}/> 2. Select Model
                                     </h3>
                                     <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                                        <select 
-                                            className="w-full bg-white border border-slate-200 p-3 rounded-xl font-bold text-slate-700 outline-none focus:ring-4 focus:ring-indigo-100 transition-all"
+                                        <SearchableDropdown
+                                            options={[
+                                                ...(providers.find(p => p.id === settings.provider)?.models.map(m => ({ value: m, label: m })) || []),
+                                                ...(settings.provider === 'ollama' ? [{ value: 'llama3', label: 'llama3' }] : [])
+                                            ]}
                                             value={settings.model}
-                                            onChange={e => setSettings({...settings, model: e.target.value})}
-                                        >
-                                            {providers.find(p => p.id === settings.provider)?.models.map(m => (
-                                                <option key={m} value={m}>{m}</option>
-                                            ))}
-                                            {settings.provider === 'ollama' && <option value="llama3">llama3</option>}
-                                        </select>
+                                            onChange={val => setSettings({ ...settings, model: val })}
+                                            placeholder="Select model..."
+                                        />
                                         <p className="text-[10px] text-slate-400 mt-3 italic">
                                             Switching models will immediately affect response quality and token usage.
                                         </p>

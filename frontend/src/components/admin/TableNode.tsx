@@ -1,6 +1,6 @@
 import React, { memo } from 'react';
 import { Handle, Position } from 'reactflow';
-import { Database, Plus } from 'lucide-react';
+import { Database, Plus, X } from 'lucide-react';
 
 interface TableNodeProps {
   data: {
@@ -8,6 +8,7 @@ interface TableNodeProps {
     columns: string[];
     isGhost?: boolean;
     onGhostClick?: (table: string) => void;
+    onRemoveClick?: () => void;
   };
 }
 
@@ -36,7 +37,21 @@ export const TableNode = memo(({ data }: TableNodeProps) => {
             <Database size={14} className="text-blue-400" />
             <span className="text-white font-bold text-xs tracking-tight uppercase">{data.label}</span>
         </div>
-        <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-500/50" />
+        <div className="flex items-center gap-1.5">
+            {data.onRemoveClick && (
+                <button 
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        data.onRemoveClick?.();
+                    }}
+                    className="p-1 hover:bg-red-500/20 rounded-md text-slate-400 hover:text-red-400 transition-colors"
+                    title="Remove Table"
+                >
+                    <X size={12} />
+                </button>
+            )}
+            <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-500/50" />
+        </div>
       </div>
       
       <div className="p-2 bg-slate-50/50">

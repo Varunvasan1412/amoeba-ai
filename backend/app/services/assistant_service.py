@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.services.rag_service import rag_engine
+from app.services.retrieval_router import route_sources, format_retrieval_context
 from app.services.greeting_service import detect_greeting
 from app.services.audit_service import log_audit
 from app.models.semantic_metadata import SemanticMetadata
@@ -11,26 +11,51 @@ import re
 import asyncio
 import traceback
 
-async def get_assistant_response(user_input: str, client_id: int, session: AsyncSession, history: list = [], memory_summary: str = "") -> Tuple[str, List[Dict[str, Any]]]:
+async def get_assistant_response(user_input: str, client_id: int, session: AsyncSession, history: list = [], memory_summary: str = "", sources: dict = None, model: str = None) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    ULTRA-FAST Assistant Mode: Bypasses embeddings and uses minimal context.
+    Assistant Mode with Multi-Source Retrieval.
+    Routes queries to selected sources (ERP, Documents, Web) before calling the LLM.
     """
+    if sources is None:
+        sources = {"erp": True, "documents": True, "web": False}
+    
+    print(f"\nACTIVE SOURCES:\nerp={sources.get('erp')}\ndocuments={sources.get('documents')}\nweb={sources.get('web')}\n")
+
     # 1. Greeting Check
     greeting_reply = detect_greeting(user_input)
     if greeting_reply:
         return greeting_reply, []
 
-    # 2. Fast RAG (Keyword only, top 3)
-    print(f"🔍 [Assistant DEBUG] Starting RAG Retrieval...", flush=True)
+    # 2. Multi-Source Retrieval
+    # Strip [SYSTEM:] context for RAG query to avoid noise, but extract filename hint
+    rag_query = user_input
+    file_hint = None
+    if "[SYSTEM: User uploaded file '" in user_input:
+        match = re.search(r"\[SYSTEM: User uploaded file '(.*?)'", user_input)
+        if match:
+            file_hint = match.group(1)
+            print(f"📎 Found attachment hint: {file_hint}")
+
+    if "[SYSTEM:" in user_input and "]" in user_input:
+        # Extract everything after the last ]
+        parts = user_input.split("]", 1)
+        if len(parts) > 1:
+            rag_query = parts[1].strip()
+    
+    if not rag_query:
+        rag_query = user_input
+
+    print(f"🔍 [Assistant] Starting Multi-Source Retrieval (query='{rag_query}', sources={sources}, hint={file_hint})...", flush=True)
     rag_start = asyncio.get_event_loop().time()
-    context = await rag_engine.retrieve_context(user_input, client_id=client_id, session=session, fast_mode=True)
-    print(f"✅ [Assistant DEBUG] RAG Finished in {asyncio.get_event_loop().time() - rag_start:.2f}s", flush=True)
+    retrieval_results = await route_sources(rag_query, sources, client_id, session, file_hint=file_hint)
+    context = format_retrieval_context(retrieval_results)
+    print(f"✅ [Assistant] Retrieval finished in {asyncio.get_event_loop().time() - rag_start:.2f}s", flush=True)
     
     # 3. Minimal Semantic Context (Skipped for Assistant Mode to maximize speed)
     semantic_context = ""
 
     # 4. Prompt
-    system_prompt = f"ERP Assistant. Brief answer based on context:\n{context[:1000]}\nNav: [NAVIGATE: /path]"
+    system_prompt = f"ERP Assistant. Brief answer based on context:\n{context[:1500]}\nNav: [NAVIGATE: /path]"
 
     messages = [SystemMessage(content=system_prompt)]
     # Keep last 4 messages (e.g., 2 exchanges) for context
@@ -44,9 +69,9 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
     messages.append(HumanMessage(content=user_input))
 
     # 5. Get Brain
-    print(f"🔍 [Assistant DEBUG] Getting AI Brain...", flush=True)
+    print(f"🔍 [Assistant DEBUG] Getting AI Brain (Override: {model})...", flush=True)
     brain_start = asyncio.get_event_loop().time()
-    res_brain = await get_brain(client_id, session)
+    res_brain = await get_brain(client_id, session, model_override=model)
     print(f"✅ [Assistant DEBUG] Brain Found in {asyncio.get_event_loop().time() - brain_start:.2f}s", flush=True)
     
     provider = res_brain[1] if res_brain else "UNKNOWN"
@@ -60,8 +85,8 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
         print(f"🚀 [Assistant] Fast-Invoke ({provider}) with {len(messages)} messages...", flush=True)
         pending_actions = []
         
-        # Increased timeout to 120s for slow local models
-        ai_msg = await asyncio.wait_for(llm.ainvoke(messages), timeout=120.0)
+        # Increased timeout to 300s for slow local models during background builds
+        ai_msg = await asyncio.wait_for(llm.ainvoke(messages), timeout=300.0)
         
         duration = asyncio.get_event_loop().time() - start_time
         print(f"✅ [Assistant] Response received in {duration:.2f}s", flush=True)
@@ -77,6 +102,36 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
                 path = nav_match.group(1).strip()
                 pending_actions.append({"type": "NAVIGATE", "payload": path})
                 content = content.replace(nav_match.group(0), "").strip()
+
+        # 6. Structured Sources & Confidence
+        doc_results = retrieval_results.get("documents", [])
+        deduped_sources = {}
+        total_score = 0
+        
+        for res in doc_results:
+            fname = res["filename"]
+            total_score += res["score"]
+            if fname not in deduped_sources:
+                deduped_sources[fname] = {"filename": fname, "pages": []}
+            if res.get("page") and res["page"] not in deduped_sources[fname]["pages"]:
+                deduped_sources[fname]["pages"].append(res["page"])
+        
+        avg_confidence = int(total_score / len(doc_results)) if doc_results else 0
+        
+        # Sort pages for each source
+        sources_payload = []
+        for s in deduped_sources.values():
+            s["pages"].sort()
+            sources_payload.append(s)
+
+        if sources_payload:
+            pending_actions.append({
+                "type": "SOURCES",
+                "payload": {
+                    "sources": sources_payload,
+                    "confidence": avg_confidence
+                }
+            })
 
         return content, pending_actions
 

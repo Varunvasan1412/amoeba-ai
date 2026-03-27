@@ -26,6 +26,7 @@ class FieldMetadata(SQLModel, table=True):
     # Form Logic
     required: bool = Field(default=False)
     readonly: bool = Field(default=False)
+    is_visible: bool = Field(default=True)
     default_value: Optional[str] = None
     
     # Audit

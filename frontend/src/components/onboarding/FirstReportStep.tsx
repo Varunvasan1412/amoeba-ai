@@ -57,7 +57,7 @@ export const FirstReportStep: React.FC<FirstReportStepProps> = ({ semanticMappin
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/v2/builder/save', {
+      const response = await fetch('/api/v2/builder/save', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,7 +73,7 @@ export const FirstReportStep: React.FC<FirstReportStepProps> = ({ semanticMappin
 
       if (response.ok) {
         // Mark onboarding as complete in backend
-        await fetch(`http://localhost:8000/api/clients/${clientId}/onboarding/complete`, {
+        await fetch(`/api/clients/${clientId}/onboarding/complete`, {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         });

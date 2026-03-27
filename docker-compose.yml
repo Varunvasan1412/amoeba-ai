@@ -28,7 +28,9 @@ services:
       - ./backend:/app
     env_file:
       - ./backend/.env
-    # Wait for DB to be healthy before starting
+    environment:
+      - PYTHONIOENCODING=utf-8
+      - LANG=C.UTF-8
     depends_on:
       db:
         condition: service_healthy

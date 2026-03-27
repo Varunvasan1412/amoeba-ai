@@ -270,15 +270,26 @@ MY_TOOLS = [
 ]
 TOOL_MAP = {t.name: t for t in MY_TOOLS}
 
-async def get_brain(client_id: int = None, session: AsyncSession = None):
+async def get_brain(client_id: int = None, session: AsyncSession = None, model_override: str = None):
     # Default values from env
     provider = settings.AI_PROVIDER.upper()
     model_name = settings.OLLAMA_MODEL
     temperature = 0.0
     
-    print(f"🕵️ [BRAIN DEBUG] Starting initialization for Client: {client_id}")
+    print(f"🕵️ [BRAIN DEBUG] Starting initialization for Client: {client_id} (Override: {model_override})")
     
-    if client_id and session:
+    if model_override:
+        model_name = model_override
+        # Determine provider based on model name
+        if "gemini" in model_override.lower():
+            provider = "GEMINI"
+        elif "gpt" in model_override.lower():
+            provider = "OPENAI"
+        else:
+            provider = "OLLAMA"
+        print(f"🎯 [BRAIN DEBUG] Using Model Override: {model_name} (Provider: {provider})")
+
+    if client_id and session and not model_override:
         try:
             stmt = select(AISettings).where(AISettings.client_id == client_id)
             res = await session.execute(stmt)
@@ -291,6 +302,7 @@ async def get_brain(client_id: int = None, session: AsyncSession = None):
             else:
                 print(f"⚠️ [BRAIN DEBUG] No DB Settings found for Client {client_id}. Using system fallback: {provider}")
         except Exception as e:
+            await session.rollback()
             print(f"❌ [BRAIN DEBUG] Error fetching DB settings for Client {client_id}: {e}")
 
     key_exists = bool(settings.GOOGLE_API_KEY) if provider == "GEMINI" else bool(settings.OPENAI_API_KEY)
@@ -336,7 +348,7 @@ async def get_brain(client_id: int = None, session: AsyncSession = None):
                     model=model_name, 
                     base_url=connected_url,
                     temperature=temperature,
-                    timeout=120
+                    timeout=300
                 )
             else:
                 print(f"❌ [BRAIN DEBUG] Ollama not reachable at any of {urls}")
@@ -353,9 +365,9 @@ async def get_brain(client_id: int = None, session: AsyncSession = None):
 
     return None, provider, None
 
-async def get_response(user_input: str, history: List[Any] = [], session: AsyncSession = None, client_id: int = None, memory_summary: str = ""): 
+async def get_response(user_input: str, history: List[Any] = [], session: AsyncSession = None, client_id: int = None, memory_summary: str = "", model_override: str = None): 
     try:
-        res_brain = await get_brain(client_id, session)
+        res_brain = await get_brain(client_id, session, model_override=model_override)
         llm_with_tools = res_brain[0] if res_brain else None
         current_provider = res_brain[1] if res_brain else "UNKNOWN"
         base_llm = res_brain[2] if res_brain else None
@@ -473,10 +485,11 @@ EOE
         for turn in range(6):
             print(f"🔄 TURN {turn+1} START", flush=True)
             try:
-                ai_msg = await asyncio.wait_for(llm_with_tools.ainvoke(messages), timeout=90.0)
+                ai_msg = await asyncio.wait_for(llm_with_tools.ainvoke(messages), timeout=300.0)
             except asyncio.TimeoutError:
-                print("💥 LLM Timeout: The model took too long to respond.")
-                return "The AI model (Ollama) is taking too long to respond (timeout). This usually happens when the local system is under heavy load. Please try again in a moment.", []
+                provider_desc = "local AI model (Ollama)" if current_provider == "OLLAMA" else f"AI service ({current_provider})"
+                print(f"💥 LLM Timeout: The {provider_desc} took too long to respond.")
+                return f"The {provider_desc} is taking too long to respond (timeout). This usually happens when the model is still loading from disk or the system is under heavy load. Please try again or wait a moment.", []
             except Exception as tool_err:
                 error_str = str(tool_err) if str(tool_err) else tool_err.__class__.__name__
                 if "does not support tools" in error_str or "400" in error_str:

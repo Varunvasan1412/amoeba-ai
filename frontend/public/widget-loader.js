@@ -25,6 +25,7 @@
   var iframe = document.createElement("iframe");
   iframe.id = IFRAME_ID;
   iframe.src = WIDGET_URL;
+  iframe.allow = "microphone";
   
   // Style Iframe (Floating Buttom Right)
   iframe.style.position = "fixed";
@@ -37,6 +38,8 @@
   iframe.style.boxShadow = "none";
   iframe.style.zIndex = "2147483647"; // Max Z-Index
   iframe.style.transition = "all 0.3s ease";
+  iframe.style.overflow = "hidden";
+  iframe.setAttribute("scrolling", "no");
   
   // Optional: Responsive on mobile
   if (window.innerWidth < 480) {
@@ -72,10 +75,10 @@
     // 3. Dynamic Resizing (Fixes "Invisible Box" & "Crease" issues)
     if (event.data && event.data.type === 'AMOEBA_RESIZE') {
         if (event.data.state === 'EXPANDED') {
-            iframe.style.width = "400px";
-            iframe.style.height = "600px";
-            iframe.style.boxShadow = "0 4px 12px rgba(0,0,0,0.15)"; // Shadow only when open
-            iframe.style.borderRadius = "12px";
+            iframe.style.width = "420px";
+            iframe.style.height = "650px";
+            iframe.style.boxShadow = "0 4px 20px rgba(0,0,0,0.2)"; // Shadow only when open
+            iframe.style.borderRadius = "16px";
         } else {
             iframe.style.width = "120px"; // Just enough for bubble
             iframe.style.height = "120px";
@@ -85,20 +88,19 @@
     }
   });
 
-  // 4. Auto-Discovery Engine v9.0 (Atomic Scan)
+  // 4. Auto-Discovery Engine v10.0 (Resilient Scan)
   function scanAndLearn() {
       const discoveredRoutes = [];
       const seenRoutes = new Set();
       const discoveredFields = [];
       const seenElements = new Set();
-      const rawInputDetails = [];
 
       function deepScan(root) {
           if (!root || seenElements.has(root)) return;
           seenElements.add(root);
 
           try {
-              // 1. Scan Links
+              // 1. Scan Links for Navigation Intelligence
               root.querySelectorAll("a").forEach(link => {
                   const text = link.innerText.trim();
                   const href = link.getAttribute('href');
@@ -108,7 +110,7 @@
                   discoveredRoutes.push({ label: text, path: href });
               });
 
-              // 2. Scan Form Elements
+              // 2. Scan Form Elements with Agnostic Discovery
               const selector = "input, select, textarea, [role='textbox'], [role='combobox']";
               const candidates = root.querySelectorAll(selector);
               
@@ -116,27 +118,46 @@
                   if (el.type === "hidden" || el.tagName === "A") return;
                   
                   const name = el.name || el.id || el.getAttribute("data-field");
-                  rawInputDetails.push({ id: el.id, name: el.name, type: el.tagName, class: el.className });
-
-                  if (!name || name.includes("DataTables") || name.startsWith("_")) return;
+                  if (!name || name.includes("DataTables") || name.startsWith("_") || name === "search") return;
 
                   let labelText = "";
-                  // Aggressive Label Search
-                  const linked = document.querySelector(`label[for="${el.id}"]`) || el.closest("label");
-                  if (linked) labelText = linked.innerText;
 
+                  // --- MULTI-TIER LABEL DISCOVERY ---
+                  
+                  // Priority 1: Browser Native labels collection
+                  if (el.labels && el.labels.length > 0) {
+                      labelText = el.labels[0].innerText;
+                  }
+
+                  // Priority 2: Explicit label[for] or closest label
+                  if (!labelText) {
+                      const linked = document.querySelector(`label[for="${el.id}"]`) || el.closest("label");
+                      if (linked) labelText = linked.innerText;
+                  }
+
+                  // Priority 3: Previous Sibling (Common in table-based layouts)
                   if (!labelText || labelText.trim().length < 2) {
                       let prev = el.previousElementSibling;
                       if (prev && prev.innerText && prev.innerText.trim().length > 1) labelText = prev.innerText;
                   }
 
+                  // Priority 4: Parent -> Parent structure (Common in Div-based ERPs)
                   if (!labelText || labelText.trim().length < 2) {
                       let p = el.parentElement;
-                      if (p && p.innerText && p.innerText.trim().length > 1) labelText = p.innerText.split("\n")[0];
+                      if (p && p.innerText && p.innerText.trim().length > 1) {
+                          // Take the first line to avoid wrapping issues
+                          labelText = p.innerText.split("\n")[0].trim();
+                      }
                   }
 
+                  // Priority 5: Attributes (Placeholder, ARIA, Title)
                   if (!labelText || labelText.trim().length < 2) {
                       labelText = el.placeholder || el.title || el.getAttribute("aria-label");
+                  }
+
+                  // Priority 6: Fallback to Name (UX Improvement: customer_name -> Customer Name)
+                  if (!labelText || labelText.trim().length < 2) {
+                      labelText = name.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, '$1 $2').toUpperCase();
                   }
 
                   if (labelText) {
@@ -152,28 +173,30 @@
                   }
               });
 
-              // 3. Shadow DOM
+              // 3. Recursive Shadow DOM Scan
               root.querySelectorAll("*").forEach(el => {
                   if (el.shadowRoot) deepScan(el.shadowRoot);
               });
 
-              // 4. Iframe / Frameset Scan
+              // 4. Multi-Frame Discovery (Iframe / Frameset)
               root.querySelectorAll("iframe, frame").forEach(frame => {
                   if (frame.id === IFRAME_ID) return;
                   try {
                       if (frame.contentDocument) deepScan(frame.contentDocument);
-                  } catch (e) {}
+                  } catch (e) {
+                      // Silently skip cross-origin iframes
+                  }
               });
 
-          } catch (e) {}
+          } catch (e) {
+              console.warn("⚠️ [Amoeba] Scan partial failure:", e);
+          }
       }
 
-      // Try absolute top window if possible, otherwise current
+      // Start recursive scan from main document
       deepScan(document);
       
-      // DIAGNOSTIC LOG
-      console.log(`🔬 Amoeba diagnostics: Seen inputs:`, rawInputDetails);
-      console.log(`🔬 Amoeba Result: Mapped ${discoveredFields.length} fields.`);
+      console.log(`🔬 [Amoeba UI] Result: Discovered ${discoveredFields.length} fields on page: ${window.location.pathname}`);
 
       if (discoveredFields.length > 0 || discoveredRoutes.length > 0) {
           const payload = {
@@ -182,37 +205,26 @@
               path: window.location.pathname
           };
           iframe.contentWindow.postMessage(payload, "*");
+          
           if (discoveredRoutes.length > 0) {
               iframe.contentWindow.postMessage({ type: "AMOEBA_DISCOVERED_ROUTES", routes: discoveredRoutes }, "*");
           }
       }
   }
 
-  setInterval(scanAndLearn, 10000); 
-  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
-  setTimeout(scanAndLearn, 2000);
+  // --- CONTROL TIMERS ---
+  // We run a scan on load, after a delay, and periodically (every 10s)
+  window.addEventListener("load", function() {
+      setTimeout(scanAndLearn, 1500); // Initial 1.5s delay
+  });
 
+  // Fallback in case load event already fired
+  if (document.readyState === "complete") {
+      setTimeout(scanAndLearn, 1500);
+  } else {
+      setTimeout(scanAndLearn, 3000); // Late fallback to ensure dynamic forms render
+  }
 
-  setInterval(scanAndLearn, 8000); 
-  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
-  setTimeout(scanAndLearn, 2000);
+  setInterval(scanAndLearn, 10000); // Periodic reinforcement
 
-
-  setInterval(scanAndLearn, 8000); 
-  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
-  setTimeout(scanAndLearn, 2000);
-
-
-  setInterval(scanAndLearn, 8000); 
-  window.addEventListener("load", () => setTimeout(scanAndLearn, 1000));
-  setTimeout(scanAndLearn, 2000);
-
-
-
-
-  // Run scan after slight delay to ensure dynamic menus load
-  window.addEventListener("load", () => setTimeout(scanAndLearn, 1500));
-  // Also run immediately in case we loaded async
-  setTimeout(scanAndLearn, 2000);
-
-})(); // <--- Properly closed IIFE
+})(); 

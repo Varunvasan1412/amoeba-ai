@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import { Search, Link2, ToggleLeft, ToggleRight, Loader2, AlertTriangle } from 'lucide-react';
 
 interface RelationshipStepProps {
   onSuccess: () => void;
@@ -10,6 +11,7 @@ export const RelationshipStep: React.FC<RelationshipStepProps> = ({ onSuccess })
   const [relationships, setRelationships] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchRelationships();
@@ -20,11 +22,8 @@ export const RelationshipStep: React.FC<RelationshipStepProps> = ({ onSuccess })
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/v2/relationships', {
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'X-API-Key': apiKey || ''
-        }
+      const response = await fetch('/api/v2/relationships', {
+        headers: { 'Authorization': `Bearer ${token}`, 'X-API-Key': apiKey || '' }
       });
       const data = await response.json();
       if (Array.isArray(data)) {
@@ -40,14 +39,12 @@ export const RelationshipStep: React.FC<RelationshipStepProps> = ({ onSuccess })
   };
 
   const toggleRelationship = async (relId: number, currentStatus: boolean) => {
-    // Optimistic update
-    setRelationships(prev => 
+    setRelationships(prev =>
       prev.map(r => r.id === relId ? { ...r, is_enabled: !currentStatus } : r)
     );
-    
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/v2/relationships/${relId}/toggle`, {
+      const response = await fetch(`/api/v2/relationships/${relId}/toggle`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -56,135 +53,156 @@ export const RelationshipStep: React.FC<RelationshipStepProps> = ({ onSuccess })
         },
         body: JSON.stringify({ is_enabled: !currentStatus })
       });
-      
       if (!response.ok) throw new Error('Failed to toggle');
-      
     } catch (err) {
       console.error('Failed to toggle connection', err);
-      // Revert on error
-      setRelationships(prev => 
+      setRelationships(prev =>
         prev.map(r => r.id === relId ? { ...r, is_enabled: currentStatus } : r)
       );
     }
   };
 
   const handleBulkAction = async (action: 'enable_all' | 'disable_all') => {
-    // We don't set global loading=true here because we want the list to stay visible
-    // while we perform the optimistic update.
     try {
       const token = localStorage.getItem('token');
-      
-      // Optimistic update - instant visual change
       setRelationships(prev => prev.map(r => ({ ...r, is_enabled: action === 'enable_all' })));
-      
-      const response = await fetch('http://localhost:8000/api/v2/relationships/bulk-update', {
+      const response = await fetch('/api/v2/relationships/bulk-update', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
           'X-API-Key': apiKey || ''
         },
-        body: JSON.stringify({ action: action })
+        body: JSON.stringify({ action })
       });
-      
-      if (!response.ok) {
-        throw new Error('Bulk action failed');
-      }
+      if (!response.ok) throw new Error('Bulk action failed');
     } catch (err) {
       console.error('Failed to perform bulk action', err);
       setError('Bulk action failed');
-      // On error, fetch from backend to revert to actual state
       await fetchRelationships();
     }
   };
 
-  const getHumanReadable = (rel: any) => {
-    const parent = rel.parent_table.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
-    const child = rel.child_table.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
-    return `${child} belongs to ${parent}`;
-  };
+  const filteredRels = relationships.filter(rel =>
+    [rel.parent_table, rel.child_table, rel.parent_column, rel.child_column]
+      .some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  const enabledCount = relationships.filter(r => r.is_enabled).length;
 
   return (
-    <div className="space-y-6">
-      <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-        <h3 className="text-blue-800 font-semibold">Step 4: Enable Data Connections</h3>
-        <p className="text-blue-600 text-sm">Amoeba AI has discovered how your data is connected. Enable these connections to allow multi-table analysis.</p>
+    <div className="flex flex-col gap-4" style={{ height: '460px' }}>
+
+      {/* Header */}
+      <div className="shrink-0">
+        <h3 className="text-lg font-bold text-gray-900">Enable Data Connections</h3>
+        <p className="text-xs text-gray-400 mt-0.5">We've discovered how your tables link together. Enable the ones you want to use for multi-table analysis.</p>
       </div>
 
+      {/* Search + bulk actions */}
+      <div className="flex items-center gap-3 shrink-0">
+        <div className="relative flex-1">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search connections..."
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:border-blue-400 bg-gray-50 focus:bg-white transition-all"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={() => handleBulkAction('enable_all')}
+          disabled={loading}
+          className="text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl border border-emerald-100 hover:bg-emerald-100 transition whitespace-nowrap"
+        >
+          Enable All
+        </button>
+        <button
+          onClick={() => handleBulkAction('disable_all')}
+          disabled={loading}
+          className="text-xs font-bold bg-gray-50 text-gray-600 px-3 py-2 rounded-xl border border-gray-200 hover:bg-gray-100 transition whitespace-nowrap"
+        >
+          Disable All
+        </button>
+      </div>
+
+      {/* Stats */}
+      {!loading && relationships.length > 0 && (
+        <div className="text-xs text-gray-400 font-medium shrink-0 -mt-2">
+          {enabledCount} of {relationships.length} connections enabled
+          {searchTerm && ` · showing ${filteredRels.length} results`}
+        </div>
+      )}
+
+      {/* Connection list */}
       {loading ? (
-        <div className="flex flex-col items-center justify-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
-          <p className="text-gray-600">Discovering connections...</p>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3">
+          <Loader2 className="animate-spin text-blue-500" size={32} />
+          <p className="text-sm text-gray-400">Discovering connections...</p>
         </div>
       ) : error ? (
-        <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200">
-          {error}
-          <button onClick={fetchRelationships} className="block mt-2 underline">Retry</button>
+        <div className="flex-1 flex flex-col items-center justify-center gap-2">
+          <AlertTriangle size={20} className="text-red-400" />
+          <p className="text-red-500 text-sm">{error}</p>
+          <button onClick={fetchRelationships} className="text-xs text-blue-600 underline">Retry</button>
         </div>
       ) : relationships.length === 0 ? (
-        <div className="text-center py-12 border-2 border-dashed rounded-lg text-gray-500">
-          <p>No connections discovered yet. You can skip this step.</p>
-          <button onClick={onSuccess} className="mt-4 bg-blue-600 text-white px-6 py-2 rounded-lg">Continue</button>
+        <div className="flex-1 flex flex-col items-center justify-center text-center gap-2 border-2 border-dashed border-gray-100 rounded-2xl">
+          <Link2 size={24} className="text-gray-300" />
+          <p className="text-gray-400 text-sm">No connections discovered yet.</p>
+          <button onClick={onSuccess} className="mt-2 bg-blue-600 text-white px-5 py-2 rounded-xl text-sm font-bold">Skip & Continue →</button>
+        </div>
+      ) : filteredRels.length === 0 ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center gap-2">
+          <Search size={20} className="text-gray-300" />
+          <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">No match for "{searchTerm}"</p>
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="flex justify-end gap-2 mb-2">
-            <button
-              onClick={() => handleBulkAction('enable_all')}
-              className="text-xs font-semibold bg-green-50 text-green-700 px-3 py-1.5 rounded-lg border border-green-200 hover:bg-green-100 transition"
-              disabled={loading}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-2 pb-2">
+          {filteredRels.map(rel => (
+            <div
+              key={rel.id}
+              onClick={() => toggleRelationship(rel.id, rel.is_enabled)}
+              className={`flex items-center justify-between px-4 py-3 rounded-xl border-2 cursor-pointer transition-all group ${
+                rel.is_enabled
+                  ? 'bg-emerald-50/50 border-emerald-200 hover:border-emerald-300'
+                  : 'bg-white border-gray-100 hover:border-gray-200'
+              }`}
             >
-              Enable All
-            </button>
-            <button
-              onClick={() => handleBulkAction('disable_all')}
-              className="text-xs font-semibold bg-gray-50 text-gray-700 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-100 transition"
-              disabled={loading}
-            >
-              Disable All
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3">
-            {relationships.map(rel => (
-              <div 
-                key={rel.id}
-                className="flex items-center justify-between p-4 bg-white border rounded-lg hover:shadow-sm transition"
-              >
-                <div>
-                  <div className="font-medium text-gray-900">{getHumanReadable(rel)}</div>
-                  <div className="text-xs text-gray-500">
+              <div className="flex items-center gap-3 min-w-0">
+                <Link2 size={14} className={rel.is_enabled ? 'text-emerald-500 shrink-0' : 'text-gray-300 shrink-0'} />
+                <div className="min-w-0">
+                  <div className="font-semibold text-sm text-gray-800 truncate">
+                    {rel.child_table.replace(/_/g, ' ')}
+                    <span className="text-gray-400 font-normal"> belongs to </span>
+                    {rel.parent_table.replace(/_/g, ' ')}
+                  </div>
+                  <div className="text-[10px] font-mono text-gray-400 truncate">
                     {rel.child_table}.{rel.child_column} → {rel.parent_table}.{rel.parent_column}
                   </div>
                 </div>
-                <div className="flex items-center">
-                  <span className={`mr-3 text-xs font-semibold px-2 py-1 rounded-full ${
-                    rel.is_enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
-                  }`}>
-                    {rel.is_enabled ? 'Enabled' : 'Disabled'}
-                  </span>
-                  <button
-                    onClick={() => toggleRelationship(rel.id, rel.is_enabled)}
-                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                      rel.is_enabled ? 'bg-blue-600' : 'bg-gray-200'
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                        rel.is_enabled ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
               </div>
-            ))}
-          </div>
+              <div className="shrink-0 ml-4">
+                {rel.is_enabled
+                  ? <ToggleRight size={24} className="text-emerald-500" />
+                  : <ToggleLeft size={24} className="text-gray-300" />
+                }
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
+      {/* Footer */}
+      {relationships.length > 0 && (
+        <div className="flex items-center justify-between shrink-0 pt-1 border-t border-gray-100">
+          <p className="text-[11px] text-gray-400">💡 Click any row to toggle a connection.</p>
           <button
             onClick={onSuccess}
-            className="w-full mt-4 bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+            className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-100"
           >
-            I'm Done with Connections
+            Done with Connections →
           </button>
         </div>
       )}

@@ -272,7 +272,24 @@ async def add_external_route(label: str, path: str, session: AsyncSession, clien
 async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, client_id: int) -> str:
     """
     Bulk adds discovered routes to the database for a specific client.
+    Enriches them with Module, Table Name, and Descriptive Labels using the Intelligence Engine.
     """
+    from app.models.client_config import ClientConfig
+    from app.services.onboarding import discover_tables
+    
+    # 0. Fetch Client Config to get DB URL for table discovery
+    client_stmt = select(ClientConfig).where(ClientConfig.id == client_id)
+    client_res = await session.execute(client_stmt)
+    client_config = client_res.scalars().first()
+    
+    db_tables = []
+    if client_config:
+        try:
+            tables_raw = discover_tables(client_config.db_connection_url)
+            db_tables = [t["name"].lower() for t in tables_raw]
+        except Exception as e:
+            print(f"⚠️ [AUTO MAP] Could not discover tables for client {client_id}: {e}")
+
     count = 0
     for item in new_routes:
         label = item.get("label", "").strip()
@@ -299,15 +316,110 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
         result = await session.execute(statement)
         existing = result.scalars().first()
         
-        if not existing:
-            new_item = NavigationItem(
-                label=label,
-                path=path,
-                client_id=client_id,
-                is_discovered=True
-            )
-            session.add(new_item)
-            count += 1
+        # 🧠 INTELLIGENCE ENGINE: Auto-Map Logic
+        if not existing or existing.module is None or existing.table_name is None:
+            module = infer_module_from_path(path)
+            entity = infer_entity_keyword(path, label)
+            matched_table = match_entity_to_table(entity, db_tables)
+            better_label = generate_friendly_label(module, entity)
+            
+            print(f"🧠 [AUTO MAP] path={path} → module={module}, table={matched_table}, label={better_label}")
+
+            if existing:
+                # Only update if current data is missing (don't override manual config)
+                if existing.module is None: existing.module = module
+                if existing.table_name is None: existing.table_name = matched_table
+                # Update label if it's too short or contains technical chars
+                if len(existing.label) < 5 or "_" in existing.label:
+                    existing.label = better_label
+            else:
+                new_item = NavigationItem(
+                    label=better_label,
+                    path=path,
+                    module=module,
+                    table_name=matched_table,
+                    client_id=client_id,
+                    is_discovered=True
+                )
+                session.add(new_item)
+                count += 1
             
     await session.commit()
-    return f"Learned {count} new routes for Client {client_id}."
+    return f"Learned {count} new routes for Client {client_id} (All enriched via Intelligence Engine)."
+
+# --- INTELLIGENCE ENGINE HELPERS ---
+
+def infer_module_from_path(path: str) -> Optional[str]:
+    """Extracts module from path (e.g., /sales/enquiry/create -> Sales)."""
+    parts = [p for p in path.split('/') if p]
+    ignored = {
+        "create", "edit", "list", "view", "index", "delete", "update", 
+        "new", "save", "search", "application", "controllers", "aspx", "php", "html",
+        "demopower04", "home", "app"
+    }
+    for p in parts:
+        clean = p.lower().split('.')[0] # remove extension
+        if clean not in ignored and not clean.isdigit():
+            return clean.capitalize()
+    return None
+
+def infer_entity_keyword(path: str, label: str) -> str:
+    """Extracts entity keyword from path or label."""
+    # 1. Try path (last meaningful segment)
+    parts = [p for p in path.split('/') if p]
+    ignored = {"create", "edit", "list", "view", "index", "delete", "update", "new", "save", "search"}
+    
+    entity = None
+    for p in reversed(parts):
+        clean = p.lower().split('.')[0]
+        if clean not in ignored and not clean.isdigit():
+            entity = clean
+            break
+            
+    if not entity:
+        # 2. Fallback to label
+        entity = label.lower().replace("create", "").replace("new", "").replace("list", "").replace("_", " ").strip()
+        
+    return entity
+
+def match_entity_to_table(entity: str, db_tables: List[str]) -> Optional[str]:
+    """Matches entity keyword against actual DB tables with support for common CRM/ERP suffixes."""
+    if not db_tables: return None
+    
+    entity = entity.lower().strip()
+    
+    # 1. Exact match
+    if entity in db_tables:
+        return entity
+        
+    # 2. Suffix matches (_detail, _master, _header, _head, _ms, _tran)
+    # Common in ERP/CRM systems
+    for suffix in ["_detail", "_master", "_header", "_head", "_tran", "_ms"]:
+        if f"{entity}{suffix}" in db_tables:
+            return f"{entity}{suffix}"
+            
+    # 3. Contains match (Fallback)
+    for t in db_tables:
+        if entity in t:
+            return t
+            
+    return None
+
+def generate_friendly_label(module: Optional[str], entity: str) -> str:
+    """Generates a premium, friendly label (e.g., Sales Enquiry)."""
+    # Clean entity
+    display_entity = entity.replace("_", " ").title()
+    
+    # Basic Singularization
+    if display_entity.endswith("ies"):
+        display_entity = display_entity[:-3] + "y"
+    elif display_entity.endswith("s") and not display_entity.endswith("ss"):
+        display_entity = display_entity[:-1]
+        
+    if module:
+        # Avoid redundancy (e.g., "Sales Sales Order" -> "Sales Order")
+        if module.lower() in display_entity.lower():
+            return display_entity
+        return f"{module} {display_entity}"
+        
+    return display_entity

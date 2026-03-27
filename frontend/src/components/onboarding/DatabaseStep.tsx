@@ -44,7 +44,7 @@ export const DatabaseStep: React.FC<DatabaseStepProps> = ({ onSuccess }) => {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:8000/api/clients', {
+      const response = await fetch('/api/clients/setup-db', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -79,7 +79,7 @@ export const DatabaseStep: React.FC<DatabaseStepProps> = ({ onSuccess }) => {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:8000/api/clients/${localClientId}/database`, {
+      const response = await fetch(`/api/clients/${localClientId}/database`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

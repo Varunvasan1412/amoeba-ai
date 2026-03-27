@@ -102,11 +102,11 @@ async def generate_safe_sql(session: AsyncSession, client_id: int, request: Dict
             # Helper to get active tables from labels
             def get_tables_with_requested_columns():
                 tbls = set()
-                for l in requested_labels:
-                    actual_l = l
+                for col_entry in requested_labels:
+                    actual_l = col_entry.get("name") if isinstance(col_entry, dict) else col_entry
                     table_hint = None
-                    if ":" in l:
-                        parts = l.split(":", 1)
+                    if ":" in actual_l:
+                        parts = actual_l.split(":", 1)
                         table_hint = parts[0]
                         actual_l = parts[1]
                     meta = _resolve_meta(actual_l, table_hint)
@@ -134,7 +134,15 @@ async def generate_safe_sql(session: AsyncSession, client_id: int, request: Dict
             if len(requested_labels) == 0 and len(aggregations) == 0 and len(sa_cols) == 0:
                 raise HTTPException(status_code=400, detail="No columns or aggregations selected.")
 
-            for label in requested_labels:
+            for col_entry in requested_labels:
+                # Handle both legacy string format and new dict format
+                if isinstance(col_entry, dict):
+                    label = col_entry.get("name")
+                    custom_alias = col_entry.get("label")
+                else:
+                    label = col_entry
+                    custom_alias = None
+
                 # Check for qualified name format "table:label"
                 target_table_hint = None
                 actual_label = label
@@ -152,8 +160,9 @@ async def generate_safe_sql(session: AsyncSession, client_id: int, request: Dict
                 if col_name not in t_obj.columns:
                      raise HTTPException(status_code=400, detail=f"Column '{col_name}' not found in table '{meta.table_name}'.")
                 
-                # Use actual label as alias
-                sa_cols.append(t_obj.columns[col_name].label(actual_label))
+                # Use custom alias if provided, otherwise fallback to actual label
+                alias = custom_alias if custom_alias else actual_label
+                sa_cols.append(t_obj.columns[col_name].label(alias))
 
             for agg in aggregations:
                 col_label = agg["column"]
@@ -232,11 +241,12 @@ async def generate_safe_sql(session: AsyncSession, client_id: int, request: Dict
 
             if len(aggregations) > 0 and len(requested_labels) > 0:
                 gb_cols = []
-                for l in requested_labels:
+                for col_entry in requested_labels:
+                    # Handle both formats for group by resolution
+                    actual_l = col_entry.get("name") if isinstance(col_entry, dict) else col_entry
                     target_table_hint = None
-                    actual_l = l
-                    if ":" in l:
-                        parts = l.split(":", 1)
+                    if ":" in actual_l:
+                        parts = actual_l.split(":", 1)
                         target_table_hint = parts[0]
                         actual_l = parts[1]
 

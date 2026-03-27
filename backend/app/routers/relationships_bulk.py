@@ -31,7 +31,7 @@ async def bulk_update(
     client_id = await get_client_id_by_key(api_key, session)
     action = payload.get("action")
     
-    valid_actions = ["auto_unlock_safe", "auto_unlock_heuristics", "enable_all", "disable_all", "enable_safe", "disable_heuristic"]
+    valid_actions = ["auto_unlock_safe", "auto_unlock_heuristics", "enable_all", "disable_all", "enable_safe", "disable_heuristic", "purge_all", "refresh_discovery"]
     if action not in valid_actions:
         raise HTTPException(status_code=400, detail=f"Invalid action: {action}")
         

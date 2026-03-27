@@ -34,17 +34,58 @@ def _calculate_risk(method: str, parent: str, child: str) -> tuple[str, float]:
 
 async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[str, Dict[str, Dict[str, str]]]:
     """
-    Returns the Relationship Graph for a client.
-    Format:
-    {
-      "sales": {
-         "customers": {"local_column": "customer_id", "remote_column": "id"}
-      }
-    }
+    Returns the Relationship Graph for a client from ENABLED database records.
     """
     if client_id in _RELATIONSHIP_CACHE:
         return _RELATIONSHIP_CACHE[client_id]
 
+    # Build FINAL Bidirectional Graph from ALL Enabled DB Records
+    from sqlmodel import select
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.client_id == client_id,
+        AllowedRelationship.is_enabled == True,
+        AllowedRelationship.is_restricted == False
+    )
+    all_db_rels = (await session.execute(stmt)).scalars().all()
+    
+    builder_graph = {}
+    
+    # Initialize all possible tables as nodes
+    all_tables = set()
+    for r in all_db_rels:
+        all_tables.add(r.parent_table)
+        all_tables.add(r.child_table)
+    
+    for t in all_tables:
+        builder_graph[t] = {}
+
+    for rel in all_db_rels:
+        # Add Forward: Child -> Parent (Natural Join Path)
+        builder_graph[rel.child_table][rel.parent_table] = {
+            "local_column": rel.child_column,
+            "remote_column": rel.parent_column,
+            "direction": "forward",
+            "method": rel.risk_level,
+            "selected_columns": rel.selected_columns or []
+        }
+        # Add Reverse: Parent -> Child (Discovery Path)
+        builder_graph[rel.parent_table][rel.child_table] = {
+            "local_column": rel.parent_column,
+            "remote_column": rel.child_column,
+            "direction": "reverse",
+            "method": rel.risk_level,
+            "selected_columns": rel.selected_columns or []
+        }
+
+    print(f"DEBUG: Graph built from DB. Enabled Bidirectional Joins: {sum(len(v) for v in builder_graph.values())}")
+    
+    _RELATIONSHIP_CACHE[client_id] = builder_graph
+    return builder_graph
+
+async def discover_and_sync_relationships(session: AsyncSession, client_id: int) -> List[AllowedRelationship]:
+    """
+    Runs schema discovery and syncs results to the database.
+    """
     # 1. Fetch Client DB Connection
     client_config = await session.get(ClientConfig, client_id)
     if not client_config:
@@ -58,9 +99,9 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
         schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
     except Exception as e:
         print(f"Relationship Discovery Failed for Client {client_id}: {e}")
-        return {}
+        return []
 
-    # 3. Build Graph
+    # 3. Build Raw Discovery Graph
     graph = {}
     for table_name in schema_data.keys():
         graph[table_name] = {}
@@ -72,98 +113,43 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
             referred_table = fk["referred_table"]
             if not fk["constrained_columns"] or not fk["referred_columns"] or referred_table not in schema_data:
                 continue
-
             local_col = fk["constrained_columns"][0]
             remote_col = fk["referred_columns"][0]
-            
-            # Forward Link
-            graph[table_name][referred_table] = {
-                "local_column": local_col,
-                "remote_column": remote_col,
-                "direction": "forward",
-                "method": "explicit"
-            }
-            # Reverse Link
-            graph[referred_table][table_name] = {
-                "local_column": remote_col,
-                "remote_column": local_col,
-                "direction": "reverse",
-                "method": "explicit"
-            }
+            graph[table_name][referred_table] = {"local_column": local_col, "remote_column": remote_col, "direction": "forward", "method": "explicit"}
+            graph[referred_table][table_name] = {"local_column": remote_col, "remote_column": local_col, "direction": "reverse", "method": "explicit"}
 
-    # 3b. Heuristic (Semantic) Discovery
-    print(f"DEBUG: Starting Heuristic Discovery for Client {client_id}")
+    # 3b. Heuristic Discovery
     for table_name, data in schema_data.items():
         columns = data.get("columns", [])
-        # Lowercase columns for matching
-        lower_cols = [c.lower() for c in columns]
-        
         for col in columns:
             l_col = col.lower()
             if (l_col.endswith("_id") or l_col.endswith("id")) and l_col != "id":
-                # Possible relationship
-                # Try to extract base name: country_id -> country, countryId -> country
                 base_name = l_col[:-3] if l_col.endswith("_id") else l_col[:-2]
-                
-                # Potential candidate tables (normalized to lowercase for matching)
                 candidates = [base_name, f"master_{base_name}", f"marketing_{base_name}"]
-                
                 for candidate in candidates:
-                    # Case-insensitive table search
-                    matched_table = None
-                    for actual_table in schema_data.keys():
-                        if actual_table.lower() == candidate:
-                            matched_table = actual_table
-                            break
-                            
+                    matched_table = next((t for t in schema_data.keys() if t.lower() == candidate), None)
                     if matched_table and matched_table != table_name:
-                        # Ensure candidate has an 'id' column (case-insensitive)
                         cand_cols = [c.lower() for c in schema_data[matched_table]["columns"]]
                         if "id" in cand_cols:
-                            # Found Heuristic Relationship
                             if matched_table not in graph[table_name]:
-                                print(f"DEBUG: ✅ Linked {table_name}.{col} -> {matched_table}.id (Heuristic)")
-                                graph[table_name][matched_table] = {
-                                    "local_column": col,
-                                    "remote_column": "id",
-                                    "direction": "forward",
-                                    "method": "heuristic"
-                                }
-                                # Reverse link: Parent -> Child
+                                graph[table_name][matched_table] = {"local_column": col, "remote_column": "id", "direction": "forward", "method": "heuristic"}
                                 if table_name not in graph[matched_table]:
-                                    graph[matched_table][table_name] = {
-                                        "local_column": "id",
-                                        "remote_column": col,
-                                        "direction": "reverse",
-                                        "method": "heuristic"
-                                    }
+                                    graph[matched_table][table_name] = {"local_column": "id", "remote_column": col, "direction": "reverse", "method": "heuristic"}
                             break 
 
-    # 4. Sync with Governance Layer & Include Manual Joins
-    # We will build the builder_graph directly from the ENABLED records in the database.
-    # This ensures that both Discovered and Manual joins work.
-
+    # 4. Sync Discovery to DB
     from sqlmodel import select
-    
-    # Fetch all relationships from DB for this client
     stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)
     all_db_rels = (await session.execute(stmt)).scalars().all()
-    
-    # Track existing pairs to avoid duplicates during discovery sync
     db_rel_map = {(r.parent_table.lower(), r.child_table.lower()): r for r in all_db_rels}
     
-    # ---------------------------------------------------------
-    # A. Sync New Discoveries to DB first
-    # ---------------------------------------------------------
     new_rels_to_add = []
     mode = client_config.governance_mode or "guided"
     
     def determine_default_status(parent: str, child: str, method: str) -> bool:
         if "password" in child or "secret" in child: return False
         if mode == "strict": return False
-        if mode == "simple": return True
-        if mode == "guided": return True
-        return False
+        return True
 
     for table_a, relations in graph.items():
         for table_b, meta in relations.items():
@@ -195,47 +181,9 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
     if new_rels_to_add:
         session.add_all(new_rels_to_add)
         await session.commit()
-        # Refresh to get IDs
-        stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)
-        all_db_rels = (await session.execute(stmt)).scalars().all()
-
-    # ---------------------------------------------------------
-    # B. Build FINAL Bidirectional Graph from ALL Enabled DB Records
-    # ---------------------------------------------------------
-    builder_graph = {}
     
-    # Initialize all possible tables as nodes
-    all_tables = set()
-    for r in all_db_rels:
-        all_tables.add(r.parent_table)
-        all_tables.add(r.child_table)
-    
-    for t in all_tables:
-        builder_graph[t] = {}
-
-    for rel in all_db_rels:
-        if rel.is_enabled and not rel.is_restricted:
-            # Add Forward: Child -> Parent (Natural Join Path)
-            builder_graph[rel.child_table][rel.parent_table] = {
-                "local_column": rel.child_column,
-                "remote_column": rel.parent_column,
-                "direction": "forward",
-                "method": rel.risk_level,
-                "selected_columns": rel.selected_columns or []
-            }
-            # Add Reverse: Parent -> Child (Discovery Path)
-            builder_graph[rel.parent_table][rel.child_table] = {
-                "local_column": rel.parent_column,
-                "remote_column": rel.child_column,
-                "direction": "reverse",
-                "method": rel.risk_level,
-                "selected_columns": rel.selected_columns or []
-            }
-
-    print(f"DEBUG: Discovery & DB Sync Complete. Enabled Bidirectional Joins: {sum(len(v) for v in builder_graph.values())}")
-    
-    _RELATIONSHIP_CACHE[client_id] = builder_graph
-    return builder_graph
+    clear_relationship_cache(client_id)
+    return await get_all_relationships(session, client_id)
 
 async def bulk_update_relationships(session: AsyncSession, client_id: int, action: str) -> dict:
     """
@@ -265,10 +213,22 @@ async def bulk_update_relationships(session: AsyncSession, client_id: int, actio
             # Reset to zero
             rel.is_enabled = False
             count += 1
+        elif action == "purge_all":
+            # Permanently delete from DB
+            await session.delete(rel)
+            count += 1
         
-        session.add(rel)
+        if action != "purge_all":
+            session.add(rel)
     
     await session.commit()
+
+    if action == "refresh_discovery":
+        # Clear cache and re-run discovery
+        clear_relationship_cache(client_id)
+        new_rels = await discover_and_sync_relationships(session, client_id)
+        return {"status": "success", "updated_count": len(new_rels), "message": "Discovery refreshed"}
+
     clear_relationship_cache(client_id)
     return {"status": "success", "updated_count": count}
 
@@ -394,13 +354,13 @@ async def validate_join_path(session: AsyncSession, client_id: int, graph: Dict[
 
     return validated_steps
 
-async def get_all_relationships(session: AsyncSession, client_id: int) -> List[AllowedRelationship]:
+async def get_all_relationships(session: AsyncSession, client_id: int, sync: bool = False) -> List[AllowedRelationship]:
     """
     Returns ALL relationships (enabled or disabled) for Admin UI.
-    First ensures discovery is run to populate the DB.
+    Optionally triggers discovery.
     """
-    # Force discovery run to sync DB
-    await get_relationship_graph(session, client_id)
+    if sync:
+        await discover_and_sync_relationships(session, client_id)
     
     from sqlmodel import select
     stmt = select(AllowedRelationship).where(AllowedRelationship.client_id == client_id)

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SearchableDropdown } from './admin/SearchableDropdown';
 
 interface FormField {
   field: string;
@@ -15,9 +16,10 @@ interface DynamicFormProps {
   onSubmit: (data: any) => void;
   onCancel: () => void;
   title?: string;
+  darkMode?: boolean;
 }
 
-const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, title }) => {
+const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, title, darkMode }) => {
   const [formData, setFormData] = useState<any>(() => {
     const initial: any = {};
     fields.forEach(f => {
@@ -61,41 +63,36 @@ const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, t
   };
 
   return (
-    <div className="bg-white p-4 rounded-lg shadow-md border border-gray-200 my-2">
-      {title && <h3 className="text-lg font-semibold mb-3 text-gray-800">{title}</h3>}
+    <div className={`${darkMode ? 'bg-gray-800 border-gray-700 shadow-xl' : 'bg-white border-gray-200 shadow-md'} p-4 rounded-lg border my-2 transition-colors`}>
+      {title && <h3 className={`text-lg font-semibold mb-3 ${darkMode ? 'text-gray-100' : 'text-gray-800'}`}>{title}</h3>}
       <form onSubmit={handleSubmit} className="space-y-4">
         {fields.map((f) => (
           <div key={f.field} className="flex flex-col">
-            <label className="text-sm font-medium text-gray-700 mb-1">
+            <label className={`text-sm font-medium mb-1 ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
               {f.label} {f.required && <span className="text-red-500">*</span>}
             </label>
             
             {f.type === 'textarea' ? (
               <textarea
-                className="border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-24"
+                className={`border rounded px-3 py-2 text-sm outline-none h-24 transition-all ${darkMode ? 'bg-gray-700 border-gray-600 text-white focus:ring-blue-900/50 focus:border-blue-500' : 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/20 focus:border-blue-500'}`}
                 required={f.required}
                 value={formData[f.field] || ''}
                 onChange={(e) => handleChange(f.field, e.target.value)}
               />
             ) : f.type === 'dropdown' ? (
-              <select
-                className="border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                required={f.required}
+              <SearchableDropdown
+                options={f.options || []}
                 value={formData[f.field] || ''}
-                onChange={(e) => handleChange(f.field, e.target.value)}
-              >
-                <option value="">Select {f.label}</option>
-                {f.options?.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                onChange={(val: any) => handleChange(f.field, val)}
+                placeholder={`Select ${f.label}`}
+                className="w-full"
+                theme={darkMode ? 'dark' : 'light'}
+              />
             ) : (
               <input
                 type={f.type === 'currency' ? 'number' : f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
                 step={f.type === 'currency' ? '0.01' : '1'}
-                className="border rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                className={`border rounded px-3 py-2 text-sm outline-none transition-all ${darkMode ? 'bg-gray-700 border-gray-600 text-white focus:ring-blue-900/50 focus:border-blue-500' : 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/20 focus:border-blue-500'}`}
                 required={f.required}
                 value={formData[f.field] || ''}
                 onChange={(e) => handleChange(f.field, e.target.value)}
@@ -114,7 +111,7 @@ const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, t
           <button
             type="button"
             onClick={onCancel}
-            className="bg-gray-200 text-gray-700 px-4 py-2 rounded text-sm font-medium hover:bg-gray-300 transition-colors"
+            className={`px-4 py-2 rounded text-sm font-medium transition-colors ${darkMode ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
           >
             Cancel
           </button>

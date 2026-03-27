@@ -41,7 +41,7 @@ def generate_pdf_report(data: str, filename: str = "report.pdf", filename_overri
             y -= 20
             
         c.save()
-        return f"Report generated: {filepath}"
+        return filepath
     except Exception as e:
         return f"Error generating PDF: {e}"
 
@@ -64,7 +64,7 @@ def generate_excel_report(data_list: list, filename_override: str = None) -> str
         df = pd.DataFrame(data_list)
         df.to_excel(filepath, index=False)
         
-        return f"Excel generated: {filepath}"
+        return filepath
     except Exception as e:
         return f"Error generating Excel: {e}"
 
@@ -110,7 +110,7 @@ def export_sql_to_excel(query: str, filename_override: str = None) -> str:
             df = pd.read_sql(query, conn)
             df.to_excel(filepath, index=False)
             
-        return f"Excel generated successfully: {filepath} ({len(df)} rows)"
+        return filepath
         
     except Exception as e:
         return f"Error exporting to Excel: {e}"
