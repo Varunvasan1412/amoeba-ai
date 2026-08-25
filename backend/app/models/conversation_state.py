@@ -11,6 +11,7 @@ class ConversationState(SQLModel, table=True):
     intent: str  # create, read, update, delete
     entity_name: str
     module: Optional[str] = Field(default=None)
+    view_mode: str = Field(default="table")
     current_step: str
     collected_data: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
-import { MessageCircle, Send, Loader2, Trash2, Plus, Square, Pencil, Sun, Moon, Paperclip, SlidersHorizontal, Building2, FileText, X, CheckCircle2, AlertCircle, Maximize, Brain, Cpu, Mic } from "lucide-react";
+import { MessageCircle, Send, Loader2, Trash2, Plus, MessageSquare, Square, Pencil, Sun, Moon, Paperclip, SlidersHorizontal, Building2, FileText, X, CheckCircle2, AlertCircle, Maximize, Mic, Download, RefreshCw } from "lucide-react";
+import { toast } from "react-toastify";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DynamicForm from "./DynamicForm";
 import { useAdmin } from "../context/AdminContext";
+import { apiFetch } from "../utils/api";
 
 type ChatMessage = {
   role: "user" | "ai";
@@ -33,13 +35,60 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
   const success = msg.actions?.find(a => a.type === "success");
   const switchModeAction = msg.actions?.find(a => a.type === "SWITCH_MODE");
   const sourcesAction = msg.actions?.find(a => a.type === "SOURCES");
+  const dataTable = msg.actions?.find(a => a.type === "data_table");
   
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState("");
+  const [viewingSource, setViewingSource] = useState<any>(null);
+  const [viewingText, setViewingText] = useState<string | null>(null);
+  const [structuredPreview, setStructuredPreview] = useState<{headers: string[], rows: any[]} | null>(null);
+  const [loadingText, setLoadingText] = useState(false);
+  const [tablePage, setTablePage] = useState(0);
 
   const filteredRecords = recordSelection?.payload?.filter((r: any) => 
     r.label.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
+
+  // Handle fetching text for non-PDF previews
+  useEffect(() => {
+    if (viewingSource && !viewingSource.filename.toLowerCase().endsWith('.pdf')) {
+      const ext = viewingSource.filename.toLowerCase().split('.').pop();
+      setLoadingText(true);
+      setStructuredPreview(null);
+      setViewingText(null);
+
+      const docId = viewingSource.document_id || viewingSource.metadata?.document_id;
+
+      // Try structured first
+      if ((ext === 'csv' || ext === 'xlsx') && docId) {
+          apiFetch(`/api/documents/${docId}/preview`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+              if (data) {
+                  setStructuredPreview(data);
+              } else {
+                  return apiFetch(`/api/documents/download/${docId}_${viewingSource.filename}`).then(r => r.text());
+              }
+          })
+          .then(text => { if (typeof text === 'string') setViewingText(text.slice(0, 10000)); })
+          .catch(() => {})
+          .finally(() => setLoadingText(false));
+      } else {
+          const path = (docId && viewingSource.filename) 
+                       ? `/api/documents/download/${docId}_${viewingSource.filename}` 
+                       : (viewingSource.filepath || `/api/documents/download/${viewingSource.filename}`);
+          
+          apiFetch(path)
+          .then(res => res.text())
+          .then(text => setViewingText(text.slice(0, 10000)))
+          .catch(() => setViewingText("Failed to load document content."))
+          .finally(() => setLoadingText(false));
+      }
+    } else {
+      setViewingText(null);
+      setStructuredPreview(null);
+    }
+  }, [viewingSource]);
 
   return (
     <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
@@ -54,15 +103,140 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
         }`}
         >
         {msg.role === "user" ? (
-            <div className="flex flex-col">
-                <span>{msg.text}</span>
+            <div className="flex flex-col gap-1 whitespace-pre-wrap">
+                {msg.text.startsWith("📎") ? (
+                    (() => {
+                        const [filePart, ...textParts] = msg.text.split("\n");
+                        const rawFile = filePart.replace("📎", "").trim();
+                        const [fileName, downloadPath] = rawFile.includes("|") ? rawFile.split("|", 2) : [rawFile, ""];
+                        const messageText = textParts.join("\n").trim();
+                        return (
+                            <>
+                                {downloadPath ? (
+                                    <a
+                                        href={downloadPath}
+                                        download
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium w-fit border shadow-sm cursor-pointer transition-all hover:scale-[1.02] ${
+                                            darkMode 
+                                            ? "bg-blue-900/30 border-blue-800/50 text-blue-300 hover:bg-blue-900/50" 
+                                            : "bg-blue-50 border-blue-100 text-blue-700 hover:bg-blue-100"
+                                        }`}
+                                        title="Click to download"
+                                    >
+                                        <Download size={14} />
+                                        <span>{fileName}</span>
+                                    </a>
+                                ) : (
+                                    <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium w-fit border shadow-sm ${
+                                        darkMode 
+                                        ? "bg-blue-900/30 border-blue-800/50 text-blue-300" 
+                                        : "bg-blue-50 border-blue-100 text-blue-700"
+                                    }`}>
+                                        <FileText size={14} />
+                                        <span>{fileName}</span>
+                                    </div>
+                                )}
+                                {messageText && <span>{messageText}</span>}
+                            </>
+                        );
+                    })()
+                ) : (
+                    <span>{msg.text}</span>
+                )}
                 {msg.is_edited && (
                     <span className="text-[9px] opacity-60 mt-1 italic text-right">Edited</span>
                 )}
             </div>
-        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction) ? (
-            <div className={`whitespace-pre-wrap font-sans text-sm ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
-                {msg.text}
+        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction || dataTable) ? (
+            <div className={`font-sans text-sm ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                {/* Paginated Data Table */}
+                {dataTable && dataTable.payload && (() => {
+                    const { headers, rows, total } = dataTable.payload;
+                    const PAGE_SIZE = 10;
+                    const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+                    const pageRows = rows.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE);
+                    return (
+                        <div className="overflow-x-auto my-1">
+                            <table className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                                <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-100'}>
+                                    <tr>
+                                        {headers.map((h: string) => (
+                                            <th key={h} className={`px-2 py-1.5 text-left font-semibold border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pageRows.map((row: any, i: number) => (
+                                        <tr key={i} className={`${darkMode ? 'hover:bg-gray-700/50' : 'hover:bg-blue-50/50'} transition-colors`}>
+                                            {headers.map((h: string) => (
+                                                <td key={h} className={`px-2 py-1 border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-600'}`}>{row[h] || ''}</td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {totalPages > 1 && (
+                                <div className={`flex items-center justify-between mt-2 px-1 text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                    <span>Page {tablePage + 1} of {totalPages} ({total} records)</span>
+                                    <div className="flex gap-1">
+                                        <button 
+                                            onClick={() => setTablePage(p => Math.max(0, p - 1))}
+                                            disabled={tablePage === 0}
+                                            className={`px-2 py-1 rounded border font-medium transition-all ${
+                                                tablePage === 0 
+                                                ? (darkMode ? 'border-gray-700 text-gray-600 cursor-not-allowed' : 'border-gray-200 text-gray-300 cursor-not-allowed')
+                                                : (darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100')
+                                            }`}
+                                        >← Prev</button>
+                                        <button 
+                                            onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))}
+                                            disabled={tablePage >= totalPages - 1}
+                                            className={`px-2 py-1 rounded border font-medium transition-all ${
+                                                tablePage >= totalPages - 1 
+                                                ? (darkMode ? 'border-gray-700 text-gray-600 cursor-not-allowed' : 'border-gray-200 text-gray-300 cursor-not-allowed')
+                                                : (darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100')
+                                            }`}
+                                        >Next →</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
+                
+                <div className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 overflow-hidden ${darkMode ? 'prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-300' : 'prose-pre:bg-gray-50 prose-pre:text-gray-700'}`}>
+                    <ReactMarkdown 
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                            a: ({ node, ...props }) => (
+                                <a 
+                                    {...props} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 underline hover:text-blue-800 transition-colors cursor-pointer font-bold"
+                                />
+                            ),
+                            table: ({ node, ...props }) => (
+                                <div className="overflow-x-auto my-2">
+                                    <table {...props} className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`} />
+                                </div>
+                            ),
+                            thead: ({ node, ...props }) => (
+                                <thead {...props} className={darkMode ? 'bg-gray-700' : 'bg-gray-100'} />
+                            ),
+                            th: ({ node, ...props }) => (
+                                <th {...props} className={`px-3 py-1.5 text-left font-semibold border ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`} />
+                            ),
+                            td: ({ node, ...props }) => (
+                                <td {...props} className={`px-3 py-1 border ${darkMode ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-600'}`} />
+                            )
+                        }}
+                    >
+                        {msg.text}
+                    </ReactMarkdown>
+                </div>
                 {success && (
                     <div className={`mt-2 font-bold flex items-center gap-2 ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
                         <span>✅</span> {success.payload}
@@ -92,6 +266,20 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                                 }
                             }}
                         />
+                    ),
+                    table: ({ node, ...props }) => (
+                        <div className="overflow-x-auto my-2">
+                            <table {...props} className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`} />
+                        </div>
+                    ),
+                    thead: ({ node, ...props }) => (
+                        <thead {...props} className={darkMode ? 'bg-gray-700' : 'bg-gray-100'} />
+                    ),
+                    th: ({ node, ...props }) => (
+                        <th {...props} className={`px-3 py-1.5 text-left font-semibold border ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`} />
+                    ),
+                    td: ({ node, ...props }) => (
+                        <td {...props} className={`px-3 py-1 border ${darkMode ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-600'}`} />
                     )
                 }}
             >
@@ -152,7 +340,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                                 </span>
                             )}
                             <button 
-                                onClick={() => console.log("View source:", src.filename)}
+                                onClick={() => setViewingSource(src)}
                                 className={`ml-1 font-bold ${darkMode ? "text-blue-400 hover:text-blue-300" : "text-blue-600 hover:text-blue-700"}`}
                             >
                                 View
@@ -169,6 +357,98 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                         <span>Confidence: {sourcesAction.payload.confidence}%</span>
                     </div>
                 )}
+            </div>
+        )}
+
+        {/* Source Preview Modal */}
+        {viewingSource && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in shadow-2xl">
+                <div className={`w-full max-w-4xl h-[85vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden border transition-theme ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-100"}`}>
+                    <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
+                                <FileText size={20} />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-sm md:text-base truncate max-w-[300px] md:max-w-md text-gray-900 dark:text-white">{viewingSource.filename}</h3>
+                                {viewingSource.pages && viewingSource.pages.length > 0 && (
+                                    <span className="text-xs opacity-80 text-gray-600 dark:text-gray-300">
+                                        Referenced {viewingSource.pages.length > 1 ? `Pages: ${viewingSource.pages.join(", ")}` : `Page: ${viewingSource.pages[0]}`}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <button onClick={() => setViewingSource(null)} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                            <X size={20} />
+                        </button>
+                    </div>
+                    
+                    <div className="flex-1 w-full bg-gray-100 dark:bg-black/50 overflow-hidden relative">
+                        {viewingSource.document_id && viewingSource.filename.toLowerCase().endsWith('.pdf') ? (
+                            <iframe 
+                                src={`/api/documents/download/${viewingSource.document_id}_${viewingSource.filename}#page=${viewingSource.pages && viewingSource.pages.length > 0 ? viewingSource.pages[0] : 1}`}
+                                className="w-full h-full border-none"
+                                title={viewingSource.filename}
+                            />
+                        ) : loadingText ? (
+                            <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-500">
+                                <RefreshCw size={32} className="animate-spin text-blue-600 mb-4" />
+                                <p className="text-xs font-medium animate-pulse">Analyzing structure...</p>
+                            </div>
+                        ) : structuredPreview ? (
+                            <div className="w-full h-full overflow-auto bg-white dark:bg-gray-950">
+                                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800 border-collapse table-auto">
+                                    <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0 z-10 shadow-sm">
+                                        <tr>
+                                            {structuredPreview.headers.map((h, i) => (
+                                                <th key={i} className="px-3 py-2 text-left text-[9px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-800 whitespace-nowrap">
+                                                    {h}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                        {structuredPreview.rows.map((row, i) => (
+                                            <tr key={i} className="hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors">
+                                                {structuredPreview.headers.map((h, j) => (
+                                                    <td key={j} className="px-3 py-2 text-[10px] text-gray-600 dark:text-gray-300 border-r border-gray-50 dark:border-gray-800 last:border-r-0 max-w-[200px] truncate">
+                                                        {String(row[h] !== null ? row[h] : '')}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : viewingText ? (
+                            <div className={`w-full h-full p-4 overflow-auto ${darkMode ? "bg-gray-900" : "bg-white"}`}>
+                                <pre className={`text-[10px] font-mono whitespace-pre-wrap selection:bg-blue-100 ${darkMode ? "text-gray-300" : "text-gray-800"}`}>
+                                    {viewingText}
+                                </pre>
+                            </div>
+                        ) : (
+                            <div className="p-8 flex flex-col gap-4 max-w-lg mx-auto h-full justify-center text-center">
+                                <div className="p-4 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded-full w-fit mx-auto">
+                                    <AlertCircle size={32} />
+                                </div>
+                                <h4 className={`font-bold text-lg ${darkMode ? "text-white" : "text-gray-900"}`}>Rich Preview Unavailable</h4>
+                                <p className={`text-xs opacity-80 leading-relaxed mb-4 ${darkMode ? "text-gray-300" : "text-gray-600"}`}>
+                                    Rich previews for **DOCX** and **XLSX** files are currently processed into knowledge. 
+                                    You can ask questions about this document here, or download the original file to view it locally.
+                                </p>
+                                {(viewingSource.document_id || viewingSource.metadata?.document_id) && (
+                                    <a 
+                                        href={`/api/documents/download/${viewingSource.document_id || viewingSource.metadata.document_id}_${viewingSource.filename}`}
+                                        download
+                                        className="py-2.5 px-6 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-all w-fit mx-auto"
+                                    >
+                                        <Download size={14} className="inline mr-2" /> Download to View
+                                    </a>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         )}
 
@@ -312,8 +592,7 @@ export default function ChatWidget() {
     const saved = localStorage.getItem("amoeba_chat_mode");
     return (saved === "operations") ? "operations" : "assistant";
   });
-  const [aiConfig, setAiConfig] = useState<{provider: string, model: string} | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem("amoeba_selected_model") || "gemini-2.0-flash-lite");
+  const [aiConfig, setAiConfig] = useState<{provider: string, model: string, total_tokens_used?: number} | null>(null);
   const [isEditingIndex, setIsEditingIndex] = useState<number | null>(null);
   const [editPreserveCount, setEditPreserveCount] = useState<number | null>(null);
   const [sources, setSources] = useState<{erp: boolean, documents: boolean, web: boolean}>(() => {
@@ -335,10 +614,6 @@ export default function ChatWidget() {
   });
   const [historyPointer, setHistoryPointer] = useState<number>(-1);
   
-  useEffect(() => {
-    localStorage.setItem("amoeba_selected_model", selectedModel);
-  }, [selectedModel]);
-
   const hasInitialScrolled = useRef(false);
 
   // Persist sources selection
@@ -389,7 +664,7 @@ export default function ChatWidget() {
       const handleMessage = async (event: MessageEvent) => {
           if (event.data && event.data.type === "AMOEBA_DISCOVERED_ROUTES") {
               try {
-                  const res = await fetch(`${API_BASE}/routes/learn?api_key=${currentApiKey}`, {
+                  const res = await apiFetch(`${API_BASE}/routes/learn?api_key=${currentApiKey}`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify(event.data.routes)
@@ -402,7 +677,7 @@ export default function ChatWidget() {
 
           if (event.data && event.data.type === "AMOEBA_DISCOVERED_FIELDS" && clientId) {
               try {
-                  await fetch(`${API_BASE}/ui-schema`, {
+                  await apiFetch(`${API_BASE}/ui-schema`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
@@ -424,13 +699,14 @@ export default function ChatWidget() {
   const socketRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasFetchedRef = useRef(false);
+  const pendingNewAIMessage = useRef(true);
 
   const [attachment, setAttachment] = useState<{ name: string; path: string } | null>(null);
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (type === 'success') toast.success(message);
+    else if (type === 'error') toast.error(message);
+    else toast.info(message);
   };
 
   const fetchHistory = useCallback(async () => {
@@ -439,7 +715,7 @@ export default function ChatWidget() {
 
     setIsLoadingHistory(true);
     try {
-      const res = await fetch(`${API_BASE}/history?api_key=${currentApiKey}&session_id=${currentSessionId}`);
+      const res = await apiFetch(`${API_BASE}/history?api_key=${currentApiKey}&session_id=${currentSessionId}`);
       if (!res.ok) throw new Error("Failed to fetch history");
       const data = await res.json();
 
@@ -457,7 +733,7 @@ export default function ChatWidget() {
 
       // Fetch AI Config for model indicator
       try {
-        const configRes = await fetch(`${API_BASE}/ai-config?api_key=${currentApiKey}`);
+        const configRes = await apiFetch(`${API_BASE}/ai-config?api_key=${currentApiKey}`);
         if (configRes.ok) {
           const configData = await configRes.json();
           setAiConfig(configData);
@@ -475,6 +751,12 @@ export default function ChatWidget() {
   }, [currentApiKey, currentSessionId, API_BASE]);
 
   const setupWebSocket = useCallback(() => {
+    if (socketRef.current) {
+        socketRef.current.onclose = null;
+        socketRef.current.onerror = null;
+        socketRef.current.close();
+        socketRef.current = null;
+    }
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host; 
@@ -506,31 +788,29 @@ export default function ChatWidget() {
 
         if (payload.type === "done") {
              setIsTyping(false);
+             (window as any).__lastAmoebaMsg = null; // Reset dedup for next turn
              return;
         }
 
         // 1. Text & Action Response
         if (payload.text) {
+             // Dedup: generate a fingerprint to avoid processing same response twice
+             const msgFingerprint = payload.text.slice(0, 80) + (payload.actions ? JSON.stringify(payload.actions).slice(0, 40) : '');
+             if ((window as any).__lastAmoebaMsg === msgFingerprint) {
+                 console.log('[Amoeba] Skipping duplicate WS message');
+                 return;
+             }
+             (window as any).__lastAmoebaMsg = msgFingerprint;
+             // Always clear after done signal
+             
+             pendingNewAIMessage.current = false;
              setMessages((prev: ChatMessage[]) => {
-                 const lastMsg = prev[prev.length - 1];
-                 if (lastMsg && lastMsg.role === "ai") {
-                     // Append to current AI message
-                     const updated = [...prev];
-                     updated[updated.length - 1] = {
-                         ...lastMsg,
-                         text: (lastMsg.text || "") + payload.text,
-                         actions: payload.actions || lastMsg.actions || []
-                     };
-                     return updated;
-                 } else {
-                     // New AI message
-                     return [...prev, { 
-                         role: "ai" as const, 
-                         text: payload.text,
-                         actions: payload.actions || [],
-                         timestamp: Date.now()
-                     }];
-                 }
+                 return [...prev, { 
+                     role: "ai" as const, 
+                     text: payload.text,
+                     actions: payload.actions || [],
+                     timestamp: Date.now()
+                 }];
              });
         }
         
@@ -554,7 +834,8 @@ export default function ChatWidget() {
       setIsConnected(false);
       setIsTyping(false); 
       setTimeout(() => {
-        if (isOpen) {
+        // Prevent reconnecting if the component unmounted or widget is closed
+        if (isOpen && socketRef.current === null) {
           setupWebSocket();
         }
       }, 3000);
@@ -569,14 +850,21 @@ export default function ChatWidget() {
   }, [isOpen]);
 
   useEffect(() => {
+    let isActive = true;
+
     if (isOpen && !socketRef.current) {
       fetchHistory().then(() => {
-        setupWebSocket();
+        if (isActive) {
+          setupWebSocket();
+        }
       });
     }
 
     return () => {
-      if (!isOpen && socketRef.current) {
+      isActive = false;
+      if (socketRef.current) {
+        socketRef.current.onclose = null;
+        socketRef.current.onerror = null;
         socketRef.current.close();
         socketRef.current = null;
       }
@@ -607,6 +895,7 @@ export default function ChatWidget() {
         displayInput = `📎 ${attachment.name}\n${input}`;
     }
 
+    pendingNewAIMessage.current = true;
     const userMessage = { role: "user" as const, text: displayInput };
     setMessages((prev) => [...prev, userMessage]);
     
@@ -616,8 +905,7 @@ export default function ChatWidget() {
         api_key: currentApiKey,
         session_id: currentSessionId,
         is_edit: false,
-        sources,
-        model: selectedModel
+        sources
     };
     socketRef.current.send(JSON.stringify(payload));
     
@@ -647,6 +935,7 @@ export default function ChatWidget() {
     // Capture current messages as context before optimistic update
     const preservedHistory = messages.map((m) => ({ role: m.role, content: m.text || "" }));
 
+    pendingNewAIMessage.current = true;
     setMessages((prev) => [...prev, { role: "user", text: input, is_edited: true }]);
     
     const payload = {
@@ -657,8 +946,7 @@ export default function ChatWidget() {
         is_edit: true,
         preserve_count: editPreserveCount ?? 0,
         history_context: preservedHistory,
-        sources,
-        model: selectedModel
+        sources
     };
     
     socketRef.current.send(JSON.stringify(payload));
@@ -715,7 +1003,7 @@ export default function ChatWidget() {
     formData.append("client_id", String(clientId || "1"));
 
     try {
-        const res = await fetch(`${API_BASE}/documents/upload`, {
+        const res = await apiFetch(`${API_BASE}/documents/upload`, {
             method: "POST",
             body: formData
         });
@@ -753,6 +1041,7 @@ export default function ChatWidget() {
         const textToSend = index !== undefined ? index.toString() : label;
         
         // Show the label as a user message for visual consistency
+        pendingNewAIMessage.current = true;
         const userMessage = { role: "user" as const, text: label };
         setMessages((prev) => [...prev, userMessage]);
         
@@ -762,8 +1051,7 @@ export default function ChatWidget() {
                  mode: chatMode,
                  api_key: currentApiKey,
                  session_id: currentSessionId,
-                 sources,
-                 model: selectedModel
+                 sources
              };
              socketRef.current.send(JSON.stringify(payload));
              setIsTyping(true);
@@ -773,6 +1061,7 @@ export default function ChatWidget() {
     /* Helper to handle form submission */
     const handleFormSubmit = useCallback((data: any) => {
         const text = JSON.stringify(data);
+        pendingNewAIMessage.current = true;
         const userMessage = { role: "user" as const, text: "Submitted form details." };
         setMessages((prev) => [...prev, userMessage]);
         
@@ -782,8 +1071,7 @@ export default function ChatWidget() {
                  mode: chatMode,
                  api_key: currentApiKey,
                  session_id: currentSessionId,
-                 sources,
-                 model: selectedModel
+                 sources
              };
              socketRef.current.send(JSON.stringify(payload));
              setIsTyping(true);
@@ -801,8 +1089,7 @@ export default function ChatWidget() {
             mode: newMode,
             api_key: currentApiKey,
             session_id: currentSessionId,
-            sources,
-            model: selectedModel
+            sources
         };
         socketRef.current.send(JSON.stringify(payload));
         setIsTyping(true);
@@ -910,23 +1197,6 @@ export default function ChatWidget() {
                     <div className="flex flex-col">
                         <div className="flex items-center gap-2">
                             <span className="text-sm font-bold tracking-tight text-white/95">Amoeba AI</span>
-                            {/* Model Selector Mini */}
-                            <div className={`flex p-0.5 rounded-lg items-center gap-0.5 shadow-inner ${darkMode ? 'bg-gray-800' : 'bg-slate-800'}`}>
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); setSelectedModel("gemini-2.0-flash-lite"); }}
-                                    className={`p-1 rounded-md transition-all ${selectedModel.includes("gemini") ? (darkMode ? 'bg-blue-600 text-white' : 'bg-blue-500 text-white shadow-sm') : 'text-gray-500 hover:text-gray-400'}`}
-                                    title="Gemini"
-                                >
-                                    <Brain size={10} />
-                                </button>
-                                <button 
-                                    onClick={(e) => { e.stopPropagation(); setSelectedModel("llama3:latest"); }}
-                                    className={`p-1 rounded-md transition-all ${selectedModel.includes("llama") ? (darkMode ? 'bg-purple-600 text-white' : 'bg-purple-500 text-white shadow-sm') : 'text-gray-500 hover:text-gray-400'}`}
-                                    title="Ollama"
-                                >
-                                    <Cpu size={10} />
-                                </button>
-                            </div>
                         </div>
                         <div className="flex items-center gap-1.5 ">
                             <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? "bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.5)]" : "bg-red-500 animate-pulse"}`} />
@@ -978,13 +1248,13 @@ export default function ChatWidget() {
             <div className="flex items-center justify-between gap-3">
                 <div className={`flex p-1 rounded-2xl items-center gap-1 w-full ${darkMode ? 'bg-gray-800' : 'bg-slate-800'}`}>
                     <button 
-                        onClick={() => handleSwitchAndResend("assistant")}
+                        onClick={() => setChatMode("assistant")}
                         className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${chatMode === "assistant" ? (darkMode ? 'bg-gray-700 text-blue-400 shadow-md ring-1 ring-white/5' : 'bg-slate-700 text-white shadow-md border border-slate-600') : 'text-gray-500 hover:text-gray-300'}`}
                     >
                         Assistant
                     </button>
                     <button 
-                        onClick={() => handleSwitchAndResend("operations")}
+                        onClick={() => setChatMode("operations")}
                         className={`flex-1 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${chatMode === "operations" ? (darkMode ? 'bg-gray-700 text-blue-400 shadow-md ring-1 ring-white/5' : 'bg-slate-700 text-white shadow-md border border-slate-600') : 'text-gray-500 hover:text-gray-300'}`}
                     >
                         Operations
@@ -994,6 +1264,9 @@ export default function ChatWidget() {
                     <div className="flex flex-col items-end">
                         <span className={`text-[10px] font-black tracking-[0.2em] uppercase whitespace-nowrap opacity-80 ${darkMode ? 'text-blue-500' : 'text-blue-400'}`}>
                             {aiConfig.model.split(':')[0]}
+                        </span>
+                        <span className={`text-[9px] font-bold mt-0.5 ${darkMode ? 'text-yellow-400/80' : 'text-yellow-600/80'}`}>
+                            💰 {aiConfig.total_tokens_used?.toLocaleString() || 0} TOKENS
                         </span>
                     </div>
                 )}
@@ -1255,21 +1528,6 @@ export default function ChatWidget() {
           )}
         </button>
       )}
-        {/* Toast Notifications */}
-        {toast && (
-          <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl border animate-in fade-in slide-in-from-bottom-4 transition-all ${
-            toast.type === 'success' 
-              ? (darkMode ? 'bg-green-900/90 border-green-800 text-green-100' : 'bg-green-50 border-green-100 text-green-800')
-              : toast.type === 'error'
-              ? (darkMode ? 'bg-red-900/90 border-red-800 text-red-100' : 'bg-red-50 border-red-100 text-red-800')
-              : (darkMode ? 'bg-blue-900/90 border-blue-800 text-blue-100' : 'bg-blue-50 border-blue-100 text-blue-800')
-          }`}>
-            {toast.type === 'success' && <CheckCircle2 size={18} className="text-green-500" />}
-            {toast.type === 'error' && <AlertCircle size={18} className="text-red-500" />}
-            {toast.type === 'info' && <Loader2 size={18} className="animate-spin text-blue-500" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </div>
-        )}
 
       <style>{`
         .transition-theme {

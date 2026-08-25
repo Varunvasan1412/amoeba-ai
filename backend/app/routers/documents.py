@@ -3,13 +3,17 @@ import asyncio
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query
+from fastapi.responses import FileResponse
 from sqlmodel import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.models.document import Document
 from app.services.document_ingestion_service import ingest_document
+from app.services.audit_service import log_event
+from app.security.permission_guard import require_permission
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -17,7 +21,40 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".csv", ".xlsx"}
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
-@router.post("/upload")
+
+# --- FILE DOWNLOAD ENDPOINT ---
+@router.get("/download/{filename}", dependencies=[Depends(require_permission("view_logs"))])
+async def download_file(filename: str):
+    """Serves an uploaded file for download."""
+    file_path = os.path.join(UPLOAD_DIR, filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="File not found.")
+    
+    # Security: Prevent path traversal
+    abs_upload = os.path.abspath(UPLOAD_DIR)
+    abs_file = os.path.abspath(file_path)
+    if not abs_file.startswith(abs_upload):
+        raise HTTPException(status_code=403, detail="Access denied.")
+    
+    # Strip the ID prefix for a clean download name (e.g., "5_resume.pdf" -> "resume.pdf")
+    clean_name = filename
+    if "_" in filename:
+        clean_name = filename.split("_", 1)[1]
+    
+    import mimetypes
+    mime_type, _ = mimetypes.guess_type(file_path)
+    if not mime_type:
+        mime_type = "application/octet-stream"
+    
+    return FileResponse(
+        path=file_path,
+        filename=clean_name,
+        media_type=mime_type,
+        content_disposition_type="inline"
+    )
+
+
+@router.post("/upload", dependencies=[Depends(require_permission("upload_document"))])
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -119,9 +156,26 @@ async def upload_document(
     # 6) Trigger Background Ingestion
     background_tasks.add_task(ingest_document, doc.id, file_path, resolved_client_id)
     
-    return {"message": "Upload started", "document_id": doc.id}
+    log_event(
+        client_id=resolved_client_id,
+        action="UPLOAD",
+        entity=f"Document: {file.filename}",
+        table_name="documents",
+        record_id=str(doc.id),
+        source="USER",
+        status="SUCCESS",
+        details={"filename": file.filename, "file_size": file_size}
+    )
+    
+    # Return filepath for frontend download link
+    return {
+        "message": "Upload started", 
+        "document_id": doc.id,
+        "filepath": f"/api/documents/download/{safe_filename}"
+    }
 
-@router.get("")
+
+@router.get("", dependencies=[Depends(require_permission("view_logs"))])
 async def list_documents(
     client_id: int, 
     page: int = 1, 
@@ -167,7 +221,29 @@ async def list_documents(
         "page_size": page_size
     }
 
-@router.delete("/all")
+
+@router.get("/metrics", dependencies=[Depends(require_permission("view_logs"))])
+async def get_document_metrics(client_id: int, session: AsyncSession = Depends(get_session)):
+    """Returns storage and document count metrics for a specific client."""
+    from app.services.document_service import calculate_storage_usage
+    from app.models.client_config import ClientConfig
+    
+    # 1. Get database stats
+    stats = await calculate_storage_usage(client_id, session)
+    
+    # 2. Get client limits from config
+    client = await session.get(ClientConfig, client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Client configuration not found")
+        
+    return {
+        "storage_used_mb": stats["total_storage_mb"],
+        "storage_limit_mb": client.max_storage_mb,
+        "document_count": stats["document_count"],
+        "document_limit": client.max_documents
+    }
+
+@router.delete("/all", dependencies=[Depends(require_permission("delete_system_data"))])
 async def delete_all_documents(client_id: int, force: bool = Query(False), session: AsyncSession = Depends(get_session)):
     """
     Deletes ALL documents and chunks for a specific client.
@@ -195,7 +271,7 @@ async def delete_all_documents(client_id: int, force: bool = Query(False), sessi
     print(f"\nBULK DELETE TRIGGERED: client_id={client_id}\n")
     return {"message": f"All documents for client {client_id} have been deleted."}
 
-@router.delete("/{document_id}")
+@router.delete("/{document_id}", dependencies=[Depends(require_permission("delete_record"))])
 async def delete_document(document_id: int, force: bool = Query(False), session: AsyncSession = Depends(get_session)):
     """
     Deletes a document, its metadata, and all associated vector chunks.
@@ -226,9 +302,21 @@ async def delete_document(document_id: int, force: bool = Query(False), session:
         os.remove(file_path)
 
     print(f"\nDOCUMENT DELETED:\ndocument_id: {document_id}\nfilename: {doc.filename}\n")
+    
+    log_event(
+        client_id=doc.client_id,
+        action="DELETE",
+        entity=f"Document: {doc.filename}",
+        table_name="documents",
+        record_id=str(document_id),
+        source="USER",
+        status="SUCCESS",
+        details={"filename": doc.filename}
+    )
+    
     return {"message": "Document and associated knowledge deleted successfully."}
 
-@router.post("/{document_id}/reindex")
+@router.post("/{document_id}/reindex", dependencies=[Depends(require_permission("update_record"))])
 async def reindex_document(
     document_id: int, 
     background_tasks: BackgroundTasks, 
@@ -268,8 +356,20 @@ async def reindex_document(
     background_tasks.add_task(ingest_document, doc.id, file_path, doc.client_id)
     
     print(f"\nDOCUMENT REINDEXED:\ndocument_id: {document_id}\nfilename: {doc.filename}\n")
+    
+    log_event(
+        client_id=doc.client_id,
+        action="REINDEX",
+        entity=f"Document: {doc.filename}",
+        table_name="documents",
+        record_id=str(document_id),
+        source="USER",
+        status="SUCCESS",
+        details={"filename": doc.filename}
+    )
+    
     return {"message": "Reindexing triggered."}
-@router.post("/{document_id}/retry")
+@router.post("/{document_id}/retry", dependencies=[Depends(require_permission("update_record"))])
 async def retry_document(
     document_id: int, 
     background_tasks: BackgroundTasks, 
@@ -307,10 +407,58 @@ async def retry_document(
     background_tasks.add_task(ingest_document, doc.id, file_path, doc.client_id)
     
     print(f"\nDOCUMENT RETRY TRIGGERED:\ndocument_id: {document_id}\nfilename: {doc.filename}\n")
+    
+    log_event(
+        client_id=doc.client_id,
+        action="RETRY",
+        entity=f"Document: {doc.filename}",
+        table_name="documents",
+        record_id=str(document_id),
+        source="USER",
+        status="SUCCESS",
+        details={"filename": doc.filename}
+    )
+    
     return {"message": "Retry triggered successfully.", "document_id": document_id}
 
+@router.get("/{document_id}/preview", dependencies=[Depends(require_permission("view_logs"))])
+async def get_document_preview(document_id: int, session: AsyncSession = Depends(get_session)):
+    """Returns a structured preview (JSON) for CSV and XLSX files."""
+    doc = await session.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    ext = os.path.splitext(doc.filename)[1].lower()
+    if ext not in {".csv", ".xlsx"}:
+        raise HTTPException(status_code=400, detail="Structured preview only available for CSV and XLSX.")
+    
+    safe_filename = f"{doc.id}_{doc.filename}"
+    file_path = os.path.join(UPLOAD_DIR, safe_filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Physical file missing on server.")
+    
+    try:
+        import pandas as pd
+        if ext == ".csv":
+            # Use sep=None and engine='python' for auto-detection of delimiters
+            # Use encoding='utf-8-sig' to handle BOM
+            df = pd.read_csv(file_path, nrows=50, sep=None, engine='python', encoding='utf-8-sig')
+        else:
+            df = pd.read_excel(file_path, nrows=50)
+        
+        # Replace NaN with None for JSON compatibility
+        df = df.where(pd.notnull(df), None)
+        
+        return {
+            "filename": doc.filename,
+            "headers": df.columns.tolist(),
+            "rows": df.to_dict(orient="records")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)}")
+
 # --- ADMIN QUOTA MANAGEMENT (Step 5) ---
-@router.post("/admin/client/{target_client_id}/quota")
+@router.post("/admin/client/{target_client_id}/quota", dependencies=[Depends(require_permission("configure_system"))])
 async def update_client_quota(
     target_client_id: int,
     max_documents: Optional[int] = None,

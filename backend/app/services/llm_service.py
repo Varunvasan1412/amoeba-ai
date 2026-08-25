@@ -232,18 +232,20 @@ async def tool_delete_navigation(label: str):
     return await delete_navigation_item_db(label)
 
 @tool
-async def tool_lookup_route(query: str, session: Any = None, client_id: Any = None):
+async def tool_lookup_route(query: str, client_id: int):
     """
     Look up the exact URL path for a page using a natural language query.
     USE THIS BEFORE `tool_navigate_frontend` if the user gives a generic name like "Sales Report" or "Unit Master".
     Returns the path (e.g. "sterling_company/...") or suggestions.
     """
-    if not session or not client_id:
+    if not client_id:
         return "Internal Error: Navigation context missing."
-    return await lookup_external_route(query, session, client_id)
+    from app.core.database import async_session
+    async with async_session() as session:
+        return await lookup_external_route(query, session, client_id)
 
 @tool
-async def tool_learn_route(label: str, path: str, keywords: str = "", session: Any = None, client_id: Any = None):
+async def tool_learn_route(label: str, path: str, keywords: str = "", client_id: int = None):
     """
     Teach the AI a new route shortcut.
     Use this when the user says "Remember that 'My Page' is at 'sterling/my_page'".
@@ -252,10 +254,12 @@ async def tool_learn_route(label: str, path: str, keywords: str = "", session: A
         path: The actual URL path.
         keywords: CAUTION: Comma-separated keywords (e.g. "my, page, custom").
     """
-    if not session or not client_id:
+    if not client_id:
         return "Internal Error: Navigation context missing."
     kw_list = [k.strip() for k in keywords.split(",")] if keywords else []
-    return await add_external_route(label, path, session, client_id, kw_list)
+    from app.core.database import async_session
+    async with async_session() as session:
+        return await add_external_route(label, path, session, client_id, kw_list)
 
 MY_TOOLS = [
     tool_calculate_sales, tool_generate_pdf, tool_generate_excel, tool_display_table,
@@ -321,7 +325,7 @@ async def get_brain(client_id: int = None, session: AsyncSession = None, model_o
         elif provider == "OPENAI" or provider == "GPT4":
             if settings.OPENAI_API_KEY:
                 llm = ChatOpenAI(
-                    model=model_name if "gpt" in model_name else "gpt-4-turbo",
+                    model=model_name if "gpt" in model_name else "gpt-5.6-luna",
                     api_key=settings.OPENAI_API_KEY,
                     temperature=temperature
                 )
@@ -431,6 +435,8 @@ RULES:
 3. DATE HANDLING:
    - If 'DETECTED DATE RANGE' is provided above, USE IT in your SQL WHERE clauses (e.g. `order_date BETWEEN '{date_start}' AND '{date_end}'`).
    - Do NOT use '2023' or 'this month' in SQL. Use the specific dates.
+   - 🕒 TEMPORAL PRIORITY: When a user asks for records "from this week/month", prioritize filtering on `created_at`, `creation_date`, or `date` columns. Avoid using "effective" range columns unless the user is specifically asking about availability.
+   - 🕒 TRANSPARENCY: When responding to a temporal query, ALWAYS explicitly state the resolved date range (e.g., "From 2026-04-08 to 2026-04-15") so the user knows exactly what timeframe was queried.
 
 4. SQL SAFETY (TWO-PHASE WRITE):
    - READ (SELECT) is allowed.
@@ -465,9 +471,14 @@ RULES:
      - Step 1: Call `tool_inspect_database()`.
      - Step 2: Use specialized CRUD tools (`tool_create_erp_record`, etc.).
      - 🛑 CRITICAL: Do NOT use raw SQL tools for standard record management.
+     - 🛑 CRITICAL: Use the exact JSON format. 'table_name' MUST be at the top level of arguments.
+     - Example: {{"table_name": "products", "filters_json": {{"status": "active"}}, "limit": 10}}
 
 EOE
 """
+        if "Extract filters for table" in user_input or "Your task is to parse filters" in user_input:
+            system_prompt_text = f"You are a headless JSON parsing utility. You NEVER chat. You NEVER explain. You NEVER construct SQL. You ONLY output a single, structurally valid JSON object matching the requested schema. Use the following dynamic date context if needed: {date_context_str}"
+
         system_message = SystemMessage(content=system_prompt_text)
         messages = [system_message]
 
@@ -481,11 +492,29 @@ EOE
 
         messages.append(HumanMessage(content=user_input))
         pending_actions = []
+        session_total_tokens = 0
+        
+        # 🚨 FORCE JSON MODE FOR DELEGATED READS ON OLLAMA
+        if "OLLAMA" in current_provider.upper() and ("Extract filters for table" in user_input or "Your task is to parse filters" in user_input or "[SYSTEM: Execute READ/AGGREGATE" in user_input):
+            print("🔧 [BRAIN] Forcing strict format='json' for Ollama read delegation.")
+            llm_with_tools = base_llm.bind(format="json")
+
         
         for turn in range(6):
             print(f"🔄 TURN {turn+1} START", flush=True)
             try:
                 ai_msg = await asyncio.wait_for(llm_with_tools.ainvoke(messages), timeout=300.0)
+                
+                # --- NEW: TOKEN USAGE LOGGING ---
+                if hasattr(ai_msg, "response_metadata") and "token_usage" in ai_msg.response_metadata:
+                    usage = ai_msg.response_metadata["token_usage"]
+                    in_tokens = usage.get("prompt_tokens", 0)
+                    out_tokens = usage.get("completion_tokens", 0)
+                    total_tokens = usage.get("total_tokens", 0)
+                    session_total_tokens += total_tokens
+                    print(f"💰 [TOKEN USAGE] Input: {in_tokens} | Output: {out_tokens} | Total: {total_tokens}")
+                # --------------------------------
+                
             except asyncio.TimeoutError:
                 provider_desc = "local AI model (Ollama)" if current_provider == "OLLAMA" else f"AI service ({current_provider})"
                 print(f"💥 LLM Timeout: The {provider_desc} took too long to respond.")
@@ -503,18 +532,64 @@ EOE
             tool_calls = ai_msg.tool_calls
             if not tool_calls:
                 final_text = ai_msg.content
-                if final_text.strip().startswith("{") and "text" in final_text:
-                     try:
-                         data = json.loads(final_text)
-                         if "text" in data:
-                             final_text = data["text"]
-                     except:
-                         pass
-                if final_text.strip() == "{}":
-                    final_text = "I'm here! How can I help you with the ERP system?"
-                return final_text, pending_actions
+                
+                # --- OLLAMA FALLBACK PARSER ---
+                # Smaller models tend to output {"name": "tool_read_...} OR {"tool": "tool_read_..."} 
+                # as literal text instead of using native tool bindings.
+                import re
+                json_match = re.search(r'(\{[\s\S]*"(name|tool)"[\s\S]*"tool_[a-zA-Z_]+"[\s\S]*\})', final_text)
+                if json_match:
+                    try:
+                        raw_tool = json.loads(json_match.group(1))
+                        t_name = raw_tool.get("name") or raw_tool.get("tool")
+                        t_args = raw_tool.get("parameters") or raw_tool.get("args")
+                        
+                        # If the AI put args at the top level (very common for small models)
+                        if not t_args:
+                            # Filter out known non-arg keys to treat the rest as args
+                            t_args = {k: v for k, v in raw_tool.items() if k not in ["name", "tool", "parameters", "args"]}
+
+                        if t_name and t_args is not None:
+                            tool_calls = [{
+                                "name": t_name,
+                                "args": t_args,
+                                "id": "call_ollama_fallback"
+                            }]
+                            # CRITICAL: Mutate the ai_msg so the ToolMessage isn't orphaned
+                            ai_msg.tool_calls = tool_calls
+                            ai_msg.content = "" # clear the ugly json from chat
+                            
+                            print(f"🔧 [OLLAMA FALLBACK] Extracted tool call for {t_name} with {len(t_args)} args")
+                    except Exception as e:
+                        print(f"⚠️ [OLLAMA FALLBACK] Failed to parse JSON block: {e}")
+                
+                if not tool_calls:
+                    if final_text.strip().startswith("{") and "text" in final_text:
+                         try:
+                             data = json.loads(final_text)
+                             if "text" in data:
+                                 final_text = data["text"]
+                         except:
+                             pass
+                    if final_text.strip() == "{}":
+                        final_text = "I'm here! How can I help you with the ERP system?"
+                        
+                    if session_total_tokens > 0:
+                        final_text += f"\n\n*(💰 {session_total_tokens} tokens)*"
+                        try:
+                            await session.execute(
+                                __import__('sqlalchemy').text("UPDATE clientconfig SET total_tokens_used = COALESCE(total_tokens_used, 0) + :t WHERE id = :cid"),
+                                {"t": session_total_tokens, "cid": client_id}
+                            )
+                            await session.commit()
+                        except Exception:
+                            pass
+                        
+                    return final_text, pending_actions
             
             print(f"🛠️ Executing {len(tool_calls)} Tools...")
+            short_circuit_return = None
+            
             for tool_call in tool_calls:
                 tool_name = tool_call["name"]
                 args = tool_call["args"]
@@ -542,20 +617,143 @@ EOE
                 else:
                     selected_tool = TOOL_MAP.get(tool_name)
                     if selected_tool:
-                        if tool_name in ["tool_lookup_route", "tool_learn_route"]:
-                             args["session"] = session
+                        # NEW: Inject context for ALL data-aware tools
+                        if tool_name in [
+                            "tool_lookup_route", "tool_learn_route", "tool_execute_sql", 
+                            "tool_read_erp_records", "tool_create_erp_record", 
+                            "tool_update_erp_records", "tool_delete_erp_records"
+                        ]:
                              args["client_id"] = client_id
+                             
+                        # SAFETY NET: Small models sometimes omit table_name even though it was heavily prompted
+                        if tool_name == "tool_read_erp_records" and not args.get("table_name"):
+                             import re
+                             table_match = re.search(r"Execute READ on table '([^']+)'", user_input)
+                             if table_match:
+                                 args["table_name"] = table_match.group(1)
+                                 print(f"🔧 [SAFETY NET] Auto-injected missing table_name: {args['table_name']}")
                         
                         if hasattr(selected_tool, "ainvoke"):
                             tool_result = await selected_tool.ainvoke(args)
                         else:
                             tool_result = selected_tool.invoke(args)
+                            
+                        # INJECT NATIVE DATA TABLE for read operations
+                        if tool_name == "tool_read_erp_records":
+                            print(f"🕵️ [TRACE] Entering tool_read_erp_records hook. tool_result type: {type(tool_result)}")
+                            try:
+                                data = None
+                                if isinstance(tool_result, (list, dict)):
+                                    print("🕵️ [TRACE] tool_result is list/dict natively")
+                                    data = tool_result
+                                elif isinstance(tool_result, str):
+                                    print("🕵️ [TRACE] tool_result is string")
+                                    # If it's the custom formatted "RESULTS:\n[...]\n\nWARNING:..." string
+                                    if tool_result.startswith("RESULTS:\n"):
+                                        print("🕵️ [TRACE] string starts with RESULTS:\\n")
+                                        json_part = tool_result.split("RESULTS:\n")[1].split("\n\nWARNING:")[0]
+                                        print(f"🕵️ [TRACE] extracted json_part starting with: {json_part[:20]}")
+                                        data = json.loads(json_part)
+                                    elif tool_result.startswith("[") or tool_result.startswith("{"):
+                                        print("🕵️ [TRACE] string starts with [ or {")
+                                        data = json.loads(tool_result)
+                                else:
+                                    print("🕵️ [TRACE] tool_result is something else!")
+                                
+                                if data is not None:
+                                    print(f"🕵️ [TRACE] data is populated, type: {type(data)}")
+                                    
+                                    # Handle Aggregated Dict Result
+                                    if isinstance(data, dict) and "aggregate" in data:
+                                        print(f"🕵️ [TRACE] Detected aggregate result: {data['aggregate']} = {data['value']}")
+                                        agg_type = data.get("aggregate", "Result").upper()
+                                        agg_val = data.get("value")
+                                        agg_col = data.get("column", "Count")
+                                        
+                                        pending_actions.append({
+                                            "type": "data_table",
+                                            "payload": {
+                                                "title": f"{agg_type} Summary",
+                                                "headers": [agg_col, "Value"],
+                                                "rows": [{agg_col: f"Total {agg_type}", "Value": str(agg_val)}],
+                                                "total": 1,
+                                                "query_payload": {
+                                                    "table_name": args.get("table_name", ""),
+                                                    "filters": args.get("filters_json", None),
+                                                    "user_query": user_input,
+                                                    "client_id": int(client_id)
+                                                }
+                                            }
+                                        })
+                                        short_circuit_return = f"The result for your {agg_type} query is **{agg_val}**. I have displayed the summary above."
+                                    
+                                    # Handle Grouped Results
+                                    elif isinstance(data, dict) and "grouped_results" in data:
+                                        records = data["grouped_results"]
+                                        if isinstance(records, list) and len(records) > 0:
+                                            headers = list(records[0].keys())
+                                            pending_actions.append({
+                                                "type": "data_table",
+                                                "payload": {
+                                                    "title": "Grouped Analysis",
+                                                    "headers": headers,
+                                                    "rows": records,
+                                                    "total": len(records),
+                                                    "query_payload": {
+                                                        "table_name": args.get("table_name", ""),
+                                                        "filters": args.get("filters_json", None),
+                                                        "user_query": user_input,
+                                                        "client_id": int(client_id)
+                                                    }
+                                                }
+                                            })
+                                            short_circuit_return = f"I have calculated the breakdown by group for you. There are {len(records)} groups in total."
+
+                                    # Handle Standard List Result
+                                    else:
+                                        records = data.get("records", data) if isinstance(data, dict) else data
+                                        if isinstance(records, list):
+                                            print(f"🕵️ [TRACE] records is a list with {len(records)} items")
+                                            headers = list(records[0].keys())[:8] if records else []
+                                            rows = [{h: str(r.get(h, ""))[:50] for h in headers} for r in records]
+                                            pending_actions.append({
+                                                "type": "data_table",
+                                                "payload": {
+                                                    "title": args.get("table_name", "Data Results"),
+                                                    "headers": headers,
+                                                    "rows": rows,
+                                                    "total": len(records),
+                                                    "query_payload": {
+                                                        "table_name": args.get("table_name", ""),
+                                                        "filters": args.get("filters_json", None),
+                                                        "user_query": user_input,
+                                                        "client_id": int(client_id)
+                                                    }
+                                                }
+                                            })
+                                            if records:
+                                                short_circuit_return = f"I retrieved the {len(records)} records you asked for. You can view them exactly in the table format above."
+                                            else:
+                                                short_circuit_return = f"I executed the query, but no records were found matching your criteria."
+                                    
+                                    print(f"🕵️ [TRACE] short_circuit_return ASSIGNED: {short_circuit_return}")
+                                else:
+                                    print("🕵️ [TRACE] data is None!")
+                            except Exception as parse_e:
+                                import traceback
+                                print(f"⚠️ Could not parse tool_read_erp_records output for UI: {parse_e}")
+                                # traceback.print_exc() is too noisy for production loops                           print(f"⚠️ Could not parse tool_read_erp_records output for UI: {parse_e}\n{traceback.format_exc()}")
                     else:
                         tool_result = f"Tool {tool_name} not found."
                 
                 messages.append(ToolMessage(tool_call_id=tool_call["id"], content=str(tool_result)))
                 if any(x in str(tool_result) for x in ["http", "/static/", "saved"]):
                     pending_actions.append({"type": "TOOL_RESULT", "payload": str(tool_result)})
+            
+            if short_circuit_return:
+                if session_total_tokens > 0:
+                    short_circuit_return += f"\n\n*(💰 {session_total_tokens} tokens)*"
+                return short_circuit_return, pending_actions
 
         return "Error: Maximum agent turns reached.", pending_actions
 

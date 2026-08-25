@@ -148,9 +148,9 @@ const RouteMap: React.FC = () => {
   if (!clientId) return <div className="p-8 text-center text-gray-500 font-black uppercase tracking-widest text-xs">Please select a client first.</div>;
 
   const filteredItems = items.filter(item => 
-    item.label.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.module.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.table_name.toLowerCase().includes(searchTerm.toLowerCase())
+    (item.label?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
+    (item.module?.toLowerCase() || "").includes(searchTerm.toLowerCase()) ||
+    (item.table_name?.toLowerCase() || "").includes(searchTerm.toLowerCase())
   );
 
   return (

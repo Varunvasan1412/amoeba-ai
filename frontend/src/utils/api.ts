@@ -22,6 +22,10 @@ export const apiFetch = async (url: string, options: RequestInit = {}) => {
   if (token && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+  
+  if (options.body && typeof options.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
 
   const response = await fetch(finalUrl, {
     ...options,

@@ -23,7 +23,7 @@ class RagEngine:
     _instance = None
     
     def __init__(self):
-        self.schema_docs = []
+        self.schema_cache = {} # Dict[int, List[Dict]]
         self.nav_docs = []
         self.rules_docs = []
         self.report_docs = []
@@ -51,10 +51,9 @@ class RagEngine:
         self._setup_embeddings()
         print(f"🧠 [RAG DEBUG] Embeddings Setup (T={time.time() - start_time:.2f}s)")
         
-        # 2. Ingest Data
+        # 2. Ingest Global Data (Rules, Reports)
         try:
-            await self._ingest_schema()
-            print(f"🧠 [RAG DEBUG] Schema Ingested (T={time.time() - start_time:.2f}s)")
+            # We skip global schema ingestion here. It happens per-client in retrieve_context.
             
             self._ingest_navigation()
             print(f"🧠 [RAG DEBUG] Navigation Ingested (T={time.time() - start_time:.2f}s)")
@@ -75,7 +74,8 @@ class RagEngine:
 
     async def _generate_embeddings(self):
         """Generates embeddings for all ingested documents in parallel."""
-        docs = self.schema_docs + self.rules_docs + self.report_docs + self.template_docs
+        # Note: Schema docs are embedded on-the-fly when first ingested per-client
+        docs = self.rules_docs + self.report_docs + self.template_docs
         to_embed = [d for d in docs if d.get("embedding") is None]
         
         if not to_embed or not self.embedding_model:
@@ -152,25 +152,50 @@ class RagEngine:
         if not v1 or not v2: return 0.0
         return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
-    async def _ingest_schema(self):
-        """Ingests Database Schema."""
+    async def _ingest_schema(self, client_id: int):
+        """Ingests Database Schema for a specific client, splitting by table."""
         try:
-            schema = await get_database_schema()
-            # Schema is usually a list of "Table: X, Columns: ..." strings or similar.
-            # If it's a list:
-            if isinstance(schema, list):
-                self.schema_docs = [{"content": s, "type": "schema", "embedding": None} for s in schema]
-            else:
-                # If it's a big string, split by table headers or newlines
-                 self.schema_docs = [{"content": line, "type": "schema", "embedding": None} for line in schema.split("\n\n") if line.strip()]
-            print(f"📦 RAG: Ingested {len(self.schema_docs)} schema items.")
+            schema_raw = await get_database_schema()
+            if isinstance(schema_raw, str) and "Error" in schema_raw:
+                print(f"❌ RAG: Schema discovery returned error for Client {client_id}: {schema_raw}")
+                return
+
+            client_docs = []
+            
+            # 1. Handle Dictionary (Best practice)
+            if isinstance(schema_raw, dict):
+                print(f"📦 RAG: Processing {len(schema_raw)} tables from dict for Client {client_id}...")
+                for table_name, columns in schema_raw.items():
+                    content = f"Table: {table_name} | Columns: {', '.join(columns)}"
+                    client_docs.append({"content": content, "type": "schema", "embedding": None})
+            
+            # 2. Handle String Output (For backward compatibility)
+            elif isinstance(schema_raw, str):
+                print(f"📦 RAG: Processing string schema for Client {client_id} (Length: {len(schema_raw)})...")
+                if schema_raw.strip().startswith("{"):
+                    try:
+                        import ast
+                        schema_dict = ast.literal_eval(schema_raw)
+                        for table_name, columns in schema_dict.items():
+                            content = f"Table: {table_name} | Columns: {', '.join(columns)}"
+                            client_docs.append({"content": content, "type": "schema", "embedding": None})
+                    except Exception as e:
+                        print(f"⚠️ RAG: AST Eval failed for Client {client_id}: {e}")
+                        client_docs = [{"content": line.strip(), "type": "schema", "embedding": None} for line in schema_raw.split("\n\n") if line.strip()]
+                else:
+                    client_docs = [{"content": line.strip(), "type": "schema", "embedding": None} for line in schema_raw.split("\n\n") if line.strip()]
+            
+            self.schema_cache[client_id] = client_docs
+            print(f"✅ RAG: Successfully ingested {len(client_docs)} table documents for Client {client_id}.")
         except Exception as e:
-            print(f"❌ RAG: Schema ingestion failed: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"❌ RAG: UNEXPECTED Schema ingestion crash for Client {client_id}: {e}")
 
     def _ingest_navigation(self):
         """Sitemap ingestion is now handled per-session/tenant during retrieval."""
         self.nav_docs = []
-        print("📦 RAG: Navigation ingestion skipped (Global sitemap deprecated).")
+        print(f"📦 RAG: Navigation ingestion skipped (Global sitemap deprecated).", flush=True)
 
     def _ingest_business_rules(self):
         """Ingests Business Rules."""
@@ -214,7 +239,7 @@ class RagEngine:
                     self.template_docs.append({"content": content, "type": "template", "metadata": details, "embedding": None})
                 print(f"📦 RAG: Ingested {len(self.template_docs)} report templates.")
             except Exception as e:
-                print(f"❌ RAG: Template ingestion failed (Inline): {e}")
+                print(f"❌ RAG: Template ingestion failed (Inline): {e}", flush=True)
 
 
     def _get_config_hash(self, path: str) -> str:
@@ -235,8 +260,16 @@ class RagEngine:
         if not self.initialized:
             await self.initialize()
 
-        print(f"🔍 RAG Retrieval for: '{query}' [Client: {client_id}, Fast: {fast_mode}]")
+        print(f"🔍 RAG Retrieval for: '{query}' [Client: {client_id}, Fast: {fast_mode}]", flush=True)
         
+        # 0. Ensure Client Schema is Ingested
+        if client_id and client_id not in self.schema_cache:
+            print(f"🔄 RAG: Initial schema ingestion for Client {client_id}...")
+            await self._ingest_schema(client_id)
+            
+        current_schema_docs = self.schema_cache.get(client_id, []) if client_id else []
+        print(f"📊 RAG: Active Schema Docs for Client {client_id}: {len(current_schema_docs)}")
+
         query_embedding = None
         if not fast_mode:
             query_embedding = await self._get_embedding(query)
@@ -263,13 +296,13 @@ class RagEngine:
                         "type": "navigation", 
                         "metadata": {"label": item.label, "path": item.path}
                     })
-                print(f"📦 RAG: Loaded {len(current_nav_docs)} navigation items for Client {client_id}")
+                print(f"📦 RAG: Loaded {len(current_nav_docs)} navigation items for Client {client_id}", flush=True)
             except Exception as e:
                 await session.rollback()
                 print(f"⚠️ RAG: Failed to load tenant navigation: {e}")
         
-        # Combine all docs for vector search (Small < 100 items usually)
-        vector_docs = self.schema_docs + self.rules_docs + self.report_docs + self.template_docs
+        # Combine all docs for vector search
+        vector_docs = current_schema_docs + self.rules_docs + self.report_docs + self.template_docs
         
         scored_docs = []
         
@@ -284,33 +317,50 @@ class RagEngine:
                 if score > 0.35:
                     scored_docs.append((score, doc))
         
-        # 3. Keyword Search for Navigation (Large)
-        # Use current_nav_docs (tenant-specific) or fallback to self.nav_docs (global)
-        nav_source = current_nav_docs if current_nav_docs else self.nav_docs
-        
-        query_parts = [p for p in query.lower().split() if len(p) > 2]
-        for doc in nav_source:
-            content_lower = doc["content"].lower()
-            score = 0
+        # 3. Keyword Search
+        # We always do keyword search if no vector results OR if fast_mode=True
+        if not scored_docs or fast_mode:
+            # Combine all searchable docs
+            nav_source = current_nav_docs if current_nav_docs else self.nav_docs
+            all_source_docs = nav_source + vector_docs
             
-            label = doc.get("metadata", {}).get("label", "").lower()
-            if query.lower() in label or label in query.lower():
-                score += 10
-            
-            if query.lower() in content_lower:
-                score += 5
+            query_parts = [p for p in query.lower().split() if len(p) > 2]
+            for doc in all_source_docs:
+                content = doc.get("content", "")
+                if not content:
+                    continue
+                content_lower = content.lower()
+                score = 0
                 
-            for part in query_parts:
-                if part in content_lower:
-                    score += 1
+                # Bonus for exact phrase/title match
+                metadata = doc.get("metadata", {}) or {}
+                label = metadata.get("label", "").lower() if isinstance(metadata, dict) else ""
                 
-            if score > 0:
-                norm_score = min(score * 0.1, 0.95)
-                scored_docs.append((norm_score, doc))
+                # For schema docs, check table_name in content
+                if doc.get("type") == "schema" and "Table: " in content:
+                    table_name = content.split("|")[0].replace("Table: ", "").strip().lower()
+                    if query.lower() in table_name or table_name in query.lower():
+                        score += 15 # High priority for direct table matches
+                
+                if label and (query.lower() in label or label in query.lower()):
+                    score += 10
+                
+                if query.lower() in content_lower:
+                    score += 5
+                    
+                for part in query_parts:
+                    if part in content_lower:
+                        score += 1
+                    
+                if score > 0:
+                    norm_score = min(score * 0.1, 0.95)
+                    # Deduplicate if already added via vector search
+                    if not any(d[1].get("content") == content for d in scored_docs):
+                        scored_docs.append((norm_score, doc))
 
         # Sort and Top-K
         scored_docs.sort(key=lambda x: x[0], reverse=True)
-        top_docs = scored_docs[:3] # REDUCED from 8 to 3 for speed
+        top_docs = scored_docs[:5] # Increased from 3 to 5 for better coverage
         
         if not top_docs:
             if fast_mode:

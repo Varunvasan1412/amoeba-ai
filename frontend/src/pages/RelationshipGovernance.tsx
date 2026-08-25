@@ -89,75 +89,111 @@ export default function RelationshipGovernance() {
         </div>
       </div>
 
-      {/* Magic Action Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <button 
-            onClick={() => handleMagicAction("auto_unlock_safe")}
-            disabled={!!magicLoading}
-            className="group relative bg-white p-5 rounded-3xl border-2 border-green-50 hover:border-green-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
-          >
-              {magicLoading === "auto_unlock_safe" && <div className="absolute inset-0 bg-green-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-green-600" /></div>}
-              <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-green-100 text-green-600 rounded-xl group-hover:scale-110 transition-transform">
-                      <ShieldCheck size={20} />
+      {/* Relationship Discovery Engine */}
+      <div className="mb-8">
+          <div className="flex items-center gap-2 mb-4">
+              <Wand2 size={18} className="text-blue-500" />
+              <h2 className="text-lg font-bold text-gray-700">Discovery Engine</h2>
+              <div className="h-[1px] flex-1 bg-gray-100 ml-2"></div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <button 
+                onClick={() => handleMagicAction("auto_unlock_safe")}
+                disabled={!!magicLoading}
+                className="group relative bg-white p-6 rounded-3xl border border-gray-100 hover:border-emerald-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+              >
+                  {magicLoading === "auto_unlock_safe" && <div className="absolute inset-0 bg-emerald-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-emerald-600" /></div>}
+                  <div className="flex items-center gap-3 mb-3">
+                      <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl group-hover:scale-110 transition-transform">
+                          <ShieldCheck size={22} />
+                      </div>
+                      <span className="font-black text-[10px] uppercase tracking-widest text-emerald-600/70">Safe Mode</span>
                   </div>
-                  <span className="font-black text-xs uppercase tracking-widest text-green-700">Level 1</span>
-              </div>
-              <h3 className="font-bold text-gray-800 text-sm">Auto-Unlock Safe FKs</h3>
-              <p className="text-[10px] text-gray-500 mt-1">Enable all standard Foreign Keys detected in your database.</p>
-          </button>
+                  <h3 className="font-bold text-gray-800">Auto-Unlock FKs</h3>
+                  <p className="text-xs text-gray-500 mt-2 leading-relaxed">Enable all official Foreign Keys defined in your database schema.</p>
+              </button>
 
-          <button 
-            onClick={() => handleMagicAction("auto_unlock_heuristics")}
-            disabled={!!magicLoading}
-            className="group relative bg-white p-5 rounded-3xl border-2 border-purple-50 hover:border-purple-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
-          >
-              {magicLoading === "auto_unlock_heuristics" && <div className="absolute inset-0 bg-purple-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-purple-600" /></div>}
-              <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-purple-100 text-purple-600 rounded-xl group-hover:scale-110 transition-transform">
-                      <Zap size={20} />
+              <button 
+                onClick={() => handleMagicAction("auto_unlock_heuristics")}
+                disabled={!!magicLoading}
+                className="group relative bg-white p-6 rounded-3xl border border-gray-100 hover:border-indigo-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+              >
+                  {magicLoading === "auto_unlock_heuristics" && <div className="absolute inset-0 bg-indigo-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-indigo-600" /></div>}
+                  <div className="flex items-center gap-3 mb-3">
+                      <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl group-hover:scale-110 transition-transform">
+                          <Zap size={22} />
+                      </div>
+                      <span className="font-black text-[10px] uppercase tracking-widest text-indigo-600/70">AI Enhanced</span>
                   </div>
-                  <span className="font-black text-xs uppercase tracking-widest text-purple-700">Level 2</span>
-              </div>
-              <h3 className="font-bold text-gray-800 text-sm">Apply AI Heuristics</h3>
-              <p className="text-[10px] text-gray-500 mt-1">Connect tables by matching IDs and names (e.g. customer_id).</p>
-          </button>
+                  <h3 className="font-bold text-gray-800">Apply Heuristics</h3>
+                  <p className="text-xs text-gray-500 mt-2 leading-relaxed">AI-powered discovery matching columns by name (e.g. customer_id).</p>
+              </button>
 
-          <button 
-            onClick={() => handleMagicAction("enable_all")}
-            disabled={!!magicLoading}
-            className="group relative bg-white p-5 rounded-3xl border-2 border-blue-50 hover:border-blue-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
-          >
-              {magicLoading === "enable_all" && <div className="absolute inset-0 bg-blue-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-blue-600" /></div>}
-              <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-blue-100 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-                      <Unlock size={20} />
+              <button 
+                onClick={() => handleMagicAction("enable_all")}
+                disabled={!!magicLoading}
+                className="group relative bg-white p-6 rounded-3xl border border-gray-100 hover:border-blue-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
+              >
+                  {magicLoading === "enable_all" && <div className="absolute inset-0 bg-blue-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-blue-600" /></div>}
+                  <div className="flex items-center gap-3 mb-3">
+                      <div className="p-2.5 bg-blue-50 text-blue-600 rounded-2xl group-hover:scale-110 transition-transform">
+                          <Unlock size={22} />
+                      </div>
+                      <span className="font-black text-[10px] uppercase tracking-widest text-blue-600/70">Maximum Access</span>
                   </div>
-                  <span className="font-black text-xs uppercase tracking-widest text-blue-700">Simple Mode</span>
-              </div>
-              <h3 className="font-bold text-gray-800 text-sm">Trust Everything</h3>
-              <p className="text-[10px] text-gray-500 mt-1">Enable every possible connection for maximum flexibility.</p>
-          </button>
+                  <h3 className="font-bold text-gray-800">Trust Everything</h3>
+                  <p className="text-xs text-gray-500 mt-2 leading-relaxed">Enable every possible connection for maximum conversational flexibility.</p>
+              </button>
+          </div>
+      </div>
 
-          <button 
-            onClick={() => {
-                if (confirm("FACTORY RESET: This will delete ALL manual joins and reset everything to AI discovery. Are you sure?")) {
-                    handleMagicAction("disable_all");
-                }
-            }}
-            disabled={!!magicLoading}
-            className="group relative bg-white p-5 rounded-3xl border-2 border-red-50 hover:border-red-200 transition-all text-left shadow-sm hover:shadow-xl overflow-hidden"
-          >
-              {magicLoading === "disable_all" && <div className="absolute inset-0 bg-red-50/80 backdrop-blur-sm z-10 flex items-center justify-center"><RefreshCw className="animate-spin text-red-600" /></div>}
-              <div className="flex items-center gap-3 mb-2">
-                  <div className="p-2 bg-red-100 text-red-600 rounded-xl group-hover:scale-110 transition-transform">
-                      <RefreshCw size={20} />
+      {/* Maintenance & Safety */}
+      <div className="mb-8 p-6 bg-slate-50/50 rounded-[32px] border border-slate-100">
+          <div className="flex items-center gap-2 mb-4">
+              <Shield size={18} className="text-slate-400" />
+              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-widest">Maintenance & Safety</h2>
+          </div>
+          <div className="flex flex-wrap gap-4">
+              <button 
+                onClick={() => {
+                    if (confirm("FACTORY RESET: This will disable ALL joins and reset everything to AI discovery. Are you sure?")) {
+                        handleMagicAction("disable_all");
+                    }
+                }}
+                disabled={!!magicLoading}
+                className="flex items-center gap-3 bg-white px-5 py-3 rounded-2xl border border-gray-200 hover:border-orange-300 hover:bg-orange-50/30 transition-all text-gray-700 group shadow-sm"
+              >
+                  <RefreshCw size={18} className={`text-orange-500 ${magicLoading === 'disable_all' ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+                  <div className="text-left">
+                      <p className="text-sm font-bold">Factory Reset</p>
+                      <p className="text-[10px] text-gray-400">Disable all current rules</p>
                   </div>
-                  <span className="font-black text-xs uppercase tracking-widest text-red-700">Danger Zone</span>
-              </div>
-              <h3 className="font-bold text-gray-800 text-sm">Factory Reset</h3>
-              <p className="text-[10px] text-gray-500 mt-1">Wipe all custom rules and re-run discovery from scratch.</p>
-          </button>
+              </button>
+
+              <button 
+                onClick={() => {
+                    if (confirm("PURGE ALL: This will permanently DELETE every connection for this client. This cannot be undone. Are you sure?")) {
+                        handleMagicAction("purge_all");
+                    }
+                }}
+                disabled={!!magicLoading}
+                className="flex items-center gap-3 bg-white px-5 py-3 rounded-2xl border border-gray-200 hover:border-rose-300 hover:bg-rose-50/30 transition-all text-gray-700 group shadow-sm"
+              >
+                  <X size={18} className={`text-rose-500 ${magicLoading === 'purge_all' ? 'animate-spin' : 'group-hover:scale-125 transition-transform'}`} />
+                  <div className="text-left">
+                      <p className="text-sm font-bold">Purge All Connections</p>
+                      <p className="text-[10px] text-gray-400">Permanently erase from DB</p>
+                  </div>
+              </button>
+
+              <button 
+                onClick={() => fetchData()}
+                className="ml-auto flex items-center gap-2 px-5 py-3 rounded-2xl bg-slate-800 text-white hover:bg-slate-700 transition-all text-sm font-bold shadow-lg shadow-slate-200"
+              >
+                  <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                  Refresh View
+              </button>
+          </div>
       </div>
 
       {message && (

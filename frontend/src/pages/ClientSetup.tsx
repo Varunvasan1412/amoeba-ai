@@ -36,7 +36,7 @@ export default function ClientSetup() {
   const handleCreateClient = async () => {
       setLoading(true);
       try {
-          const res = await fetch('/api/clients/setup', {
+          const res = await apiFetch('/api/clients/setup', {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ client_name: newClientName })

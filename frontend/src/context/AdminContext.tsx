@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+import { apiFetch } from "../utils/api";
 
 interface AdminContextType {
   clientId: number | null;
@@ -48,9 +49,7 @@ export function AdminProvider({ children }: { children: ReactNode }) {
     const token = localStorage.getItem('token');
     if (!token) return;
     try {
-      const response = await fetch('/api/clients', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await apiFetch('/api/clients');
       const data = await response.json();
       setClients(data.clients || []);
     } catch (err) {

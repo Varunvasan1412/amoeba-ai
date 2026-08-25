@@ -1,6 +1,6 @@
 # ACP v1 FINAL — Do not extend without version bump
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Optional
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,9 +23,14 @@ class RegisterReportRequest(BaseModel):
     date_column: Optional[str] = None
     output_format: str = "xlsx"
 
+from app.core.rate_limiter import limiter
+from app.core.config import settings
+
 @router.post("/reports")
+@limiter.limit(settings.RATE_LIMIT_REPORT)
 async def register_report(
     payload: RegisterReportRequest,
+    request: Request,
     session: AsyncSession = Depends(get_session)
 ):
     """
@@ -106,3 +111,4 @@ async def register_report(
             "sql_generated": sql_query
         }
     }
+

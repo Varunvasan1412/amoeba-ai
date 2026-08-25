@@ -22,6 +22,20 @@ export default function AdminLayout() {
           init();
       }, [token]);
   
+      useEffect(() => {
+          if (user && !user.is_platform_user && user.client_id) {
+              if (clientId !== user.client_id) {
+                  setClientId(user.client_id);
+                  // Find the client in the list to sync name and API key if possible
+                  const myClient = clients.find(c => c.id === user.client_id);
+                  if (myClient) {
+                      setApiKey(myClient.api_key);
+                      setClientName(myClient.client_name);
+                  }
+              }
+          }
+      }, [user, clientId, clients]);
+  
 
       const handleLogout = () => {
           logout();
@@ -42,26 +56,49 @@ export default function AdminLayout() {
             </div>
   
             <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2">
-                  <span className="text-slate-400 text-sm hidden sm:inline">Active Client:</span>
-                  <SearchableDropdown
-                      theme="dark"
-                      className="min-w-[180px]"
-                      options={clients.map(c => ({ value: c.id, label: c.client_name }))}
-                      value={clientId}
-                      onChange={(id) => {
-                          const client = clients.find(c => c.id === id);
-                          if (client) {
-                              setClientId(client.id);
-                              setApiKey(client.api_key);
-                              setClientName(client.client_name);
-                          }
-                      }}
-                      disabled={loading}
-                      placeholder="-- Select Client --"
-                  />
-                  {loading && <span className="text-xs text-slate-500 animate-pulse">Loading...</span>}
-              </div>
+              {user?.is_platform_user ? (
+                  <div className="flex items-center gap-2">
+                       <span className="text-slate-400 text-sm hidden sm:inline">Active Client:</span>
+                       <div className="flex items-center gap-2">
+                           <SearchableDropdown
+                               theme="dark"
+                               className="min-w-[180px]"
+                               options={clients.map(c => ({ value: c.id, label: c.client_name }))}
+                               value={clientId}
+                               onChange={(id) => {
+                                   const client = clients.find(c => c.id === id);
+                                   if (client) {
+                                       setClientId(client.id);
+                                       setApiKey(client.api_key);
+                                       setClientName(client.client_name);
+                                   }
+                               }}
+                               disabled={loading}
+                               placeholder="-- Select Client --"
+                           />
+                           {clientId && (
+                               <button 
+                                   onClick={() => {
+                                       setClientId(null);
+                                       setApiKey(null);
+                                       setClientName("");
+                                       navigate("/admin");
+                                   }}
+                                   className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white transition-all bg-slate-800/50 border border-slate-700"
+                                   title="Deselect Client (Back to Platform Dashboard)"
+                               >
+                                   <LogOut size={14} className="rotate-180" />
+                               </button>
+                           )}
+                       </div>
+                       {loading && <span className="text-xs text-slate-500 animate-pulse">Loading...</span>}
+                  </div>
+              ) : (
+                  <div className="flex items-center gap-2">
+                      <span className="text-slate-400 text-sm">Company:</span>
+                      <span className="text-white font-bold">{clients.find(c => clientId && c.id === clientId)?.client_name || "Enterprise"}</span>
+                  </div>
+              )}
 
 
               <div className="h-6 w-px bg-slate-700 mx-2"></div>
@@ -79,18 +116,17 @@ export default function AdminLayout() {
             </div>
         </div>
 
-      {/* Breadcrumbs / Sub-nav (Optional) */}
-      {location.pathname !== "/admin" && (
-          <div className="bg-white border-b border-gray-200 px-8 py-3 flex items-center gap-2 text-sm text-gray-500">
-              <Link to="/admin" className="hover:text-blue-600 flex items-center gap-1">
+      {/* Breadcrumbs / Sub-nav Area */}
+      <div className="bg-white border-b border-gray-200 px-8 py-3 flex items-center justify-between text-sm text-gray-500">
+          <div className="flex items-center gap-4">
+              <Link to="/admin" className={`hover:text-blue-600 flex items-center gap-1 ${location.pathname === '/admin' ? 'text-blue-600 font-bold' : ''}`}>
                 <LayoutDashboard size={14}/> Dashboard
               </Link>
-              <span>/</span>
-              <span className="text-gray-800 font-medium capitalize">
-                {location.pathname.split("/").pop()}
-              </span>
           </div>
-      )}
+          <span className="text-gray-800 font-bold uppercase tracking-wide text-xs">
+            {location.pathname.split("/").pop()}
+          </span>
+      </div>
 
       {/* Content Area */}
       <div className="flex-1 p-8 overflow-y-auto">

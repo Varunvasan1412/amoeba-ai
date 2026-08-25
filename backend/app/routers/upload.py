@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request
 import shutil
 import os
 import uuid
@@ -8,8 +8,12 @@ router = APIRouter()
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+from app.core.rate_limiter import limiter
+from app.core.config import settings
+
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@limiter.limit(settings.RATE_LIMIT_UPLOAD)
+async def upload_file(request: Request, file: UploadFile = File(...)):
     """
     Uploads a file (PDF, Excel, CSV) to the server.
     Returns the file_path which the AI can then read using `tool_read_file`.

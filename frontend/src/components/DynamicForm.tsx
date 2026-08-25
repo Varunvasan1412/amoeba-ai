@@ -76,13 +76,13 @@ const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, t
               <textarea
                 className={`border rounded px-3 py-2 text-sm outline-none h-24 transition-all ${darkMode ? 'bg-gray-700 border-gray-600 text-white focus:ring-blue-900/50 focus:border-blue-500' : 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/20 focus:border-blue-500'}`}
                 required={f.required}
-                value={formData[f.field] || ''}
+                value={formData[f.field] ?? ''}
                 onChange={(e) => handleChange(f.field, e.target.value)}
               />
             ) : f.type === 'dropdown' ? (
               <SearchableDropdown
                 options={f.options || []}
-                value={formData[f.field] || ''}
+                value={formData[f.field] ?? ''}
                 onChange={(val: any) => handleChange(f.field, val)}
                 placeholder={`Select ${f.label}`}
                 className="w-full"
@@ -94,7 +94,7 @@ const DynamicForm: React.FC<DynamicFormProps> = ({ fields, onSubmit, onCancel, t
                 step={f.type === 'currency' ? '0.01' : '1'}
                 className={`border rounded px-3 py-2 text-sm outline-none transition-all ${darkMode ? 'bg-gray-700 border-gray-600 text-white focus:ring-blue-900/50 focus:border-blue-500' : 'bg-white border-gray-300 text-gray-900 focus:ring-blue-500/20 focus:border-blue-500'}`}
                 required={f.required}
-                value={formData[f.field] || ''}
+                value={formData[f.field] ?? ''}
                 onChange={(e) => handleChange(f.field, e.target.value)}
               />
             )}

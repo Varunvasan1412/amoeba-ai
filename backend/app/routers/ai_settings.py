@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from app.core.database import get_session
 from app.models.ai_settings import AISettings
-from app.core.auth_deps import get_current_active_admin
-from pydantic import BaseModel
-from typing import Optional
+from app.core.auth_deps import get_current_super_admin
 
-router = APIRouter(prefix="/ai-settings", dependencies=[Depends(get_current_active_admin)])
+router = APIRouter(prefix="/ai-settings", dependencies=[Depends(get_current_super_admin)])
 
 class AISettingsUpdate(BaseModel):
     provider: str

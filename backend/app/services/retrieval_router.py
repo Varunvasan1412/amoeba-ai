@@ -75,6 +75,7 @@ async def search_documents(query: str, client_id: int, session: AsyncSession, fi
             output.append({
                 "text": chunk.chunk_text,
                 "filename": filename,
+                "document_id": chunk.document_id,
                 "page": chunk.page_number,
                 "score": score
             })

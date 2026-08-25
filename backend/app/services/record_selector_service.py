@@ -51,7 +51,8 @@ class RecordSelectorService:
                     break
 
         try:
-            sql = f"SELECT {query_cols} FROM {table_name} t {join_sql} ORDER BY t.{pk_col} DESC LIMIT 100"
+            sql = f"SELECT {query_cols} FROM {table_name} t {join_sql} ORDER BY t.{pk_col} DESC LIMIT 5000"
+
             with engine.connect() as conn:
                 res = conn.execute(text(sql))
                 records = []

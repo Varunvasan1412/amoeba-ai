@@ -9,7 +9,7 @@ export default defineConfig({
     proxy: {
       // 1. Proxy API requests to the backend container
       "^/api": {
-        target: "http://backend:8000", 
+        target: process.env.VITE_BACKEND_URL || "http://backend:8000",
         changeOrigin: true,
         secure: false,
         ws: true,

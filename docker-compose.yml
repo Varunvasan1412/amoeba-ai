@@ -19,6 +19,18 @@ services:
       timeout: 5s
       retries: 5
 
+  # 1.5. Redis for Rate Limiting
+  redis:
+    image: redis:alpine
+    container_name: amoeba-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   # 2. The Backend
   backend:
     build: ./backend
@@ -26,13 +38,17 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - backups:/backups
     env_file:
       - ./backend/.env
     environment:
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
+      - REDIS_URL=redis://redis:6379
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -51,3 +67,4 @@ services:
 # Persistent Storage for DB
 volumes:
   postgres_data:
+  backups:

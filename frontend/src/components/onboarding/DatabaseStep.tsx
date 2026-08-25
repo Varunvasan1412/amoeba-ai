@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import { apiFetch } from '../../utils/api';
 import { Copy, CheckCircle, AlertTriangle, ArrowRight, ShieldCheck } from 'lucide-react';
 
 interface DatabaseStepProps {
@@ -43,12 +44,10 @@ export const DatabaseStep: React.FC<DatabaseStepProps> = ({ onSuccess }) => {
     setLoading(true);
     setError('');
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/clients/setup-db', {
+      const response = await apiFetch('/api/clients', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ client_name: clientNameInput })
       });
@@ -77,16 +76,21 @@ export const DatabaseStep: React.FC<DatabaseStepProps> = ({ onSuccess }) => {
     if (!localClientId) return;
     setLoading(true);
     setError('');
+    
+    // Hard 20s timeout via AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/clients/${localClientId}/database`, {
+      const response = await apiFetch(`/api/clients/${localClientId}/database`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(dbConfig)
+        body: JSON.stringify(dbConfig),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       const data = await response.json();
       if (data.status === 'success') {
         setIsVerified(true);
@@ -94,8 +98,13 @@ export const DatabaseStep: React.FC<DatabaseStepProps> = ({ onSuccess }) => {
       } else {
         setError(data.detail || 'Connection failed');
       }
-    } catch (err) {
-      setError('Connection error');
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        setError('Connection timed out after 20 seconds. Please verify the host and port are correct and reachable.');
+      } else {
+        setError('Connection error');
+      }
     } finally {
       setLoading(false);
     }

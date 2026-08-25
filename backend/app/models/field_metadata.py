@@ -29,6 +29,9 @@ class FieldMetadata(SQLModel, table=True):
     is_visible: bool = Field(default=True)
     default_value: Optional[str] = None
     
+    # Date Filtering
+    is_primary_date: bool = Field(default=False)  # Marks the primary date column for NL date filtering
+    
     # Audit
     created_at: datetime = Field(
         default_factory=datetime.utcnow,

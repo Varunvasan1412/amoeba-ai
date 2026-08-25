@@ -238,3 +238,46 @@ backend/static/reports/
 *.tar.gz
 *.rar
 frontend/build_*.log
+# ================================
+# Added automatically: Scratch, Logs, and Temp Data
+# ================================
+.continue/
+*.pdf
+*.csv
+*.xlsx
+*.xls
+
+# Root logs and txt files
+/*.txt
+/all_logs.txt
+/latest_logs.txt
+/scratch_logs*.txt
+/diag_out*.txt
+/debugging_notes_master_state.md
+
+# Backend temp scripts
+backend/diag_*.py
+backend/dump_*.py
+backend/list_*.py
+backend/find_*.py
+backend/fetch_*.py
+backend/probe_*.py
+backend/purge_*.py
+backend/repair_*.py
+backend/reproduce_*.py
+backend/*sim*.py
+backend/get_client_db*.py
+backend/add_mapping.py
+backend/diagnosis_*.py
+backend/scan_modules.py
+backend/fix.sql
+backend/*.txt
+
+# Data & Scratch Dirs
+backend/scratch/
+backend/app/uploads/
+backend/tests/
+backend/exhaustive_repro.py
+LLM_PRICING_GUIDE.md
+LLM_TASK_PRICING_DEMO.md
+SENIOR_DEV_REVIEW.md
