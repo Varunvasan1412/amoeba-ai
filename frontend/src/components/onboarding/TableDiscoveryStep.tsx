@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import { apiFetch } from '../../utils/api';
 import { Search, Database, Check, Loader2 } from 'lucide-react';
 
 interface TableDiscoveryStepProps {
@@ -23,10 +24,7 @@ export const TableDiscoveryStep: React.FC<TableDiscoveryStepProps> = ({ onSucces
     setLoading(true);
     setError('');
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`/api/clients/${clientId}/tables`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await apiFetch(`/api/clients/${clientId}/tables`);
       const data = await response.json();
       if (data.tables) {
         setTables(data.tables);

@@ -92,6 +92,23 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
         print(f"✅ [Assistant] Response received in {duration:.2f}s", flush=True)
         content = ai_msg.content
         
+        # --- NEW: TOKEN USAGE LOGGING ---
+        if hasattr(ai_msg, "response_metadata") and "token_usage" in ai_msg.response_metadata:
+            usage = ai_msg.response_metadata["token_usage"]
+            total_tokens = usage.get("total_tokens", 0)
+            if total_tokens > 0:
+                print(f"💰 [ASSISTANT TOKEN USAGE] Total: {total_tokens}")
+                content += f"\n\n*(💰 {total_tokens} tokens)*"
+                try:
+                    await session.execute(
+                        __import__('sqlalchemy').text("UPDATE clientconfig SET total_tokens_used = COALESCE(total_tokens_used, 0) + :t WHERE id = :cid"),
+                        {"t": total_tokens, "cid": client_id}
+                    )
+                    await session.commit()
+                except Exception:
+                    pass
+        # --------------------------------
+        
         if not content or content.strip() == "":
             print("⚠️ [Assistant] Received EMPTY content from LLM.")
             return "The AI model returned an empty response. This can happen if the model is still loading or under heavy load. Please try again.", []
@@ -110,9 +127,10 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
         
         for res in doc_results:
             fname = res["filename"]
+            doc_id = res.get("document_id")
             total_score += res["score"]
             if fname not in deduped_sources:
-                deduped_sources[fname] = {"filename": fname, "pages": []}
+                deduped_sources[fname] = {"filename": fname, "document_id": doc_id, "pages": []}
             if res.get("page") and res["page"] not in deduped_sources[fname]["pages"]:
                 deduped_sources[fname]["pages"].append(res["page"])
         

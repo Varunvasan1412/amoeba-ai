@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.core.database import get_session
 from app.models.document import Document
 from app.services.document_service import calculate_storage_usage
+from app.services.system_health_service import get_system_health
+from app.core.auth_deps import get_current_super_admin
+from app.security.permission_guard import require_permission
 
-router = APIRouter(prefix="/system/documents", tags=["System Health"])
+from app.core.rate_limiter import limiter
+from app.core.config import settings
 
-@router.get("/metrics")
-async def get_document_metrics(client_id: int, session: AsyncSession = Depends(get_session)):
+router = APIRouter(prefix="/system", tags=["System Health"])
+
+@router.get("/documents/metrics", dependencies=[Depends(require_permission("access_health"))])
+@limiter.limit(settings.RATE_LIMIT_HEALTH)
+async def get_document_metrics(request: Request, client_id: int, session: AsyncSession = Depends(get_session)):
     """
     Returns high-level metrics for the document knowledge system.
     Step 4: Add Document Limit Dashboard Metrics
@@ -69,21 +76,49 @@ async def get_document_metrics(client_id: int, session: AsyncSession = Depends(g
         
         if perf_row:
             metrics["average_ingestion_time_ms"] = int(perf_row.avg_time or 0)
-            metrics["largest_document_size_mb"] = round((perf_row.max_size or 0) / (1024 * 1024), 2)
+            metrics["largest_document_size_mb"] = round(float((perf_row.max_size or 0) / (1024 * 1024)), 2)
             
         # 3. Quota Metrics (Step 4)
         usage_stmt = select(func.sum(Document.file_size)).where(Document.client_id == client_id)
         usage_res = await session.execute(usage_stmt)
         total_bytes = usage_res.scalar() or 0
-        metrics["storage_used_mb"] = round(total_bytes / (1024 * 1024), 2)
+        metrics["storage_used_mb"] = round(float(total_bytes / (1024 * 1024)), 2)
         metrics["document_count"] = metrics["total_documents"]
 
         return metrics
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch metrics: {str(e)}")
 
-@router.get("/storage")
-async def get_storage_metrics(client_id: int, session: AsyncSession = Depends(get_session)):
+@router.get("/documents/storage", dependencies=[Depends(require_permission("view_logs"))])
+@limiter.limit(settings.RATE_LIMIT_HEALTH)
+async def get_storage_metrics(request: Request, client_id: int, session: AsyncSession = Depends(get_session)):
     """Integration for Step 4"""
     usage = await calculate_storage_usage(client_id, session)
     return usage
+
+@router.get("/health", dependencies=[Depends(require_permission("view_logs"))])
+@limiter.limit(settings.RATE_LIMIT_HEALTH)
+async def system_health_dashboard(request: Request, client_id: int | None = None, session: AsyncSession = Depends(get_session)):
+    """
+    Returns real-time aggregated metrics across the database and documents.
+    """
+    health_data = await get_system_health(session, client_id)
+    return health_data
+
+@router.post("/repair", dependencies=[Depends(require_permission("configure_system"))])
+@limiter.limit(settings.RATE_LIMIT_REPORT) # Using report limit as it's a heavy operation
+async def trigger_system_repair(request: Request, session: AsyncSession = Depends(get_session)):
+    """
+    Triggers automated repairs for detected infrastructure issues.
+    """
+    from app.services.system_health_service import perform_system_repair
+    repair_results = await perform_system_repair(session)
+    
+    if not repair_results["success"]:
+        raise HTTPException(status_code=500, detail=f"Repair failed: {repair_results['errors']}")
+        
+    return {
+        "status": "success", 
+        "message": f"Successfully repaired {len(repair_results['repaired_tables'])} tables.",
+        "details": repair_results
+    }

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import { apiFetch } from '../../utils/api';
 
 interface FirstReportStepProps {
   semanticMappings: any[];
@@ -56,12 +57,10 @@ export const FirstReportStep: React.FC<FirstReportStepProps> = ({ semanticMappin
     console.log('Generating First Report Request:', builderDefinition);
 
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/v2/builder/save', {
+      const response = await apiFetch('/api/v2/builder/save', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
           'X-API-Key': apiKey || ''
         },
         body: JSON.stringify({
@@ -73,9 +72,8 @@ export const FirstReportStep: React.FC<FirstReportStepProps> = ({ semanticMappin
 
       if (response.ok) {
         // Mark onboarding as complete in backend
-        await fetch(`/api/clients/${clientId}/onboarding/complete`, {
+        await apiFetch(`/api/clients/${clientId}/onboarding/complete`, {
           method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
         });
         onSuccess();
       } else {

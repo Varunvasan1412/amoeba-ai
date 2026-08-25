@@ -11,7 +11,7 @@ def _detect_storage_type(sa_type: str) -> str:
     if "INT" in t: return "integer"
     if "DECIMAL" in t or "FLOAT" in t or "NUMERIC" in t: return "float"
     if "BOOL" in t: return "boolean"
-    if "DATE" in t or "TIME" in t: return "date"
+    if "DATE" in t or "TIME" in t or "TIMESTAMP" in t: return "date"
     return "string"
 
 async def generate_field_metadata(client_id: int, session: AsyncSession):
@@ -45,6 +45,8 @@ async def generate_field_metadata(client_id: int, session: AsyncSession):
         columns = inspector.get_columns(table_name)
         pk_cols = inspector.get_pk_constraint(table_name).get("constrained_columns", [])
         
+        has_primary_date = any(m.is_primary_date for m in existing_meta if m.table_name == table_name)
+        
         for col in columns:
             col_name = col["name"]
             if (table_name, col_name) in existing_map:
@@ -67,13 +69,18 @@ async def generate_field_metadata(client_id: int, session: AsyncSession):
                 input_type = "textarea"
                 
             # 4. Detect Dates
+            is_primary_date = False
             if storage_type == "date":
                 input_type = "date"
-                
+                # Heuristic for primary date
+                if not has_primary_date:
+                    if col_name.lower() in ["created_at", "date", "entry_date", "createddate"]:
+                        is_primary_date = True
+                        has_primary_date = True
+            
             # 5. Detect Dropdowns (Heuristic: ends with _id)
             if col_name.endswith("_id") and not readonly:
                 input_type = "dropdown"
-                # Note: data_source_table would be filled by relationship sync or manual admin
             
             new_meta = FieldMetadata(
                 client_id=client_id,
@@ -85,9 +92,17 @@ async def generate_field_metadata(client_id: int, session: AsyncSession):
                 required=not col.get("nullable", True),
                 readonly=readonly,
                 is_visible=True,
+                is_primary_date=is_primary_date,
                 default_value=str(col.get("default")) if col.get("default") is not None else None
             )
             new_metadata.append(new_meta)
+        
+        # If no primary date was found via heuristics, pick the first date column
+        if not has_primary_date:
+            for meta in new_metadata:
+                if meta.table_name == table_name and meta.storage_type == "date":
+                    meta.is_primary_date = True
+                    break
             
     if new_metadata:
         session.add_all(new_metadata)
@@ -114,7 +129,8 @@ async def get_field_options(client_id: int, meta: FieldMetadata, session: AsyncS
         engine = create_engine(client.db_connection_url)
         with engine.connect() as conn:
             # Safely build the query
-            query = text(f"SELECT {meta.value_column} AS value, {meta.display_column} AS label FROM {meta.data_source_table} LIMIT 100")
+            query = text(f"SELECT {meta.value_column} AS value, {meta.display_column} AS label FROM {meta.data_source_table} LIMIT 5000")
+
             rows = conn.execute(query).mappings().all()
             return [dict(row) for row in rows]
     except Exception as e:

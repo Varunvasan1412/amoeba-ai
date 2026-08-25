@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useCallback, memo } from "react";
-import { MessageCircle, Send, Loader2, Trash2, Plus, MessageSquare, Square, Pencil, Sun, Moon, PanelLeftOpen, PanelLeftClose, Paperclip, SlidersHorizontal, Building2, FileText, X, CheckCircle2, AlertCircle, Brain, Cpu, Mic } from "lucide-react";
+import { MessageCircle, Send, Loader2, Trash2, Plus, MessageSquare, Square, Pencil, Sun, Moon, PanelLeftOpen, PanelLeftClose, Paperclip, SlidersHorizontal, Building2, FileText, X, AlertCircle, Mic, Download, RefreshCw, BarChart3, Table2 } from "lucide-react";
+import { toast } from "react-toastify";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DynamicForm from "../components/DynamicForm";
+import ChartRenderer from "../components/charts/ChartRenderer";
+import { apiFetch } from "../utils/api";
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 type ChatMessage = {
   role: "user" | "ai";
@@ -19,14 +24,16 @@ type ChatSession = {
 };
 
 // Enhanced Message Bubble for Full Screen
-const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, onEdit, darkMode }: { 
+const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, onEdit, darkMode, globalViewMode, chartType }: { 
     msg: ChatMessage, 
     index: number,
     onSelect?: (val: string, index?: number) => void, 
     onSubmitForm?: (data: any) => void,
     onSwitchMode?: (mode: "assistant" | "operations") => void,
     onEdit?: (text: string, index: number) => void,
-    darkMode?: boolean
+    darkMode?: boolean,
+    globalViewMode?: "table" | "chart",
+    chartType?: "bar" | "line" | "pie"
 }) => {
   // Extract actions if present
   const choices = msg.actions?.find(a => a.type === "CHOICE");
@@ -38,20 +45,77 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
   const success = msg.actions?.find(a => a.type === "success");
   const switchModeAction = msg.actions?.find(a => a.type === "SWITCH_MODE");
   const sourcesAction = msg.actions?.find(a => a.type === "SOURCES");
+  const dataTable = msg.actions?.find(a => a.type === "data_table");
   
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const [viewingSource, setViewingSource] = useState<any>(null);
+  const [viewingText, setViewingText] = useState<string | null>(null);
+  const [structuredPreview, setStructuredPreview] = useState<{headers: string[], rows: any[]} | null>(null);
+  const [loadingText, setLoadingText] = useState(false);
+  const [tablePage, setTablePage] = useState(0);
+  const [downloadingFormat, setDownloadingFormat] = useState<string | null>(null);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [localViewMode, setLocalViewMode] = useState<"table" | "chart">(globalViewMode || "table");
+  const chartRef = useRef<HTMLDivElement>(null);
+
+  // Sync local mode with global preference when header toggle is used
+  useEffect(() => {
+    if (globalViewMode) {
+      setLocalViewMode(globalViewMode);
+    }
+  }, [globalViewMode]);
 
   const filteredRecords = recordSelection?.payload?.filter((r: any) => 
     r.label.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  // Handle fetching text for non-PDF previews
+  useEffect(() => {
+    if (viewingSource && !viewingSource.filename.toLowerCase().endsWith('.pdf')) {
+      const ext = viewingSource.filename.toLowerCase().split('.').pop();
+      setLoadingText(true);
+      setStructuredPreview(null);
+      setViewingText(null);
+
+      // Try structured first
+      if ((ext === 'csv' || ext === 'xlsx') && viewingSource.document_id) {
+          apiFetch(`/api/documents/${viewingSource.document_id}/preview`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+              if (data) {
+                  setStructuredPreview(data);
+              } else {
+                  return apiFetch(`/api/documents/download/${viewingSource.document_id}_${viewingSource.filename}`).then(r => r.text());
+              }
+          })
+          .then(text => { if (typeof text === 'string') setViewingText(text.slice(0, 10000)); })
+          .catch(() => {})
+          .finally(() => setLoadingText(false));
+      } else {
+          apiFetch(`/api/documents/download/${viewingSource.document_id}_${viewingSource.filename}`)
+          .then(res => res.text())
+          .then(text => setViewingText(text.slice(0, 10000)))
+          .catch(() => setViewingText("Failed to load document content."))
+          .finally(() => setLoadingText(false));
+      }
+    } else {
+      setViewingText(null);
+      setStructuredPreview(null);
+    }
+  }, [viewingSource]);
+
+  // Expand to full width when there's a data table (for charts)
+  const hasDataTable = !!dataTable;
+  const bubbleWidth = msg.role === "user" ? "max-w-[85%]" : hasDataTable ? "max-w-full w-full" : "max-w-[85%]";
+
   return (
-    <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
+    <div className={`flex flex-col gap-2 ${bubbleWidth} ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
         {/* Main Text Bubble */}
         <div
         className={`p-4 rounded-2xl text-[15px] shadow-sm break-words leading-relaxed transition-theme ${
+            hasDataTable ? "w-full" : ""
+        } ${
             msg.role === "user"
             ? "bg-blue-600 text-white rounded-br-sm" 
             : darkMode 
@@ -64,18 +128,38 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                 {msg.text.startsWith("📎") ? (
                     (() => {
                         const [filePart, ...textParts] = msg.text.split("\n");
-                        const fileName = filePart.replace("📎", "").trim();
+                        const rawFile = filePart.replace("📎", "").trim();
+                        // Support format: "filename|downloadPath" or just "filename"
+                        const [fileName, downloadPath] = rawFile.includes("|") ? rawFile.split("|", 2) : [rawFile, ""];
                         const messageText = textParts.join("\n").trim();
                         return (
                             <>
-                                <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium w-fit border shadow-sm ${
-                                    darkMode 
-                                    ? "bg-blue-900/30 border-blue-800/50 text-blue-300" 
-                                    : "bg-blue-50 border-blue-100 text-blue-700"
-                                }`}>
-                                    <FileText size={14} />
-                                    <span>{fileName}</span>
-                                </div>
+                                {downloadPath ? (
+                                    <a
+                                        href={downloadPath}
+                                        download
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium w-fit border shadow-sm cursor-pointer transition-all hover:scale-[1.02] ${
+                                            darkMode 
+                                            ? "bg-blue-900/30 border-blue-800/50 text-blue-300 hover:bg-blue-900/50" 
+                                            : "bg-blue-50 border-blue-100 text-blue-700 hover:bg-blue-100"
+                                        }`}
+                                        title="Click to download"
+                                    >
+                                        <Download size={14} />
+                                        <span>{fileName}</span>
+                                    </a>
+                                ) : (
+                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium w-fit border shadow-sm ${
+                                        darkMode 
+                                        ? "bg-blue-900/30 border-blue-800/50 text-blue-300" 
+                                        : "bg-blue-50 border-blue-100 text-blue-700"
+                                    }`}>
+                                        <FileText size={14} />
+                                        <span>{fileName}</span>
+                                    </div>
+                                )}
                                 {messageText && <span>{messageText}</span>}
                             </>
                         );
@@ -87,18 +171,261 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                     <span className="text-[9px] opacity-60 mt-1 italic text-right">Edited</span>
                 )}
             </div>
-        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction) ? (
-            <div className="whitespace-pre-wrap text-gray-800 font-sans text-[15px]">
-                {msg.text}
+        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction || dataTable) ? (
+            <div className={`font-sans text-[15px] flex flex-col gap-2 ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
+                {/* Render textual context first if it exists alongside actions */}
+                {msg.text && (
+                    <div className={`prose prose-sm max-w-none prose-p:my-0 prose-headings:my-1 overflow-hidden ${darkMode ? 'prose-invert' : ''}`}>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
+                    </div>
+                )}
+                {/* Paginated Data Table */}
+                {dataTable && dataTable.payload && (() => {
+                    const { headers, rows, total } = dataTable.payload;
+                    const PAGE_SIZE = 10;
+                    const totalPages = Math.ceil(rows.length / PAGE_SIZE);
+                    const pageRows = rows.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE);
+
+                    // Chart eligibility: needs numeric + category columns, more than 1 row
+                    const hasNumericCol = headers.some((h: string) => {
+                        const val = rows[0]?.[h];
+                        return val !== undefined && val !== null && !isNaN(Number(val)) && String(val).trim() !== "" && !h.toLowerCase().endsWith("_id") && h.toLowerCase() !== "id";
+                    });
+                    const isChartEligible = rows.length > 1 && hasNumericCol && headers.length >= 2;
+
+                    return (
+                        <div className="overflow-x-auto my-1">
+                            {/* Per-message Table/Chart toggle */}
+                            {isChartEligible && (
+                                <div className={`flex items-center gap-1 mb-2 p-1 rounded-lg w-fit ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+                                    <button
+                                        onClick={() => setLocalViewMode("table")}
+                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                                            localViewMode === "table"
+                                            ? (darkMode ? 'bg-gray-700 text-blue-400 shadow-sm' : 'bg-white text-blue-600 shadow-sm')
+                                            : (darkMode ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600')
+                                        }`}
+                                    >
+                                        <Table2 size={12} /> Table
+                                    </button>
+                                    <button
+                                        onClick={() => setLocalViewMode("chart")}
+                                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
+                                            localViewMode === "chart"
+                                            ? (darkMode ? 'bg-gray-700 text-blue-400 shadow-sm' : 'bg-white text-blue-600 shadow-sm')
+                                            : (darkMode ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600')
+                                        }`}
+                                    >
+                                        <BarChart3 size={12} /> Chart
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Conditional: Chart or Table */}
+                            {localViewMode === "chart" && isChartEligible ? (
+                                <div ref={chartRef} className="w-full bg-inherit p-4 rounded-xl">
+                                    <ChartRenderer data={rows} columns={headers} darkMode={darkMode} chartType={chartType} />
+                                </div>
+                            ) : (
+                            <>
+                            <table className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
+                                <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-100'}>
+                                    <tr>
+                                        {headers.map((h: string) => (
+                                            <th key={h} className={`px-3 py-2 text-left font-semibold border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {pageRows.map((row: any, i: number) => (
+                                        <tr key={i} className={`${darkMode ? 'hover:bg-gray-700/50' : 'hover:bg-blue-50/50'} transition-colors`}>
+                                            {headers.map((h: string) => (
+                                                <td key={h} className={`px-3 py-1.5 border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-600'}`}>{row[h] || ''}</td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {totalPages > 1 && (
+                                <div className={`flex items-center justify-between mt-2 px-1 text-xs ${darkMode ? 'text-gray-400' : 'text-gray-500'}`}>
+                                    <span>Page {tablePage + 1} of {totalPages} ({total} records)</span>
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={() => setTablePage(p => Math.max(0, p - 1))}
+                                            disabled={tablePage === 0}
+                                            className={`px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                                                tablePage === 0 
+                                                ? (darkMode ? 'border-gray-700 text-gray-600 cursor-not-allowed' : 'border-gray-200 text-gray-300 cursor-not-allowed')
+                                                : (darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100')
+                                            }`}
+                                        >← Previous</button>
+                                        <button 
+                                            onClick={() => setTablePage(p => Math.min(totalPages - 1, p + 1))}
+                                            disabled={tablePage >= totalPages - 1}
+                                            className={`px-3 py-1.5 rounded-lg border font-medium transition-all ${
+                                                tablePage >= totalPages - 1 
+                                                ? (darkMode ? 'border-gray-700 text-gray-600 cursor-not-allowed' : 'border-gray-200 text-gray-300 cursor-not-allowed')
+                                                : (darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-600 hover:bg-gray-100')
+                                            }`}
+                                        >Next →</button>
+                                    </div>
+                                </div>
+                            )}
+                            </>
+                            )}
+
+                            {/* Inline Download Button for dataTables */}
+                            {dataTable.payload.query_payload && (
+                                <div className="mt-3 border-t pt-2 relative">
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); setShowExportMenu(!showExportMenu); }}
+                                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-[11px] font-bold transition-all ${
+                                            darkMode 
+                                            ? 'bg-blue-900/40 text-blue-300 hover:bg-blue-800/60 border border-blue-900/50' 
+                                            : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-100'
+                                        }`}
+                                    >
+                                        <Download size={12} />
+                                        <span>Download</span>
+                                        <span className="text-[9px] opacity-70 ml-1">▼</span>
+                                    </button>
+                                    
+                                    {showExportMenu && (
+                                        <div className={`absolute bottom-full left-0 mb-1 z-50 rounded-lg shadow-xl border overflow-hidden w-40 flex flex-col ${
+                                            darkMode ? "bg-gray-800 border-gray-700 shadow-black/50" : "bg-white border-gray-100 shadow-blue-500/10"
+                                        }`}>
+                                            {['Excel (.xlsx)', 'CSV (.csv)', 'PDF (.pdf)'].filter(label => {
+                                                const format = label.includes('xlsx') ? 'xlsx' : label.includes('csv') ? 'csv' : 'pdf';
+                                                return localViewMode === 'chart' ? format === 'pdf' : format !== 'pdf';
+                                            }).map(formatLabel => {
+                                                const formatCode = formatLabel.includes('xlsx') ? 'xlsx' : formatLabel.includes('csv') ? 'csv' : 'pdf';
+                                                return (
+                                                    <button 
+                                                        key={formatCode}
+                                                        disabled={downloadingFormat !== null}
+                                                        onClick={async (e) => {
+                                                            e.stopPropagation();
+                                                            setShowExportMenu(false);
+
+                                                            // NEW: Visual Capture for Charts
+                                                            if (formatCode === "pdf" && localViewMode === "chart" && chartRef.current) {
+                                                                setDownloadingFormat("pdf");
+                                                                try {
+                                                                    const element = chartRef.current;
+                                                                    // Use a slight delay to ensure everything is rendered
+                                                                    const canvas = await html2canvas(element, {
+                                                                        backgroundColor: darkMode ? "#1f2937" : "#ffffff",
+                                                                        scale: 2, // Higher quality
+                                                                        useCORS: true,
+                                                                        logging: false
+                                                                    });
+                                                                    const imgData = canvas.toDataURL("image/png");
+                                                                    const pdf = new jsPDF({
+                                                                        orientation: canvas.width > canvas.height ? "landscape" : "portrait",
+                                                                        unit: "px",
+                                                                        format: [canvas.width, canvas.height]
+                                                                    });
+                                                                    pdf.addImage(imgData, "PNG", 0, 0, canvas.width, canvas.height);
+                                                                    pdf.save(`${dataTable.payload.title || 'chart'}.pdf`);
+                                                                    toast.success("Chart PDF generated successfully!");
+                                                                } catch (err) {
+                                                                    console.error("PDF Capture Error:", err);
+                                                                    toast.error("Failed to generate visual PDF");
+                                                                } finally {
+                                                                    setDownloadingFormat(null);
+                                                                }
+                                                                return;
+                                                            }
+
+                                                            setDownloadingFormat(formatCode);
+                                                            try {
+                                                                // Grab the query payload passed by the LLM service
+                                                                const queryPayload = dataTable.payload.query_payload;
+                                                                const currentApiKey = new URLSearchParams(window.location.search).get("api_key") || "";
+                                                                const res = await apiFetch(`/api/inline-export?api_key=${currentApiKey}`, {
+                                                                    method: "POST",
+                                                                    body: JSON.stringify({
+                                                                        format: formatCode,
+                                                                        query_payload: queryPayload
+                                                                    })
+                                                                });
+
+                                                                if (!res.ok) {
+                                                                    const errText = await res.text();
+                                                                    let detail = "Failed to generate report";
+                                                                    try { detail = JSON.parse(errText).detail || detail; } catch {}
+                                                                    throw new Error(detail);
+                                                                }
+                                                                
+                                                                // Download as blob
+                                                                const blob = await res.blob();
+                                                                const disposition = res.headers.get("content-disposition");
+                                                                let fname = `export.${formatCode}`;
+                                                                if (disposition) {
+                                                                    const match = disposition.match(/filename="?([^";\n]+)"?/);
+                                                                    if (match) fname = match[1];
+                                                                }
+                                                                const url = window.URL.createObjectURL(blob);
+                                                                const a = document.createElement("a");
+                                                                a.href = url;
+                                                                a.download = fname;
+                                                                document.body.appendChild(a);
+                                                                a.click();
+                                                                a.remove();
+                                                                window.URL.revokeObjectURL(url);
+                                                            } catch (err: any) {
+                                                                alert(`Export failed: ${err.message}`);
+                                                            } finally {
+                                                                setDownloadingFormat(null);
+                                                            }
+                                                        }}
+                                                        className={`text-left px-4 py-2.5 text-[11px] font-medium transition-colors flex items-center justify-between ${
+                                                            darkMode 
+                                                            ? "text-gray-300 hover:bg-gray-700 hover:text-white disabled:opacity-50 disabled:hover:bg-transparent" 
+                                                            : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 disabled:opacity-50 disabled:hover:bg-transparent"
+                                                        }`}
+                                                    >
+                                                        {formatLabel} 
+                                                        {downloadingFormat === formatCode && <Loader2 size={12} className="animate-spin text-blue-500" />}
+                                                    </button>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                        </div>
+                    );
+                })()}
+                
                 {success && (
-                    <div className="mt-2 text-green-600 font-bold flex items-center gap-2">
+                    <div className={`mt-2 font-bold flex items-center gap-2 ${darkMode ? 'text-green-400' : 'text-green-600'}`}>
                         <span>✅</span> {success.payload}
                     </div>
                 )}
             </div>
         ) : (
             <div className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 overflow-hidden ${darkMode ? 'prose-invert prose-pre:bg-gray-900 prose-pre:text-gray-300' : 'prose-pre:bg-gray-50 prose-pre:text-gray-700'}`}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            <ReactMarkdown 
+                remarkPlugins={[remarkGfm]}
+                components={{
+                    table: ({ node, ...props }) => (
+                        <div className="overflow-x-auto my-2">
+                            <table {...props} className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`} />
+                        </div>
+                    ),
+                    thead: ({ node, ...props }) => (
+                        <thead {...props} className={darkMode ? 'bg-gray-700' : 'bg-gray-100'} />
+                    ),
+                    th: ({ node, ...props }) => (
+                        <th {...props} className={`px-3 py-1.5 text-left font-semibold border ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`} />
+                    ),
+                    td: ({ node, ...props }) => (
+                        <td {...props} className={`px-3 py-1 border ${darkMode ? 'border-gray-600 text-gray-300' : 'border-gray-300 text-gray-600'}`} />
+                    )
+                }}
+            >
                 {msg.text}
             </ReactMarkdown>
             </div>
@@ -178,42 +505,88 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
 
         {/* Source Preview Modal */}
         {viewingSource && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in shadow-2xl">
-                <div className={`w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden border transition-theme ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-100"}`}>
-                    <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in shadow-2xl">
+                <div className={`w-full max-w-4xl h-[85vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden border transition-theme ${darkMode ? "bg-gray-900 border-gray-700" : "bg-white border-gray-100"}`}>
+                    <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-3">
                             <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-blue-600 dark:text-blue-400">
-                                <FileText size={18} />
+                                <FileText size={20} />
                             </div>
-                            <h3 className="font-bold text-sm truncate max-w-[200px]">{viewingSource.filename}</h3>
+                            <div>
+                                <h3 className="font-bold text-sm md:text-base truncate max-w-[300px] md:max-w-md text-gray-900 dark:text-white">{viewingSource.filename}</h3>
+                                {viewingSource.pages && viewingSource.pages.length > 0 && (
+                                    <span className="text-xs opacity-80 text-gray-600 dark:text-gray-300">
+                                        Referenced {viewingSource.pages.length > 1 ? `Pages: ${viewingSource.pages.join(", ")}` : `Page: ${viewingSource.pages[0]}`}
+                                    </span>
+                                )}
+                            </div>
                         </div>
-                        <button onClick={() => setViewingSource(null)} className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
-                            <X size={18} />
+                        <button onClick={() => setViewingSource(null)} className="p-2 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                            <X size={20} />
                         </button>
                     </div>
-                    <div className="p-5 flex flex-col gap-4">
-                        <div className="flex flex-col gap-1.5">
-                            <span className="text-[10px] uppercase tracking-wider font-bold opacity-50">Attribution</span>
-                            <div className="text-sm">
-                                This response was generated using data found on 
-                                <span className="font-bold mx-1">
-                                    {viewingSource.pages?.length > 1 ? `Pages ${viewingSource.pages.join(", ")}` : `Page ${viewingSource.pages?.[0] || '1'}`}
-                                </span>
-                                of this document.
+                    
+                    <div className="flex-1 w-full bg-gray-100 dark:bg-black/50 overflow-hidden relative">
+                        {viewingSource.document_id && viewingSource.filename.toLowerCase().endsWith('.pdf') ? (
+                            <iframe 
+                                src={`/api/documents/download/${viewingSource.document_id}_${viewingSource.filename}#page=${viewingSource.pages && viewingSource.pages.length > 0 ? viewingSource.pages[0] : 1}`}
+                                className="w-full h-full border-none"
+                                title={viewingSource.filename}
+                            />
+                        ) : loadingText ? (
+                            <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-500">
+                                <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
+                                <p className="text-sm font-medium animate-pulse">Analyzing structure...</p>
                             </div>
-                        </div>
-                        <div className="flex flex-col gap-2 p-3 bg-blue-50/50 dark:bg-blue-900/10 rounded-xl border border-blue-100/50 dark:border-blue-800/30">
-                            <span className="text-[10px] font-bold text-blue-600 dark:text-blue-400">NOTE</span>
-                            <p className="text-[11px] leading-relaxed opacity-80">
-                                The AI has analyzed the semantic content of these specific pages to provide the answer above. You can verify this in the original file.
-                            </p>
-                        </div>
-                        <button 
-                            onClick={() => setViewingSource(null)}
-                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg transition-all active:scale-[0.98]"
-                        >
-                            Got it
-                        </button>
+                        ) : structuredPreview ? (
+                            <div className="w-full h-full overflow-auto bg-white dark:bg-gray-950">
+                                <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800 border-collapse">
+                                    <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0 z-10 shadow-sm">
+                                        <tr>
+                                            {structuredPreview.headers.map((h, i) => (
+                                                <th key={i} className="px-4 py-3 text-left text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-800 whitespace-nowrap">
+                                                    {h}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                                        {structuredPreview.rows.map((row, i) => (
+                                            <tr key={i} className="hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-colors">
+                                                {structuredPreview.headers.map((h, j) => (
+                                                    <td key={j} className="px-4 py-2.5 text-xs text-gray-600 dark:text-gray-300 border-r border-gray-50 dark:border-gray-800 last:border-r-0 max-w-[300px] truncate">
+                                                        {String(row[h] !== null ? row[h] : '')}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : viewingText ? (
+                            <div className="w-full h-full overflow-auto p-6 font-mono text-[11px] leading-relaxed bg-white dark:bg-gray-950 text-gray-800 dark:text-gray-200">
+                                <pre className="whitespace-pre-wrap font-mono">{viewingText}</pre>
+                            </div>
+                        ) : (
+                            <div className="p-8 flex flex-col gap-4 max-w-lg mx-auto h-full justify-center text-center">
+                                <div className="p-4 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 rounded-full w-fit mx-auto">
+                                    <AlertCircle size={32} />
+                                </div>
+                                <h4 className="font-bold text-lg dark:text-white">Rich Preview Unavailable</h4>
+                                <p className="text-sm opacity-80 leading-relaxed mb-4 dark:text-gray-300">
+                                    Rich previews for **DOCX** and **XLSX** files are currently processed into searchable knowledge. For other file types, please download the file to view its contents natively.
+                                </p>
+                                {viewingSource.document_id && (
+                                    <a 
+                                        href={`/api/documents/download/${viewingSource.document_id}_${viewingSource.filename}`}
+                                        download
+                                        className="py-3 px-8 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-200 transition-all hover:-translate-y-0.5 w-fit mx-auto"
+                                    >
+                                        <Download size={18} className="inline mr-2" /> Download File
+                                    </a>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -341,6 +714,16 @@ export default function AmoebaChat() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>("");
   const [chatMode, setChatMode] = useState<"assistant" | "operations">("assistant");
+  const [viewMode, setViewMode] = useState<"table" | "chart">(localStorage.getItem("amoeba_view_mode") as any || "table");
+  const [chartType, setChartType] = useState<"bar" | "line" | "pie">(localStorage.getItem("amoeba_chart_type") as any || "bar");
+
+  useEffect(() => {
+    localStorage.setItem("amoeba_view_mode", viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    localStorage.setItem("amoeba_chart_type", chartType);
+  }, [chartType]);
   
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -353,7 +736,6 @@ export default function AmoebaChat() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const recognitionRef = useRef<any>(null);
   const [aiConfig, setAiConfig] = useState<{provider: string, model: string} | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem("amoeba_selected_model") || "gemini-2.0-flash-lite");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("amoeba_dark_mode") === "true");
   const [isEditingIndex, setIsEditingIndex] = useState<number | null>(null);
@@ -381,15 +763,10 @@ export default function AmoebaChat() {
   const [historyPointer, setHistoryPointer] = useState<number>(-1);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    localStorage.setItem("amoeba_selected_model", selectedModel);
-  }, [selectedModel]);
-
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
-
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    if (type === 'success') toast.success(message);
+    else if (type === 'error') toast.error(message);
+    else toast.info(message);
   };
 
   // Persist sources selection
@@ -399,6 +776,7 @@ export default function AmoebaChat() {
   
   const socketRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const pendingNewAIMessage = useRef(true);
 
   // Apply Dark Mode effect
   useEffect(() => {
@@ -412,7 +790,7 @@ export default function AmoebaChat() {
 
   const fetchSessions = useCallback(async () => {
     try {
-        const res = await fetch(`${API_BASE}/chat/sessions?api_key=${currentApiKey}`);
+        const res = await apiFetch(`${API_BASE}/chat/sessions?api_key=${currentApiKey}`);
         if(res.ok) {
             const data = await res.json();
             setSessions(data);
@@ -426,7 +804,7 @@ export default function AmoebaChat() {
 
     // Fetch AI Config for model indicator
     try {
-        const configRes = await fetch(`${API_BASE}/ai-config?api_key=${currentApiKey}`);
+        const configRes = await apiFetch(`${API_BASE}/ai-config?api_key=${currentApiKey}`);
         if (configRes.ok) {
             const configData = await configRes.json();
             setAiConfig(configData);
@@ -444,7 +822,7 @@ export default function AmoebaChat() {
     if (isEditingIndex !== null) return; // Prevent overwriting the UI during an edit
     setIsLoadingHistory(true);
     try {
-      const res = await fetch(`${API_BASE}/chat/messages/${sessionId}?api_key=${currentApiKey}`);
+      const res = await apiFetch(`${API_BASE}/chat/messages/${sessionId}?api_key=${currentApiKey}`);
       if (!res.ok) throw new Error("Failed to fetch history");
       const data = await res.json();
 
@@ -504,29 +882,25 @@ export default function AmoebaChat() {
 
         if (payload.type === "done") {
              setIsTyping(false);
+             (window as any).__lastAmoebaMsg = null;
              return;
         }
 
         if (payload.text) {
+             const msgFingerprint = payload.text.slice(0, 80) + (payload.actions ? JSON.stringify(payload.actions).slice(0, 40) : '');
+             if ((window as any).__lastAmoebaMsg === msgFingerprint) {
+                 console.log('[Amoeba] Skipping duplicate WS message');
+                 return;
+             }
+             (window as any).__lastAmoebaMsg = msgFingerprint;
+             
+             pendingNewAIMessage.current = false;
              setMessages((prev) => {
-                 const lastMsg = prev[prev.length - 1];
-                 if (lastMsg && lastMsg.role === "ai") {
-                     // Append to last AI message
-                     const updated = [...prev];
-                     updated[updated.length - 1] = {
-                         ...lastMsg,
-                         text: (lastMsg.text || "") + payload.text,
-                         actions: payload.actions || lastMsg.actions || []
-                     };
-                     return updated;
-                 } else {
-                     // Create new AI message bubble
-                     return [...prev, { 
-                         role: "ai" as const, 
-                         text: payload.text,
-                         actions: payload.actions || []
-                     }];
-                 }
+                 return [...prev, { 
+                     role: "ai" as const, 
+                     text: payload.text,
+                     actions: payload.actions || []
+                 }];
              });
         }
 
@@ -590,7 +964,7 @@ export default function AmoebaChat() {
 
   const handleNewChat = async () => {
     try {
-        const res = await fetch(`${API_BASE}/chat/session?api_key=${currentApiKey}`, {
+        const res = await apiFetch(`${API_BASE}/chat/session?api_key=${currentApiKey}`, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({ title: "New Chat" })
@@ -611,7 +985,7 @@ export default function AmoebaChat() {
     if(!window.confirm("Are you sure you want to delete this chat session?")) return;
 
     try {
-        const res = await fetch(`${API_BASE}/chat/session/${sessionId}?api_key=${currentApiKey}`, {
+        const res = await apiFetch(`${API_BASE}/chat/session/${sessionId}?api_key=${currentApiKey}`, {
             method: "DELETE"
         });
         if(res.ok) {
@@ -645,7 +1019,7 @@ export default function AmoebaChat() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/documents/upload`, {
+        const res = await apiFetch(`${API_BASE}/documents/upload`, {
             method: "POST",
             body: formData
         });
@@ -679,34 +1053,36 @@ export default function AmoebaChat() {
   const handleChoiceSelect = useCallback((label: string, index?: number) => {
     if (!socketRef.current || !isConnected) return;
     const textToSend = index !== undefined ? index.toString() : label;
+    pendingNewAIMessage.current = true;
     setMessages((prev) => [...prev, { role: "user", text: label }]);
     const payload = {
         text: textToSend,
         mode: chatMode,
         api_key: currentApiKey,
         session_id: currentSessionId,
-        sources,
-        model: selectedModel
+        view_mode: viewMode,
+        sources
     };
     socketRef.current.send(JSON.stringify(payload));
     setIsTyping(true);
-  }, [isConnected, chatMode, currentApiKey, currentSessionId]);
+  }, [isConnected, chatMode, currentApiKey, currentSessionId, sources]);
 
   const handleFormSubmit = useCallback((data: any) => {
     if (!socketRef.current || !isConnected) return;
     const text = JSON.stringify(data);
+    pendingNewAIMessage.current = true;
     setMessages((prev) => [...prev, { role: "user", text: "Submitted form details." }]);
     const payload = {
         text: text,
         mode: chatMode,
         api_key: currentApiKey,
         session_id: currentSessionId,
-        sources,
-        model: selectedModel
+        view_mode: viewMode,
+        sources
     };
     socketRef.current.send(JSON.stringify(payload));
     setIsTyping(true);
-  }, [isConnected, chatMode, currentApiKey, currentSessionId]);
+  }, [isConnected, chatMode, currentApiKey, currentSessionId, sources]);
 
 
   const sendMessage = (overrideText?: any) => {
@@ -719,9 +1095,10 @@ export default function AmoebaChat() {
     if (attachment) {
         const contextPrefix = `[SYSTEM: User uploaded file '${attachment.name}' at '${attachment.path}']\n`;
         textToSend = contextPrefix + textToProcess;
-        displayInput = `📎 ${attachment.name}\n${textToProcess}`;
+        displayInput = `📎 ${attachment.name}${attachment.path ? '|' + attachment.path : ''}\n${textToProcess}`;
     }
 
+    pendingNewAIMessage.current = true;
     setMessages((prev) => [...prev, { role: "user", text: displayInput }]);
     
     const payload = {
@@ -729,9 +1106,9 @@ export default function AmoebaChat() {
         mode: chatMode,
         api_key: currentApiKey,
         session_id: currentSessionId,
+        view_mode: viewMode,
         is_edit: false,
-        sources,
-        model: selectedModel
+        sources
     };
     
     socketRef.current.send(JSON.stringify(payload));
@@ -768,6 +1145,7 @@ export default function AmoebaChat() {
     // Grab the messages BEFORE slicing/sending
     const preservedHistory = messages.map((m) => ({ role: m.role, content: m.text || "" }));
 
+    pendingNewAIMessage.current = true;
     setMessages((prev) => [...prev, { role: "user", text: input, is_edited: true }]);
     
     const payload = {
@@ -775,11 +1153,11 @@ export default function AmoebaChat() {
         mode: chatMode,
         api_key: currentApiKey,
         session_id: currentSessionId,
+        view_mode: viewMode,
         is_edit: true,
         preserve_count: editPreserveCount ?? 0,
         history_context: preservedHistory,
-        sources,
-        model: selectedModel
+        sources
     };
     
     socketRef.current.send(JSON.stringify(payload));
@@ -800,7 +1178,7 @@ export default function AmoebaChat() {
   const handleStop = () => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
         // Send a stop signal to the backend (optionally)
-        socketRef.current.send(JSON.stringify({ type: "STOP" }));
+             socketRef.current.send(JSON.stringify({ type: "STOP_GENERATION" }));
     }
     setIsTyping(false);
   };
@@ -831,14 +1209,13 @@ export default function AmoebaChat() {
             mode: newMode,
             api_key: currentApiKey,
             session_id: currentSessionId,
-            sources,
-            model: selectedModel
-        };
+                 sources
+             };
         
         socketRef.current.send(JSON.stringify(payload));
         setIsTyping(true);
     }
-  }, [messages, isConnected, currentApiKey, currentSessionId, selectedModel, sources]);
+  }, [messages, isConnected, currentApiKey, currentSessionId, sources]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -1025,37 +1402,7 @@ export default function AmoebaChat() {
                         )}
                     </h2>
                     
-                    {/* Model Selector */}
-                    <div className={`hidden md:flex p-1 rounded-xl items-center gap-1 shadow-inner mr-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-                        <button 
-                            onClick={() => setSelectedModel("gemini-2.0-flash-lite")}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${selectedModel.includes("gemini") ? (darkMode ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
-                        >
-                            <Brain size={12} /> Gemini
-                        </button>
-                        <button 
-                            onClick={() => setSelectedModel("llama3:latest")}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${selectedModel.includes("llama") ? (darkMode ? 'bg-purple-600 text-white' : 'bg-white text-purple-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
-                        >
-                            <Cpu size={12} /> Ollama
-                        </button>
-                    </div>
 
-                    {/* Model Selector */}
-                    <div className={`hidden md:flex p-1 rounded-xl items-center gap-1 shadow-inner mr-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
-                        <button 
-                            onClick={() => setSelectedModel("gemini-2.0-flash-lite")}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${selectedModel.includes("gemini") ? (darkMode ? 'bg-blue-600 text-white' : 'bg-white text-blue-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
-                        >
-                            <Brain size={12} /> Gemini
-                        </button>
-                        <button 
-                            onClick={() => setSelectedModel("llama3:latest")}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all flex items-center gap-2 ${selectedModel.includes("llama") ? (darkMode ? 'bg-purple-600 text-white' : 'bg-white text-purple-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
-                        >
-                            <Cpu size={12} /> Ollama
-                        </button>
-                    </div>
 
                     {/* Mode Toggle */}
                     <div className={`flex p-1 rounded-xl items-center gap-1 shadow-inner ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
@@ -1072,6 +1419,46 @@ export default function AmoebaChat() {
                             Operations
                         </button>
                     </div>
+
+                    {/* View Mode Toggle */}
+                    <div className={`flex p-1 rounded-xl items-center gap-1 shadow-inner ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+                        <button 
+                            onClick={() => setViewMode("table")}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${viewMode === "table" ? (darkMode ? 'bg-gray-700 text-blue-400' : 'bg-white text-blue-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
+                        >
+                            <Table2 size={13} /> Table
+                        </button>
+                        <button 
+                            onClick={() => setViewMode("chart")}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-all ${viewMode === "chart" ? (darkMode ? 'bg-gray-700 text-blue-400' : 'bg-white text-blue-600 shadow-sm') : 'text-gray-400 hover:text-gray-300'}`}
+                        >
+                            <BarChart3 size={13} /> Chart
+                        </button>
+                    </div>
+
+                    {/* Chart Type Selector (Only if chart view) */}
+                    {viewMode === "chart" && (
+                        <div className={`flex p-1 rounded-xl items-center gap-1 shadow-inner ${darkMode ? 'bg-gray-800' : 'bg-gray-100'}`}>
+                            <button 
+                                onClick={() => setChartType("bar")}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${chartType === "bar" ? (darkMode ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-blue-600 text-white shadow-lg shadow-blue-200') : 'text-gray-400 hover:text-gray-300'}`}
+                            >
+                                Bar
+                            </button>
+                            <button 
+                                onClick={() => setChartType("line")}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${chartType === "line" ? (darkMode ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-blue-600 text-white shadow-lg shadow-blue-200') : 'text-gray-400 hover:text-gray-300'}`}
+                            >
+                                Line
+                            </button>
+                            <button 
+                                onClick={() => setChartType("pie")}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all ${chartType === "pie" ? (darkMode ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'bg-blue-600 text-white shadow-lg shadow-blue-200') : 'text-gray-400 hover:text-gray-300'}`}
+                            >
+                                Pie
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -1085,7 +1472,7 @@ export default function AmoebaChat() {
                 </div>
             </div>
             
-            <div className={`flex-1 overflow-y-auto p-8 pt-20 flex flex-col gap-6 scrollbar-custom max-w-5xl mx-auto w-full transition-theme ${darkMode ? 'bg-gray-950' : 'bg-white'}`}>
+            <div className={`flex-1 overflow-y-auto p-8 pt-20 flex flex-col gap-6 scrollbar-custom w-full transition-theme ${darkMode ? 'bg-gray-950' : 'bg-white'}`}>
                 {isLoadingHistory ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="animate-spin text-blue-500" size={32} />
@@ -1113,6 +1500,8 @@ export default function AmoebaChat() {
                                     onSwitchMode={handleSwitchAndResend}
                                     onEdit={handleEdit}
                                     darkMode={darkMode}
+                                    globalViewMode={viewMode}
+                                    chartType={chartType}
                                 />
                             </div>
                         ))}
@@ -1297,21 +1686,6 @@ export default function AmoebaChat() {
                 <div className={`text-center mt-3 text-xs ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Amoeba AI can make mistakes. Consider verifying important information.</div>
             </div>
 
-            {/* Toast Notifications */}
-            {toast && (
-              <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-2xl border animate-in fade-in slide-in-from-bottom-4 transition-all backdrop-blur-md ${
-                toast.type === 'success' 
-                  ? (darkMode ? 'bg-green-900/90 border-green-800 text-green-100' : 'bg-green-50/95 border-green-100 text-green-800')
-                  : toast.type === 'error'
-                  ? (darkMode ? 'bg-red-900/90 border-red-800 text-red-100' : 'bg-red-50/95 border-red-100 text-red-800')
-                  : (darkMode ? 'bg-blue-900/90 border-blue-800 text-blue-100' : 'bg-blue-50/95 border-blue-100 text-blue-800')
-              }`}>
-                {toast.type === 'success' && <CheckCircle2 size={20} className="text-green-500" />}
-                {toast.type === 'error' && <AlertCircle size={20} className="text-red-500" />}
-                {toast.type === 'info' && <Loader2 size={20} className="animate-spin text-blue-500" />}
-                <span className="font-semibold text-sm">{toast.message}</span>
-              </div>
-            )}
 
             <style>{`
                 .transition-theme {

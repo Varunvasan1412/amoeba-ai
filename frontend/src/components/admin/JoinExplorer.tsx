@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { SearchableDropdown } from './SearchableDropdown';
+import { toast } from 'react-toastify';
 
 interface Relationship {
   id: number;
@@ -76,7 +77,7 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
 
     const handleSaveSingle = async () => {
         if (!tableA || !colA || !tableB || !colB || !apiKey) {
-            alert("Please complete the connection details.");
+            toast.warning("Please complete the connection details.");
             return;
         }
         setSaving(true);
@@ -106,9 +107,9 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
 
             setTableA(''); setColA(''); setTableB(''); setColB(''); setPulledData([]);
             onRefresh();
-            alert("Connection Saved!");
+            toast.success("Connection Saved!");
         } catch (err: any) {
-            alert(err.message);
+            toast.error(err.message);
         } finally {
             setSaving(false);
         }
@@ -149,9 +150,9 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
             setChain([{ sourceTable: '', sourceCol: '', targetTable: '', targetCol: '', selectedColumns: [] }]);
             setMode('single');
             onRefresh();
-            alert("Chain Established!");
+            toast.success("Chain Established!");
         } catch (err: any) {
-            alert(err.message);
+            toast.error(err.message);
         } finally {
             setSaving(false);
         }
@@ -222,89 +223,140 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
                     
                     {mode === 'single' ? (
                         <>
-                            <div className="flex items-center gap-3 mb-8">
-                                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
-                                    <Plus size={20} strokeWidth={3} />
+                            <div className="flex items-center gap-4 mb-8">
+                                <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-indigo-100 ring-4 ring-white">
+                                    <Plus size={24} strokeWidth={3} />
                                 </div>
-                                <h2 className="text-2xl font-black text-slate-900 tracking-tight">Create Data Connection</h2>
+                                <div>
+                                    <h2 className="text-3xl font-black text-slate-900 tracking-tight leading-none">Map IDs to Labels</h2>
+                                    <p className="text-slate-400 text-xs font-medium mt-1">Connect master tables to transactional data for human-readable chat results.</p>
+                                </div>
                             </div>
 
-                            <div className="flex flex-col lg:flex-row gap-6 items-start animate-in fade-in slide-in-from-top-2">
-                                <div className="flex-1 w-full bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
-                                    <div>
-                                        <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest block mb-1">1. Reference Table (Master Data)</label>
-                                        <p className="text-[9px] text-slate-400 mb-2 italic">The source of truth (e.g. Employee Types, Categories, Products)</p>
+                            <div className="flex flex-col lg:flex-row gap-8 items-stretch animate-in fade-in slide-in-from-top-4 duration-500">
+                                {/* STEP 1: SOURCE OF LABELS */}
+                                <div className="flex-1 w-full bg-white p-7 rounded-[32px] border-2 border-slate-100 shadow-sm hover:shadow-md transition-shadow relative">
+                                    <div className="absolute -top-3 left-6 bg-indigo-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-indigo-200 z-20">Step 1</div>
+                                    <div className="mb-5">
+                                        <label className="text-sm font-black text-slate-800 block mb-1">Parent Table <span className="text-indigo-500 italic text-[11px] font-bold ml-1">(Label Source)</span></label>
+                                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">The table that contains the descriptive text (e.g., 'Category Name', 'Brand').</p>
                                     </div>
-                                    <SearchableDropdown
-                                        options={allTables.map(t => ({ value: t, label: t }))}
-                                        value={tableA}
-                                        onChange={val => { setTableA(val); setColA(''); }}
-                                        placeholder="Select Master Table..."
-                                    />
-                                    <div className="pt-1">
-                                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Primary Key (usually 'id')</label>
+                                    <div className="space-y-4">
                                         <SearchableDropdown
-                                            options={colsA.map(c => ({ value: c, label: c }))}
-                                            value={colA}
-                                            onChange={val => setColA(val)}
-                                            disabled={!tableA}
-                                            placeholder="Select ID Column..."
+                                            options={allTables.map(t => ({ value: t, label: t }))}
+                                            value={tableA}
+                                            onChange={val => { setTableA(val); setColA(''); }}
+                                            placeholder="Select Parent Table..."
                                         />
+                                        <div className="pt-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="w-5 h-5 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-400"><Hash size={10} /></div>
+                                                <label className="text-[11px] font-black text-slate-500 uppercase tracking-tighter">The table's ID column</label>
+                                            </div>
+                                            <SearchableDropdown
+                                                options={colsA.map(c => ({ value: c, label: c }))}
+                                                value={colA}
+                                                onChange={val => setColA(val)}
+                                                disabled={!tableA}
+                                                placeholder="Usually 'id'..."
+                                            />
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="hidden lg:flex flex-col items-center justify-center pt-12">
+                                <div className="hidden lg:flex flex-col items-center justify-center -mx-4 z-10">
+                                    <div className="h-full w-[2px] bg-gradient-to-b from-indigo-100 via-indigo-200 to-indigo-100 my-10 opacity-30"></div>
                                     <button 
                                         onClick={handleSwap}
                                         title="Swap Sides"
-                                        className="p-3 bg-white border border-slate-200 rounded-full text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-lg transition-all active:scale-95"
+                                        className="p-4 bg-white border-2 border-slate-100 rounded-2xl text-slate-400 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-2xl transition-all active:scale-90 group ring-8 ring-[#f8fafc]"
                                     >
-                                        <ArrowLeftRight size={20} />
+                                        <ArrowLeftRight size={24} className="group-hover:rotate-180 transition-transform duration-500" />
                                     </button>
+                                    <div className="h-full w-[2px] bg-gradient-to-b from-indigo-100 via-indigo-200 to-indigo-100 my-10 opacity-30"></div>
                                 </div>
 
-                                <div className="flex-1 w-full bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
-                                    <div>
-                                        <label className="text-[10px] font-black text-blue-600 uppercase tracking-widest block mb-1">2. Connecting Table (Transactional)</label>
-                                        <p className="text-[9px] text-slate-400 mb-2 italic">The table that refers to the master (e.g. Employee, Sales, Orders)</p>
+                                {/* STEP 2: TARGET DATA */}
+                                <div className="flex-1 w-full bg-white p-7 rounded-[32px] border-2 border-slate-100 shadow-sm hover:shadow-md transition-shadow relative">
+                                    <div className="absolute -top-3 left-6 bg-blue-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-blue-200 z-20">Step 2</div>
+                                    <div className="mb-5">
+                                        <label className="text-sm font-black text-slate-800 block mb-1">Child Table <span className="text-blue-500 italic text-[11px] font-bold ml-1">(Data Table)</span></label>
+                                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">The table where you want the raw IDs to be replaced with text names.</p>
                                     </div>
-                                    <SearchableDropdown
-                                        options={allTables.map(t => ({ value: t, label: t }))}
-                                        value={tableB}
-                                        onChange={val => { setTableB(val); setColB(''); setPulledData([]); }}
-                                        placeholder="Select Connecting Table..."
-                                    />
-                                    <div className="pt-1">
-                                        <label className="text-[9px] font-bold text-slate-500 uppercase block mb-1">Linking Column (The Foreign Key)</label>
+                                    <div className="space-y-4">
                                         <SearchableDropdown
-                                            options={colsB.map(c => ({ value: c, label: c }))}
-                                            value={colB}
-                                            onChange={val => setColB(val)}
-                                            disabled={!tableB}
-                                            placeholder="Select Link Column..."
+                                            options={allTables.map(t => ({ value: t, label: t }))}
+                                            value={tableB}
+                                            onChange={val => { setTableB(val); setColB(''); setPulledData([]); }}
+                                            placeholder="Select Child Table..."
                                         />
+                                        <div className="pt-2">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="w-5 h-5 rounded-full bg-blue-50 flex items-center justify-center text-blue-400"><Link2 size={10} /></div>
+                                                <label className="text-[11px] font-black text-slate-500 uppercase tracking-tighter">The column containing the ID</label>
+                                            </div>
+                                            <SearchableDropdown
+                                                options={colsB.map(c => ({ value: c, label: c }))}
+                                                value={colB}
+                                                onChange={val => setColB(val)}
+                                                disabled={!tableB}
+                                                placeholder="e.g. 'category_id' or 'brand_id'..."
+                                            />
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="flex-1 w-full bg-indigo-50/50 p-5 rounded-2xl border border-indigo-100">
-                                    <div>
-                                        <label className="text-[10px] font-black text-indigo-500 uppercase tracking-widest block mb-1">3. Data to Pull for Chat Selection</label>
-                                        <p className="text-[9px] text-slate-400 mb-2 italic">Select the columns you want to show as labels in the chat (e.g. Name, Description)</p>
+                                {/* STEP 3: PICK LABELS */}
+                                <div className="flex-1 w-full bg-white p-7 rounded-[32px] border-2 border-indigo-100 shadow-md relative group">
+                                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-50/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none rounded-[32px]"></div>
+                                    <div className="absolute -top-3 left-6 bg-purple-600 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-lg shadow-purple-200 z-20">Step 3</div>
+                                    <div className="mb-5 relative">
+                                        <label className="text-sm font-black text-slate-800 block mb-1">Pick Chat Labels</label>
+                                        <p className="text-[11px] text-slate-400 font-medium leading-relaxed">Select which columns from the <b>Label Source</b> should appear in the chat results.</p>
                                     </div>
-                                    {tableB ? (
-                                        <div className="max-h-[80px] overflow-y-auto flex flex-wrap gap-1.5 pr-2 scrollbar-thin bg-white/50 p-2 rounded-xl">
-                                            {colsB.map(col => {
+                                    {tableA ? (
+                                        <div className="max-h-[140px] overflow-y-auto grid grid-cols-2 gap-2 pr-2 scrollbar-thin rounded-2xl relative z-10">
+                                            {colsA.map(col => {
                                                 const isSelected = pulledData.includes(col);
                                                 return (
-                                                    <button key={col} onClick={() => setPulledData(prev => isSelected ? prev.filter(c => c !== col) : [...prev, col])} className={`px-2 py-1 rounded-lg border text-[9px] font-bold transition-all ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                                                    <button 
+                                                        key={col} 
+                                                        onClick={() => setPulledData(prev => isSelected ? prev.filter(c => c !== col) : [...prev, col])} 
+                                                        className={`
+                                                            px-3 py-2.5 rounded-xl border-2 text-[10px] font-black tracking-tight leading-tight transition-all text-left truncate flex items-center gap-2
+                                                            ${isSelected 
+                                                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-100 hover:scale-105 active:scale-95' 
+                                                                : 'bg-white border-slate-100 text-slate-600 hover:border-indigo-300 hover:bg-indigo-50/30'
+                                                            }
+                                                        `}
+                                                    >
+                                                        <div className={`w-3 h-3 rounded-md border flex items-center justify-center shrink-0 ${isSelected ? 'bg-white border-white text-indigo-600' : 'bg-slate-50 border-slate-200'}`}>
+                                                            {isSelected && <Check size={8} strokeWidth={4} />}
+                                                        </div>
                                                         {col}
                                                     </button>
                                                 );
                                             })}
                                         </div>
-                                    ) : <div className="h-[80px] flex flex-col items-center justify-center text-slate-300 bg-white/30 rounded-xl border-2 border-dashed border-slate-100"><Layers size={20} className="mb-1 opacity-20" /><span className="text-[9px] font-bold uppercase tracking-tighter">Choose Table First</span></div>}
-                                    <button onClick={handleSaveSingle} disabled={!tableA || !colA || !tableB || !colB || saving} className="w-full mt-3 bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-black transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-30 text-xs">
-                                        {saving ? <Plus size={16} className="animate-spin" /> : <Link2 size={16} />} Establish Connection
+                                    ) : (
+                                        <div className="h-[140px] flex flex-col items-center justify-center text-slate-300 bg-slate-50/50 rounded-2xl border-2 border-dashed border-slate-100">
+                                            <Layers size={32} className="mb-2 opacity-10" />
+                                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-300">Choose Table First</span>
+                                        </div>
+                                    )}
+                                    <button 
+                                        onClick={handleSaveSingle} 
+                                        disabled={!tableA || !colA || !tableB || !colB || saving} 
+                                        className={`
+                                            w-full mt-6 py-4 rounded-2xl font-black text-xs transition-all flex items-center justify-center gap-3 relative z-10 shadow-xl
+                                            ${!tableA || !colA || !tableB || !colB || saving
+                                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                                                : 'bg-slate-900 text-white hover:bg-indigo-600 hover:scale-[1.02] active:scale-98 shadow-indigo-100'
+                                            }
+                                        `}
+                                    >
+                                        {saving ? <Loader2 size={18} className="animate-spin" /> : <Link2 size={18} strokeWidth={3} />} 
+                                        ESTABLISH CONNECTION
                                     </button>
                                 </div>
                             </div>

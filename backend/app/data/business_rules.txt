@@ -14,3 +14,7 @@
 [NAVIGATION]
 1. Always resolve the exact URL using the sitemap before navigating.
 2. If a module has multiple sub-tabs, ask the user for preference unless specific.
+
+[DATABASE]
+1. TABLE PRIORITIZATION: When the user asks for "details", "list", or "records" of a resource (e.g., 'raw material', 'products'), ALWAYS prioritize the main transaction/master table over 'Category', 'Type', or 'Group' tables unless they specifically ask for categories.
+2. FILTERING: For 'last X days' queries, apply the filter to the 'created_at' or 'updated_at' column of the identified table.

@@ -125,9 +125,10 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
           isDark ? 'bg-slate-800 border-slate-700 hover:border-slate-500' : 'bg-white border-slate-200 hover:border-indigo-400'
         } ${isOpen ? (isDark ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-indigo-500 ring-2 ring-indigo-100') : ''}`}
       >
-        <span className={`text-sm truncate pr-2 ${!selectedOption ? (isDark ? 'text-slate-500' : 'text-gray-400') : (isDark ? 'text-white font-bold' : (isDark ? 'text-white font-bold' : 'text-slate-700 font-bold'))}`}>
+        <span className={`text-sm truncate pr-2 ${!selectedOption ? (isDark ? 'text-slate-500' : 'text-gray-400') : (isDark ? 'text-white font-bold' : 'text-slate-700 font-bold')}`}>
           {selectedOption ? selectedOption.label : placeholder}
         </span>
+
         <ChevronDown size={14} className={`${isDark ? 'text-slate-500' : 'text-slate-400'} shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 

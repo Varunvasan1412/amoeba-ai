@@ -1,9 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { apiFetch } from "../utils/api";
 
 interface User {
   id: number;
   username: string;
+  email: string;
   is_admin: boolean;
+  is_platform_user: boolean;
+  client_id: number | null;
+  role?: string;
+  permissions?: string[];
 }
 
 interface AuthContextType {
@@ -21,13 +27,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchUser = async (authToken: string) => {
+  const fetchUser = async () => {
     try {
-        const response = await fetch('/api/me', {
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
-      });
+        const response = await apiFetch('/api/me');
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
@@ -44,7 +46,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     if (token) {
-      fetchUser(token);
+      fetchUser();
     } else {
       setIsLoading(false);
     }
@@ -57,6 +59,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("admin_clientId");
+    localStorage.removeItem("admin_apiKey");
+    localStorage.removeItem("admin_clientName");
     setToken(null);
     setUser(null);
   };

@@ -5,9 +5,13 @@ from typing import List
 from sqlmodel import select
 from app.core.database import async_session
 from app.models.document import Document, DocumentChunk
+from app.services.audit_service import log_event
 
 def extract_text_pages(file_path: str) -> List[dict]:
-    """Extracts text from various file formats, returning a list of {'text': str, 'page': int}."""
+
+    """Extracts text from various file formats, returning a list of {'text': str, 'page': int}.
+    NOTE: This is intentionally SYNC (not async) because it is called via run_in_executor."""
+
     ext = os.path.splitext(file_path)[1].lower()
     pages = []
     
@@ -135,3 +139,14 @@ async def ingest_document(document_id: int, file_path: str, client_id: int):
             doc.status = "FAILED"
             doc.error_message = error_msg
             await session.commit()
+            
+            log_event(
+                client_id=client_id,
+                action="DOCUMENT_PROCESS_FAILED",
+                entity=doc.filename,
+                table_name="documents",
+                record_id=str(document_id),
+                source="SYSTEM",
+                status="FAILED",
+                details={"error": error_msg}
+            )

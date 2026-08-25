@@ -5,7 +5,7 @@ from app.models.conversation_state import ConversationState
 from app.models.client_config import ClientConfig
 from app.models.navigation import NavigationItem
 from app.models.semantic_metadata import SemanticMetadata
-from app.services.crud_service import CRUDBuilder
+from app.services.crud_service import CRUDService
 from app.services.smart_form_service import SmartFormService
 from app.services.record_selector_service import RecordSelectorService
 from sqlalchemy import inspect, create_engine
@@ -13,7 +13,8 @@ from datetime import datetime
 import json
 import re
 import traceback
-from app.services.audit_service import log_audit
+from app.services.audit_service import log_event
+
 
 async def get_active_conversation(session: AsyncSession, client_id: int, session_id: str) -> Optional[ConversationState]:
     statement = select(ConversationState).where(
@@ -85,7 +86,8 @@ async def process_conversation(
     intent_data: Optional[Dict[str, Any]], 
     client_id: int, 
     session_id: str, 
-    db_session: AsyncSession
+    db_session: AsyncSession,
+    view_mode: str = "table"
 ) -> Tuple[Optional[str], List[Any]]:
     # 0. System Filter (Hide Pings)
     import re
@@ -94,6 +96,13 @@ async def process_conversation(
         return "__SYSTEM_IGNORE__", []
 
     state = await get_active_conversation(db_session, client_id, session_id)
+    
+    # Update existing state with latest view_mode preference
+    if state:
+        state.view_mode = view_mode
+        state.updated_at = datetime.utcnow()
+        db_session.add(state)
+        await db_session.commit()
     
     # Robust cleanup for corrupted state
     if state and "ping" in (state.entity_name or "").lower():
@@ -116,7 +125,8 @@ async def process_conversation(
     if intent_data:
         print(f"✨ [CRUD CONV] New Intent: {intent_data['intent']} (Status: {intent_data['status']})")
         
-        is_pronoun = intent_data.get("use_context") or (intent_data.get("entity") in ["it", "this", "that"])
+        pronouns = ["it", "this", "that", "item", "items", "record", "records", "them", "these", "one", "ones"]
+        is_pronoun = intent_data.get("use_context") or (intent_data.get("entity") in pronouns)
 
         # If a new intent is detected, we drop the old state UNLESS it's a pronoun
         if state and not is_pronoun:
@@ -126,11 +136,16 @@ async def process_conversation(
             state = None
 
         # Resolve pronoun using context
-        if is_pronoun and state:
-             print(f"🔄 [CRUD CONV] Resolving pronoun context: {state.entity_name} ({state.module})")
-             intent_data["entity"] = state.entity_name
-             intent_data["module"] = state.module
-             intent_data["status"] = "resolved"
+        if is_pronoun:
+             if state and state.entity_name:
+                 print(f"🔄 [CRUD CONV] Resolving pronoun context: {state.entity_name} ({state.module})")
+                 intent_data["entity"] = state.entity_name
+                 intent_data["module"] = state.module
+                 intent_data["status"] = "resolved"
+             else:
+                 print("⚠️ [CRUD CONV] Pronoun detected but NO active state found. Reverting to unresolved.")
+                 intent_data["status"] = "unresolved_entity"
+                 intent_data["entity"] = user_input # Fallback to original text for ambiguity flow
 
         if intent_data.get("status") == "unresolved_entity":
             # Hand over to Entity Selector for ambiguity resolution
@@ -153,18 +168,21 @@ async def process_conversation(
                         client_id=client_id, session_id=session_id,
                         intent=intent, entity_name=matches[0]["table_name"],
                         module=matches[0].get("module"),
+                        view_mode=view_mode,
                         current_step="start", collected_data={}
                     )
                     db_session.add(state)
                     await db_session.commit()
                     if matches[0].get("module"):
-                        log_audit(client_id, "CONTEXT_MODULE_SET", {"module": matches[0].get("module"), "entity": matches[0]["table_name"]})
+                        log_event(client_id, action="CONTEXT_MODULE_SET", entity=matches[0].get("label") or matches[0]["table_name"], table_name=matches[0]["table_name"], details={"module": matches[0].get("module"), "entity": matches[0]["table_name"]})
                     # Fall through to flow handlers below
                 else:
                     # Multiple matches: ask for disambiguation
                     state = ConversationState(
                         client_id=client_id, session_id=session_id,
-                        intent=intent, entity_name="", module=None, current_step="resolve_ambiguity",
+                        intent=intent, entity_name="", module=None, 
+                        view_mode=view_mode,
+                        current_step="resolve_ambiguity",
                         collected_data={}
                     )
                     db_session.add(state)
@@ -179,12 +197,13 @@ async def process_conversation(
                 client_id=client_id, session_id=session_id,
                 intent=intent_data["intent"], entity_name=intent_data["entity"],
                 module=intent_data.get("module"),
+                view_mode=view_mode,
                 current_step="start", collected_data={}
             )
             db_session.add(state)
             await db_session.commit()
             if intent_data.get("module"):
-                log_audit(client_id, "CONTEXT_MODULE_SET", {"module": intent_data["module"], "entity": intent_data["entity"]})
+                log_event(client_id, action="CONTEXT_MODULE_SET", entity=intent_data.get("entity"), table_name=intent_data.get("entity"), details={"module": intent_data["module"], "entity": intent_data["entity"]})
 
     # If we still have no state and no new intent, we exit.
     if not state:
@@ -225,7 +244,7 @@ async def process_conversation(
         nav_item = nav_res.scalars().first()
         if nav_item:
             state.module = nav_item.module
-            log_audit(client_id, "CONTEXT_MODULE_SET", {"module": nav_item.module, "entity": user_input.strip()})
+            log_event(client_id, action="CONTEXT_MODULE_SET", entity=user_input.strip(), table_name=user_input.strip(), details={"module": nav_item.module, "entity": user_input.strip()})
 
         state.entity_name = user_input.strip()
         state.current_step = "start"
@@ -250,7 +269,7 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
     print(f"DEBUG LABEL → module={state.module}, entity={state.entity_name}")
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
-        log_audit(state.client_id, "CONTEXT_MODULE_USED", {"module": state.module, "intent": "create"})
+        log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "create"})
     
     if state.current_step == "start":
         state.current_step = "collect_data"
@@ -286,10 +305,8 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
                 print("🚀 FORM PAYLOAD (RETRY):", payload)
                 return f"I'm waiting for the {final_label} details. Please use the form shown above.", [{"type": "form", "payload": payload}]
                 
-            data = json.loads(user_input)
-            client_config = await db_session.get(ClientConfig, state.client_id)
-            builder = CRUDBuilder(client_config.db_connection_url)
-            result = builder.execute_create(state.entity_name, data)
+            form_data = json.loads(user_input)
+            record_id = await CRUDService.create_record(state.entity_name, form_data, user_id=None, client_id=state.client_id)
             await db_session.delete(state)
             await db_session.commit()
             return f"Successfully created new {friendly_name}!", [{"type": "success", "payload": "Created"}]
@@ -305,29 +322,24 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
                 "module": state.module
             }
             print("🚀 FORM PAYLOAD (ERROR):", payload)
-            return f"Error creating record: {str(e)}", [{"type": "form", "payload": payload}]
+            return f"{str(e)}", [{"type": "form", "payload": payload}]
+
     
     return "Flow in unexpected state.", []
 
 async def handle_read_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
-        log_audit(state.client_id, "CONTEXT_MODULE_USED", {"module": state.module, "intent": "read"})
+        log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "read"})
     
-    client_config = await db_session.get(ClientConfig, state.client_id)
-    builder = CRUDBuilder(client_config.db_connection_url)
-    try:
-        data = builder.execute_read(state.entity_name)
-        await db_session.delete(state)
-        await db_session.commit()
-        if not data: return f"No records found in {friendly_name}.", []
-        return f"Found {len(data)} records in {friendly_name}.", [{"type": "success", "payload": f"Read {len(data)} records"}]
-    except Exception as e: return f"Error reading: {str(e)}", []
+    # Delegate the read operation to the LLM so it can parse complex filters
+    # The state object remains active so the entity Context is preserved for future turns.
+    return f"__DELEGATE_READ__:{state.entity_name}:{friendly_name}", []
 
 async def handle_update_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
-        log_audit(state.client_id, "CONTEXT_MODULE_USED", {"module": state.module, "intent": "update"})
+        log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "update"})
     
     if state.current_step == "start":
         id_match = re.search(r"\b(\d+)\b", user_input)
@@ -353,8 +365,8 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
                 })
                 return f"Please use the form to submit your updates for {friendly_name}.", [{"type": "form", "payload": form_config}]
                 
-            data = json.loads(user_input)
-            state.collected_data = {**state.collected_data, "update_data": data}
+            form_data = json.loads(user_input)
+            state.collected_data = {**state.collected_data, "update_data": form_data}
             state.current_step = "confirm"
             db_session.add(state)
             await db_session.commit()
@@ -364,10 +376,9 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
     elif state.current_step == "confirm":
         if user_input.lower() in ["yes", "confirm", "ok"]:
             client_config = await db_session.get(ClientConfig, state.client_id)
-            builder = CRUDBuilder(client_config.db_connection_url)
             inspector = inspect(create_engine(client_config.db_connection_url))
             pk_name = inspector.get_pk_constraint(state.entity_name)["constrained_columns"][0]
-            builder.execute_update(state.entity_name, {pk_name: state.collected_data["id"]}, state.collected_data["update_data"])
+            count = await CRUDService.update_records(state.entity_name, {pk_name: state.collected_data["id"]}, state.collected_data["update_data"], client_id=state.client_id)
             await db_session.delete(state)
             await db_session.commit()
             return f"Updated {friendly_name} successfully.", [{"type": "success", "payload": "Updated"}]
@@ -398,7 +409,7 @@ async def _init_update_form(record_id: str, state: ConversationState, db_session
 async def handle_delete_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
-        log_audit(state.client_id, "CONTEXT_MODULE_USED", {"module": state.module, "intent": "delete"})
+        log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "delete"})
     
     if state.current_step == "start":
         id_match = re.search(r"\b(\d+)\b", user_input)
@@ -415,10 +426,9 @@ async def handle_delete_flow(user_input: str, state: ConversationState, db_sessi
     elif state.current_step == "confirm":
         if user_input.lower() in ["yes", "confirm", "ok"]:
             client_config = await db_session.get(ClientConfig, state.client_id)
-            builder = CRUDBuilder(client_config.db_connection_url)
             inspector = inspect(create_engine(client_config.db_connection_url))
             pk_name = inspector.get_pk_constraint(state.entity_name)["constrained_columns"][0]
-            builder.execute_delete(state.entity_name, {pk_name: state.collected_data["id"]})
+            count = await CRUDService.delete_records(state.entity_name, {pk_name: state.collected_data["id"]}, client_id=state.client_id)
             await db_session.delete(state); await db_session.commit()
             return f"Deleted record from {friendly_name}.", [{"type": "success", "payload": "Deleted"}]
         else:

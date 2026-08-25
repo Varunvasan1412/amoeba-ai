@@ -125,7 +125,10 @@ async def discover_and_sync_relationships(session: AsyncSession, client_id: int)
             l_col = col.lower()
             if (l_col.endswith("_id") or l_col.endswith("id")) and l_col != "id":
                 base_name = l_col[:-3] if l_col.endswith("_id") else l_col[:-2]
-                candidates = [base_name, f"master_{base_name}", f"marketing_{base_name}"]
+                candidates = [
+                    base_name, f"{base_name}s", f"{base_name}es", 
+                    f"master_{base_name}", f"{base_name}_master", f"{base_name}_m"
+                ]
                 for candidate in candidates:
                     matched_table = next((t for t in schema_data.keys() if t.lower() == candidate), None)
                     if matched_table and matched_table != table_name:

@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.core.security import ALGORITHM, TokenPayload
 from app.models.user import User
+from app.models.rbac import Role
+from sqlalchemy.orm import joinedload
 
 reusable_oauth2 = OAuth2PasswordBearer(
     tokenUrl="/api/login/access-token"
@@ -29,8 +31,9 @@ async def get_current_user(
             detail="Could not validate credentials",
         )
     
-    statement = select(User).where(User.id == token_data.sub)
-    user = (await session.execute(statement)).scalars().first()
+    statement = select(User).options(joinedload(User.role)).where(User.id == token_data.sub)
+    result = await session.execute(statement)
+    user = result.scalars().first()
     
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -44,5 +47,15 @@ async def get_current_active_admin(
     if not current_user.is_admin:
         raise HTTPException(
             status_code=400, detail="The user doesn't have enough privileges"
+        )
+    return current_user
+
+async def get_current_super_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.role or current_user.role.name != "SUPER_ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform-level access required (SUPER_ADMIN only)"
         )
     return current_user

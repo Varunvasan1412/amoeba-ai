@@ -65,6 +65,21 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-here" # Change this in production
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 1 week
 
+    # ----------------------------
+    # RATE LIMITING
+    # ----------------------------
+    RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL", None)
+    
+    # Defaults in format "requests per time-unit"
+    RATE_LIMIT_LOGIN: str = os.getenv("RATE_LIMIT_LOGIN", "5 per minute")
+    RATE_LIMIT_CHAT: str = os.getenv("RATE_LIMIT_CHAT", "60 per minute")
+    RATE_LIMIT_REPORT: str = os.getenv("RATE_LIMIT_REPORT", "30 per minute")
+    RATE_LIMIT_EXPORT: str = os.getenv("RATE_LIMIT_EXPORT", "10 per minute")
+    RATE_LIMIT_UPLOAD: str = os.getenv("RATE_LIMIT_UPLOAD", "5 per minute")
+    RATE_LIMIT_HEALTH: str = os.getenv("RATE_LIMIT_HEALTH", "20 per minute")
+    RATE_LIMIT_GLOBAL: str = os.getenv("RATE_LIMIT_GLOBAL", "100 per minute")
+
 
     class Config:
         env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")

@@ -189,7 +189,7 @@ export default function ReportBuilder() {
                   joins: joins
               }
           };
-          const res = await fetch(`/api/reports/build?client_id=${clientId}`, {
+          const res = await apiFetch(`/api/reports/build?client_id=${clientId}`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "X-API-Key": apiKey! },
               body: JSON.stringify(payload)

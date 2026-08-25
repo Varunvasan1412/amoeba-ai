@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
+import { apiFetch } from '../../utils/api';
 import { Table, Check, Loader2, AlertTriangle, Pencil, RotateCcw } from 'lucide-react';
 import { SearchableDropdown } from '../admin/SearchableDropdown';
 
@@ -28,19 +29,15 @@ export const SemanticSuggestionStep: React.FC<SemanticSuggestionStepProps> = ({ 
     setLoading(true);
     setError('');
     try {
-      const token = localStorage.getItem('token');
       // Fetch table definitions
-      const response = await fetch(`/api/clients/${clientId}/tables`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const response = await apiFetch(`/api/clients/${clientId}/tables`);
       const data = await response.json();
 
       // Fetch existing semantic metadata to avoid overwriting user changes
       let existingMetadata: any[] = [];
       try {
-        const semanticResponse = await fetch(`/api/v2/semantic/schema`, {
+        const semanticResponse = await apiFetch(`/api/v2/semantic/schema`, {
           headers: { 
-            'Authorization': `Bearer ${token}`,
             'X-API-Key': apiKey || ''
           }
         });
@@ -146,12 +143,10 @@ export const SemanticSuggestionStep: React.FC<SemanticSuggestionStepProps> = ({ 
     setSaving(true);
     setError('');
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('/api/v2/semantic/columns', {
+      const response = await apiFetch('/api/v2/semantic/columns', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
           'X-API-Key': apiKey || ''
         },
         body: JSON.stringify({ mappings })

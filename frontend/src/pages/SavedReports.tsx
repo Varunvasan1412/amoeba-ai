@@ -3,6 +3,7 @@ import { useAdmin } from "../context/AdminContext";
 import { FileText, Calendar, Loader2, Trash2, Pencil, LayoutTemplate } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { apiFetch } from "../utils/api";
+import { toast } from "react-toastify";
 
 interface Report {
     id: number;
@@ -28,7 +29,7 @@ export default function SavedReports() {
         try {
             // v2 uses ReportRegistry, which is compatible.
             // Using v2/builder/reports endpoint
-            const res = await fetch(`/api/reports/saved?client_id=${clientId}`, {
+            const res = await apiFetch(`/api/reports/saved?client_id=${clientId}`, {
                 headers: { "X-API-Key": apiKey }
             });
             // Wait, SavedReports doesn't have apiKey in context? 
@@ -61,11 +62,11 @@ export default function SavedReports() {
         if (res.ok) {
             setReports(prev => prev.filter(r => r.id !== id));
         } else {
-            alert("Failed to delete report");
+            toast.error("Failed to delete report");
         }
     } catch (err) {
         console.error("Delete failed", err);
-        alert("Delete failed");
+        toast.error("Delete failed");
     }
   };
 
@@ -91,18 +92,18 @@ export default function SavedReports() {
               if (data.file_url) {
                   window.open(data.file_url, '_blank');
               } else {
-                  alert("Failed to get file URL");
+                  toast.error("Failed to get file URL");
               }
           } else {
               const errData = await res.json();
               const errorMsg = typeof errData.detail === 'object' 
                 ? JSON.stringify(errData.detail, null, 2) 
                 : (errData.detail || "Failed to generate report");
-              alert(errorMsg);
+              toast.error(errorMsg);
           }
       } catch (err) {
           console.error("Run report failed", err);
-          alert("Internal server error");
+          toast.error("Internal server error");
       } finally {
           setLoading(false);
       }

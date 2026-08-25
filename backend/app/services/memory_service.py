@@ -61,7 +61,8 @@ async def trigger_compression_task(session_id: str, client_id: int):
             
         await db_session.commit()
         
-        log_audit(client_id, "CHAT_MESSAGE_COMPRESSED", {"session_id": session_id, "compressed_count": len(messages_to_compress)})
+        # Suppression: Disabled to avoid Audit Log spam
+        # log_audit(client_id, "CHAT_MESSAGE_COMPRESSED", {"session_id": session_id, "compressed_count": len(messages_to_compress)})
         print("✅ Memory compression successful.")
     except Exception as e:
         print(f"❌ Error compressing memory: {e}")

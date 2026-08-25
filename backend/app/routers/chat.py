@@ -2,7 +2,21 @@
 
 import json
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Depends, Query
+import decimal
+from datetime import datetime, date
+
+def sanitize_for_json(obj):
+    """Recursively converts Decimals and Date objects to JSON-serializable formats."""
+    if isinstance(obj, list):
+        return [sanitize_for_json(i) for i in obj]
+    elif isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, (decimal.Decimal)):
+        return float(obj)
+    elif isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    return obj
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Depends, Query, Request
 import traceback
 from app.services.llm_service import get_response
 from app.core.context import current_db_url
@@ -16,32 +30,42 @@ from app.models.client_config import ClientConfig
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.audit_service import log_audit
+from app.core.config import settings
 from app.core.rate_limiter import limiter
-
 
 router = APIRouter()
 
 # --- PUBLIC AI CONFIG (for chat widget indicator) ---
 @router.get("/ai-config")
+@limiter.limit(settings.RATE_LIMIT_HEALTH) # Low limit for config discovery
 async def get_ai_config(
-    api_key: str = Query(...),
+    request: Request,
+    api_key: str = Query(None),
     session: AsyncSession = Depends(get_session)
 ):
     """Returns the AI provider & model configured for this client. Used by the chat widget."""
     from app.models.ai_settings import AISettings
-    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
-    client = result.scalars().first()
-    if not client:
-        raise HTTPException(status_code=403, detail="Invalid API Key")
+    
+    if api_key:
+        result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+        client = result.scalars().first()
+        if not client:
+            raise HTTPException(status_code=403, detail="Invalid API Key")
+    else:
+        # Dev fallback
+        result = await session.execute(select(ClientConfig).order_by(ClientConfig.id.asc()))
+        client = result.scalars().first()
+        if not client:
+            raise HTTPException(status_code=403, detail="No client found")
     
     stmt = select(AISettings).where(AISettings.client_id == client.id)
     ai_settings = (await session.execute(stmt)).scalars().first()
     
     if ai_settings:
-        return {"provider": ai_settings.provider, "model": ai_settings.model}
+        return {"provider": ai_settings.provider, "model": ai_settings.model, "total_tokens_used": getattr(client, 'total_tokens_used', 0)}
     else:
         from app.core.config import settings
-        return {"provider": settings.AI_PROVIDER, "model": settings.OLLAMA_MODEL}
+        return {"provider": settings.AI_PROVIDER, "model": settings.OLLAMA_MODEL, "total_tokens_used": getattr(client, 'total_tokens_used', 0)}
 
 class RouteItem(BaseModel):
     label: str
@@ -67,22 +91,31 @@ async def learn_routes_endpoint(
     return {"status": "success", "message": result_msg}
 
 @router.post("/chat")
-async def chat_endpoint(payload: Dict[str, Any]):
+@limiter.limit(settings.RATE_LIMIT_CHAT)
+async def chat_endpoint(payload: Dict[str, Any], request: Request):
     pass
 
 # --- HISTORY ENDPOINT ---
 @router.get("/history", response_model=List[ChatMessage])
+@limiter.limit(settings.RATE_LIMIT_CHAT)
 async def get_history(
-    api_key: str = Query(...),
+    request: Request,
+    api_key: str = Query(None),
     session_id: str = Query(...),
     session: AsyncSession = Depends(get_session)
 ):
     try:
-        # 1. Verify Client
-        result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
-        client = result.scalars().first()
-        if not client:
-            raise HTTPException(status_code=403, detail="Invalid API Key")
+        if api_key:
+            result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+            client = result.scalars().first()
+            if not client:
+                raise HTTPException(status_code=403, detail="Invalid API Key")
+        else:
+            # Dev fallback
+            result = await session.execute(select(ClientConfig).order_by(ClientConfig.id.asc()))
+            client = result.scalars().first()
+            if not client:
+                raise HTTPException(status_code=403, detail="No client found")
 
         # 2. Fetch messages for this client and session
         result = await session.execute(
@@ -132,7 +165,7 @@ async def websocket_endpoint(
                 client_context_id = str(client.id)
             else:
                 # Fallback / Dev Mode
-                result = await session.execute(select(ClientConfig))
+                result = await session.execute(select(ClientConfig).order_by(ClientConfig.id.asc()))
                 client = result.scalars().first()
                 if client:
                     current_db_url.set(client.db_connection_url)
@@ -201,6 +234,7 @@ async def websocket_endpoint(
                                 p = json.loads(data_str)
                                 user_text = p.get("text", "")
                                 mode = p.get("mode", "assistant")
+                                view_mode = p.get("view_mode", "table")
                                 is_edit = p.get("is_edit", False)
                                 # history_context: list of {role, content} to restore on edit
                                 history_context = p.get("history_context", [])
@@ -261,7 +295,7 @@ async def websocket_endpoint(
                                 )
                                 local_session.add(user_msg)
                                 await local_session.commit()
-                                log_audit(client_id, "CHAT_MESSAGE_STORED", {"sender": "user", "session_id": s_id})
+                                # Suppression: log_audit(client_id, "CHAT_MESSAGE_STORED", ...)
 
                                 # C. Fetch Context (History & Memory) EARLY
                                 from app.models.chat_memory import ChatMemory
@@ -286,7 +320,7 @@ async def websocket_endpoint(
                                 
                                 # Exclude the current (just-saved) user message from the context passed to the AI
                                 formatted_history = [{"role": m.role, "content": m.content} for m in history_msgs[:-1]]
-                                log_audit(client_id, "CHAT_CONTEXT_BUILT", {"session_id": s_id, "history_size": len(formatted_history)})
+                                # Suppression: log_audit(client_id, "CHAT_CONTEXT_BUILT", ...)
 
                                 # D. Rate Limit Check
                                 if client and not limiter.check_chat(client.id):
@@ -295,7 +329,7 @@ async def websocket_endpoint(
 
                                 # E. Route to Service
                                 if mode == "operations":
-                                    log_audit(client_id, "CHAT_MODE_OPERATIONS", {"text": user_text, "session_id": s_id})
+                                    # Suppression: log_audit(client_id, "CHAT_MODE_OPERATIONS", ...)
                                     
                                     # 1. FastPath
                                     from app.services.fastpath_service import execute_fastpath
@@ -343,11 +377,134 @@ async def websocket_endpoint(
                                     active_crud_state = await get_active_conversation(local_session, int(client_id), s_id)
                                     
                                     if crud_intent or active_crud_state:
-                                        crud_text, crud_actions = await process_conversation(user_text, crud_intent, int(client_id), s_id, local_session)
+                                        crud_text, crud_actions = await process_conversation(user_text, crud_intent, int(client_id), s_id, local_session, view_mode=view_mode)
                                         if crud_text == "__SYSTEM_IGNORE__":
                                             await websocket.send_json({"type": "done", "session_id": s_id})
                                             return
-                                        if crud_text:
+                                            
+                                        if crud_text and crud_text.startswith("__DELEGATE_READ__"):
+                                            # ===== DETERMINISTIC READ: BYPASS LLM ENTIRELY =====
+                                            parts = crud_text.split(":")
+                                            table_name = parts[1] if len(parts) > 1 else ""
+                                            friendly_name = parts[2] if len(parts) > 2 else table_name
+                                            
+                                            print(f"🔧 [DETERMINISTIC READ] Bypassing LLM for table: {table_name}")
+                                            
+                                            try:
+                                                from app.services.crud_service import CRUDService
+                                                from app.tools.dates import normalize_date_range
+                                                
+                                                # Step 1: Parse aggregation intent from user query
+                                                query_lower = user_text.lower()
+                                                is_aggregation = any(kw in query_lower for kw in [
+                                                    "how many", "count", "total", "number of", "sum of", "average"
+                                                ])
+                                                
+                                                filters = {}
+                                                if is_aggregation:
+                                                    if any(kw in query_lower for kw in ["sum of", "total amount", "total value"]):
+                                                        filters["aggregate"] = "sum"
+                                                    elif "average" in query_lower:
+                                                        filters["aggregate"] = "avg"
+                                                    else:
+                                                        filters["aggregate"] = "count"
+                                                
+                                                # Step 2: Execute the CRUD read (date filtering is handled internally by CRUDService)
+                                                result = await CRUDService.read_records(
+                                                    table_name=table_name,
+                                                    filters=filters if filters else None,
+                                                    limit=100,
+                                                    client_id=int(client_id),
+                                                    user_query=user_text
+                                                )
+                                                
+                                                # Sanitize for JSON (Convert Decimals to floats!)
+                                                result = sanitize_for_json(result)
+                                                
+                                                # Step 3: Parse date range for transparency in the response
+                                                date_start, date_end = normalize_date_range(user_text)
+                                                date_info = ""
+                                                if date_start:
+                                                    date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**"
+                                                
+                                                # Step 4: Format the response
+                                                actions_list = []
+                                                if isinstance(result, dict) and "aggregate" in result:
+                                                    # Aggregation result
+                                                    agg_type = result["aggregate"]
+                                                    value = result["value"]
+                                                    response_text = f"**{friendly_name}** — {agg_type.upper()}: **{value}**{date_info}"
+                                                elif isinstance(result, dict) and "grouped_results" in result:
+                                                    # Grouped aggregation
+                                                    response_text = f"**{friendly_name}** — Grouped Results:{date_info}"
+                                                    actions_list.append({"type": "DISPLAY_TABLE", "payload": {"title": friendly_name, "data": result["grouped_results"]}})
+                                                elif isinstance(result, dict) and "records" in result:
+                                                    # Records with warnings
+                                                    records = result["records"]
+                                                    if records:
+                                                        response_text = f"Found **{len(records)}** record(s) in **{friendly_name}**.{date_info}"
+                                                        headers = list(records[0].keys()) if records else []
+                                                        actions_list.append({
+                                                            "type": "data_table", 
+                                                            "payload": {
+                                                                "title": friendly_name, 
+                                                                "headers": headers,
+                                                                "rows": records,
+                                                                "total": len(records),
+                                                                "query_payload": {
+                                                                    "table_name": table_name,
+                                                                    "filters": filters if filters else None,
+                                                                    "user_query": user_text,
+                                                                    "client_id": int(client_id)
+                                                                }
+                                                            }
+                                                        })
+                                                    else:
+                                                        response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                elif isinstance(result, list):
+                                                    if result:
+                                                        response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**.{date_info}"
+                                                        headers = list(result[0].keys()) if result else []
+                                                        actions_list.append({
+                                                            "type": "data_table", 
+                                                            "payload": {
+                                                                "title": friendly_name, 
+                                                                "headers": headers,
+                                                                "rows": result,
+                                                                "total": len(result),
+                                                                "query_payload": {
+                                                                    "table_name": table_name,
+                                                                    "filters": filters if filters else None,
+                                                                    "user_query": user_text,
+                                                                    "client_id": int(client_id)
+                                                                }
+                                                            }
+                                                        })
+                                                    else:
+                                                        response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                else:
+                                                    response_text = f"Result from **{friendly_name}**: {result}{date_info}"
+                                                
+                                                print(f"✅ [DETERMINISTIC READ] Result: {response_text[:100]}...")
+                                                
+                                                ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+                                                local_session.add(ai_msg)
+                                                await local_session.commit()
+                                                await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+                                                await websocket.send_json({"type": "done", "session_id": s_id})
+                                                return
+                                                
+                                            except Exception as read_err:
+                                                print(f"❌ [DETERMINISTIC READ] Error: {read_err}")
+                                                error_text = f"Sorry, I encountered an error reading from {friendly_name}: {str(read_err)}"
+                                                ai_msg = ChatMessage(role="ai", content=error_text, actions=[], client_id=client_id, session_id=s_id)
+                                                local_session.add(ai_msg)
+                                                await local_session.commit()
+                                                await websocket.send_json({"text": error_text, "actions": [], "type": "chat_response"})
+                                                await websocket.send_json({"type": "done", "session_id": s_id})
+                                                return
+
+                                        elif crud_text:
                                             # De-duplicate actions
                                             unique_actions = []
                                             seen_actions = set()
@@ -376,21 +533,97 @@ async def websocket_endpoint(
 
                                 else:
                                     # Mode: Assistant
-                                    log_audit(client_id, "CHAT_MODE_ASSISTANT", {"text": user_text, "session_id": s_id})
+                                    # Suppression: log_audit(client_id, "CHAT_MODE_ASSISTANT", ...)
                                     
                                     # Guard against accidental CRUD in Assistant (CONTEXT AWARE)
                                     from app.services.intent_service import resolve_crud_intent
                                     crud_intent = await resolve_crud_intent(user_text, int(client_id), local_session, history=formatted_history[-4:], mode=mode) 
                                     
                                     if crud_intent and crud_intent.get("intent") not in ["inquiry", "navigate"]:
-                                        msg = f"I detected an intent to **{crud_intent.get('intent')}** a record. Please switch to **Operations Mode** to perform data actions."
-                                        await websocket.send_json({
-                                            "text": msg, 
-                                            "actions": [{"type": "SWITCH_MODE", "payload": "operations"}],
-                                            "type": "chat_response"
-                                        })
-                                        await websocket.send_json({"type": "done", "session_id": s_id})
-                                        return
+                                        # If it's a READ intent, handle it deterministically instead of redirecting
+                                        if crud_intent.get("intent") == "read" and crud_intent.get("entity"):
+                                            print(f"🔧 [ASSISTANT] Intercepting READ intent for: {crud_intent.get('entity')}")
+                                            from app.services.conversation_service import process_conversation, get_active_conversation
+                                            crud_text, crud_actions = await process_conversation(user_text, crud_intent, int(client_id), s_id, local_session)
+                                            
+                                            if crud_text and crud_text.startswith("__DELEGATE_READ__"):
+                                                parts = crud_text.split(":")
+                                                table_name = parts[1] if len(parts) > 1 else ""
+                                                friendly_name = parts[2] if len(parts) > 2 else table_name
+                                                
+                                                try:
+                                                    from app.services.crud_service import CRUDService
+                                                    from app.tools.dates import normalize_date_range
+                                                    
+                                                    query_lower = user_text.lower()
+                                                    is_aggregation = any(kw in query_lower for kw in ["how many", "count", "total", "number of", "sum of", "average"])
+                                                    
+                                                    filters = {}
+                                                    if is_aggregation:
+                                                        if any(kw in query_lower for kw in ["sum of", "total amount", "total value"]):
+                                                            filters["aggregate"] = "sum"
+                                                        elif "average" in query_lower:
+                                                            filters["aggregate"] = "avg"
+                                                        else:
+                                                            filters["aggregate"] = "count"
+                                                    
+                                                    result = await CRUDService.read_records(
+                                                        table_name=table_name, filters=filters if filters else None,
+                                                        limit=100, client_id=int(client_id), user_query=user_text
+                                                    )
+                                                    
+                                                    # Sanitize for JSON
+                                                    result = sanitize_for_json(result)
+                                                    
+                                                    date_start, date_end = normalize_date_range(user_text)
+                                                    date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**" if date_start else ""
+                                                    
+                                                    actions_list = []
+                                                    if isinstance(result, dict) and "aggregate" in result:
+                                                        response_text = f"**{friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
+                                                    elif isinstance(result, list):
+                                                        if result:
+                                                            response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**.{date_info}"
+                                                            headers = list(result[0].keys()) if result else []
+                                                            actions_list.append({
+                                                                "type": "data_table", 
+                                                                "payload": {
+                                                                    "title": friendly_name, 
+                                                                    "headers": headers,
+                                                                    "rows": result,
+                                                                    "total": len(result),
+                                                                    "query_payload": {
+                                                                        "table_name": table_name,
+                                                                        "filters": filters if filters else None,
+                                                                        "user_query": user_text,
+                                                                        "client_id": int(client_id)
+                                                                    }
+                                                                }
+                                                            })
+                                                        else:
+                                                            response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                    else:
+                                                        response_text = f"Result from **{friendly_name}**: {result}{date_info}"
+                                                    
+                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+                                                    local_session.add(ai_msg)
+                                                    await local_session.commit()
+                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+                                                    await websocket.send_json({"type": "done", "session_id": s_id})
+                                                    return
+                                                except Exception as read_err:
+                                                    print(f"❌ [ASSISTANT READ] Error: {read_err}")
+                                        
+                                        # For non-read CRUD intents, redirect to Operations
+                                        if crud_intent.get("intent") != "read":
+                                            msg = f"I detected an intent to **{crud_intent.get('intent')}** a record. Please switch to **Operations Mode** to perform data actions."
+                                            await websocket.send_json({
+                                                "text": msg, 
+                                                "actions": [{"type": "SWITCH_MODE", "payload": "operations"}],
+                                                "type": "chat_response"
+                                            })
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
 
 
                                     from app.services.assistant_service import get_assistant_response
@@ -416,7 +649,7 @@ async def websocket_endpoint(
                                     )
                                     local_session.add(ai_msg)
                                     await local_session.commit()
-                                    log_audit(client_id, "CHAT_MESSAGE_STORED", {"sender": "ai", "session_id": s_id})
+                                    # Suppression: log_audit(client_id, "CHAT_MESSAGE_STORED", ...)
                                     await websocket.send_json({"text": ai_text, "actions": ai_actions, "type": "chat_response"})
                                     # Send explicit DONE signal
                                     await websocket.send_json({"type": "done", "session_id": s_id})
@@ -470,3 +703,73 @@ async def websocket_endpoint(
                     print(f"🛑 [WS] Global error. Cancelling task for session {task_id}.")
                     task.cancel()
             break
+
+# --- INLINE EXPORT API ---
+from pydantic import BaseModel
+from fastapi import HTTPException, Query
+from app.tools.reporting import export_query_result
+import time
+from app.models.client_config import ClientConfig
+
+class InlineExportRequest(BaseModel):
+    format: str
+    query_payload: dict
+
+@router.post("/inline-export")
+@limiter.limit(settings.RATE_LIMIT_EXPORT)
+async def inline_export(
+    payload: InlineExportRequest,
+    request: Request,
+    api_key: str = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Directly exports data derived from a previous generic chat table representation.
+    """
+    start_time = time.time()
+    
+    # 1. Validate API Key and Set Client Context
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+        
+    # Standardize DB URL with fallback
+    db_url = client.db_connection_url or settings.DATABASE_URL
+    current_db_url.set(db_url)
+    client_id = client.id
+    client_context_id = str(client.id)
+    
+    # Validation
+    table_name = payload.query_payload.get("table_name", "unknown")
+        
+    try:
+        # Call the synchronous reporting tool export with fallback url
+        filepath = export_query_result(payload.query_payload, payload.format, db_url=db_url)
+        
+        if filepath.startswith("Error") or filepath.startswith("No data"):
+             raise HTTPException(status_code=400, detail=filepath)
+        
+        import os
+        if not os.path.exists(filepath):
+             raise HTTPException(status_code=500, detail="Export file was not created.")
+             
+        exec_time = int((time.time() - start_time) * 1000)
+        
+        log_audit(client_id, "EXPORT_EXECUTED", {
+            "table_name": table_name,
+            "format": payload.format,
+            "execution_time_ms": exec_time
+        })
+        
+        # Return the file directly as a download response
+        from fastapi.responses import FileResponse
+        basename = os.path.basename(filepath)
+        media_types = {"csv": "text/csv", "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "pdf": "application/pdf"}
+        mt = media_types.get(payload.format.lower(), "application/octet-stream")
+        return FileResponse(filepath, filename=basename, media_type=mt)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")

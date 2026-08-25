@@ -6,6 +6,7 @@ from app.core.database import get_session
 from app.models.navigation import NavigationItem
 from app.tools.navigation import load_client_sitemap
 from app.core.auth_deps import get_current_active_admin
+from app.services.navigation_service import NavigationService
 
 router = APIRouter()
 
@@ -16,6 +17,12 @@ async def get_full_sitemap(
     current_admin: Any = Depends(get_current_active_admin)
 ):
     """Returns the comprehensive discovered sitemap for a specific client."""
+    NavigationService.log_navigation(
+        user_id=current_admin.id,
+        route="/admin/sitemap-data",
+        module="Sitemap",
+        client_id=client_id
+    )
     return await load_client_sitemap(session, client_id)
 
 @router.get("/navigation", response_model=List[NavigationItem])
@@ -24,7 +31,14 @@ async def get_navigation_items(
     session: AsyncSession = Depends(get_session),
     current_admin: Any = Depends(get_current_active_admin)
 ):
+    NavigationService.log_navigation(
+        user_id=current_admin.id,
+        route="/admin/navigation",
+        module="Navigation",
+        client_id=client_id
+    )
     statement = select(NavigationItem)
+
     if client_id:
         statement = statement.where(NavigationItem.client_id == client_id)
     result = await session.execute(statement.order_by(NavigationItem.order))

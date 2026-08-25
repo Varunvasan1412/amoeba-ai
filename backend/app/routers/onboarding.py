@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.models.client_config import ClientConfig
-from app.core.auth_deps import get_current_active_admin
+from app.security.permission_guard import require_permission
 
 # Router handles client onboarding status/completion
-router = APIRouter(prefix="/clients", dependencies=[Depends(get_current_active_admin)])
+router = APIRouter(tags=["Onboarding Status"])
 
-@router.get("/{client_id}/onboarding/status")
+@router.get("/clients/{client_id}/onboarding/status", dependencies=[Depends(require_permission("configure_system"))])
 async def get_onboarding_status(
     client_id: int,
     session: AsyncSession = Depends(get_session)
@@ -17,7 +17,7 @@ async def get_onboarding_status(
         raise HTTPException(status_code=404, detail="Client not found")
     return {"onboarding_completed": client.onboarding_completed}
 
-@router.post("/{client_id}/onboarding/complete")
+@router.post("/clients/{client_id}/onboarding/complete", dependencies=[Depends(require_permission("configure_system"))])
 async def complete_onboarding(
     client_id: int,
     session: AsyncSession = Depends(get_session)
