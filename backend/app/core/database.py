@@ -48,6 +48,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 # 4. Init DB
 async def init_db():
     async with engine.begin() as conn:
+        # Enable pgvector extension before creating tables
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        
         # Create tables (Handles new tables only)
         await conn.run_sync(SQLModel.metadata.create_all)
         
