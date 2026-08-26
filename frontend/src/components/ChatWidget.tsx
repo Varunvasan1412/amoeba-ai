@@ -575,6 +575,16 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
 
 MessageBubble.displayName = "MessageBubble";
 
+function generateUUID() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
 export default function ChatWidget() {
   const { clientId, darkMode, setDarkMode } = useAdmin();
   const API_BASE = "/api";
@@ -625,13 +635,13 @@ export default function ChatWidget() {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => {
     const saved = localStorage.getItem("amoeba_chat_session_id");
     if (saved) return saved;
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
     localStorage.setItem("amoeba_chat_session_id", newId);
     return newId;
   });
 
   const handleNewChat = useCallback(() => {
-    const newId = crypto.randomUUID();
+    const newId = generateUUID();
     setCurrentSessionId(newId);
     localStorage.setItem("amoeba_chat_session_id", newId);
     setMessages([]);
