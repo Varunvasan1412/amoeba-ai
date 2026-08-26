@@ -3,7 +3,7 @@ name: Auto-Deploy to Hostinger VPS
 on:
   push:
     branches:
-      - varun  # We are watching your specific working branch!
+      - main  # Now it will trigger whenever you merge into the main branch!
 
 jobs:
   deploy:
@@ -18,7 +18,7 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           script: |
             cd amoeba-ai
-            git checkout varun
+            git checkout main
             git pull
             # Restart only the containers that have changes, or build new ones if needed
             docker compose up -d --build
