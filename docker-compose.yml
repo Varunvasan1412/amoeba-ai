@@ -9,8 +9,6 @@ services:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
       POSTGRES_DB: amoeba
-    ports:
-      - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,8 +21,6 @@ services:
   redis:
     image: redis:alpine
     container_name: amoeba-redis
-    ports:
-      - "6380:6379"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping"]
       interval: 5s
