@@ -12,7 +12,10 @@
   })();
   var apiKey = currentScript.getAttribute('data-api-key');
 
-  var WIDGET_URL = "http://localhost:5173?mode=widget"; 
+  // Dynamically detect where this script was loaded from (localhost vs live IP)
+  var scriptOrigin = currentScript.src ? new URL(currentScript.src).origin : "http://localhost:5173";
+  var WIDGET_URL = scriptOrigin + "?mode=widget"; 
+  
   if (apiKey) {
       WIDGET_URL += "&api_key=" + encodeURIComponent(apiKey);
   } 
