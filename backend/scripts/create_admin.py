@@ -16,8 +16,8 @@ async def create_admin():
         if not existing:
             print("👤 Creating Admin User...")
             admin_user = User(
-                username="admin",
-                hashed_password=get_password_hash("admin"),
+                username="Admin@ahattrickz#2026",
+                hashed_password=get_password_hash("1Q2w3e4r@#123"),
                 is_admin=True,
                 is_active=True
             )
