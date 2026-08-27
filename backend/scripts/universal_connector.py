@@ -13,7 +13,7 @@ from urllib.error import URLError
 # ==========================================
 
 # CONFIGURATION
-AMOEBA_API_URL = "http://localhost:8000/api/routes/learn" 
+AMOEBA_API_URL = "http://187.52.122.56:8000/api/routes/learn" 
 IGNORE_DIRS = {'.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 'coverage'}
 
 def simple_title_case(s):
@@ -171,11 +171,15 @@ def scan_project(root_path):
         
     return routes, [] # Return empty DB files for now to keep it simple
 
-def sync_with_amoeba(routes):
+def sync_with_amoeba(routes, api_key):
     print(f"🚀 Syncing {len(routes)} routes with Amoeba Brain...")
     try:
         data = json.dumps(routes).encode('utf-8')
-        req = urllib.request.Request(AMOEBA_API_URL, data=data, headers={
+        
+        # Append API key to URL query params
+        url_with_key = f"{AMOEBA_API_URL}?api_key={api_key}"
+        
+        req = urllib.request.Request(url_with_key, data=data, headers={
             'Content-Type': 'application/json',
             'User-Agent': 'AmoebaConnector/2.0'
         })
@@ -185,9 +189,26 @@ def sync_with_amoeba(routes):
         print(f"❌ Connection failed: {e}")
 
 if __name__ == "__main__":
-    current_dir = os.getcwd()
-    routes, _ = scan_project(current_dir)
+    if len(sys.argv) < 3:
+        print("❌ Error: Missing arguments.")
+        print("Usage: python universal_connector.py \"/path/to/project\" \"YOUR_API_KEY\"")
+        sys.exit(1)
+        
+    target_dir = sys.argv[1]
+    api_key = sys.argv[2]
+    
+    if not os.path.exists(target_dir):
+        print(f"❌ Error: Directory not found: {target_dir}")
+        sys.exit(1)
+        
+    routes, _ = scan_project(target_dir)
+    
+    # Cap routes to prevent massive payload errors (422) if they scan a huge directory like C:\
+    if len(routes) > 2000:
+        print(f"⚠️ Warning: Found {len(routes)} routes, capping at 2000 to prevent payload size errors.")
+        routes = routes[:2000]
+        
     if routes:
-        sync_with_amoeba(routes)
+        sync_with_amoeba(routes, api_key)
     else:
         print("🤷 No routes found.")
