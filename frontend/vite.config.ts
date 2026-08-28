@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true, // Needed for Docker to expose the port
+    allowedHosts: ["amoeba.space"], // Fix for Blocked Request
     proxy: {
       // 1. Proxy API requests to the backend container
       "^/api": {
