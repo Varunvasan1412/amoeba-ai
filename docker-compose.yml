@@ -59,8 +59,29 @@ services:
       - ./frontend/public:/app/public
     environment:
       - CHOKIDAR_USEPOLLING=true
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=postgresql+asyncpg://user:password@db:5432/amoeba
+
+  # 4. CADDY REVERSE PROXY (For Domain & SSL)
+  caddy:
+    image: caddy:latest
+    container_name: amoeba-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
 
 # Persistent Storage for DB
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:
   backups:
