@@ -185,6 +185,8 @@ async def learn_enums_endpoint(
         await session.commit()
         return {"status": "success", "message": f"Synced {updated} enum mappings"}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"Database error during enum sync: {str(e)}")
 
