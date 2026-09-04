@@ -12,9 +12,10 @@ from urllib.error import URLError
 # Supports: PHP, HTML, Next.js, React, Vue, Angular
 # ==========================================
 
-# CONFIGURATION
 AMOEBA_API_URL = "https://amoeba.space/api/routes/learn" 
 AMOEBA_SEMANTIC_URL = "https://amoeba.space/api/semantic/sync"
+AMOEBA_ENUMS_URL = "https://amoeba.space/api/enums/learn"
+AMOEBA_API_KEY = "thermosen_api_key" # Replace with actual key in production
 IGNORE_DIRS = {'.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 'coverage'}
 
 def simple_title_case(s):
@@ -186,6 +187,56 @@ def scan_codebase_for_semantics(root_path):
     print(f"🧠 Found {len(semantics)} potential semantic mappings in code.")
     return semantics
 
+def scan_codebase_for_enums(root_path):
+    print("🕵️  Profiling codebase for automated Enum mappings (<select> tags)...")
+    enums = {} # table_name -> column_name -> {val: label}
+    
+    select_regex = re.compile(r'<select[^>]*name=["\']([^"\']+)["\'][^>]*>(.*?)</select>', re.IGNORECASE | re.DOTALL)
+    option_regex = re.compile(r'<option[^>]*value=["\']([^"\']+)["\'][^>]*>(.*?)</option>', re.IGNORECASE)
+    
+    for subdir, dirs, files in os.walk(root_path):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        for file in files:
+            if not file.endswith(('.php', '.html', '.jsx', '.tsx', '.vue')): continue
+            
+            file_path = os.path.join(subdir, file)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    selects = select_regex.findall(content)
+                    
+                    for select_name, select_inner in selects:
+                        # Clean up column name (remove [] for array inputs like status[])
+                        column_name = select_name.replace('[]', '').strip()
+                        
+                        # Only care about common enum columns
+                        if column_name.lower() not in ['status', 'type', 'category', 'role', 'state', 'is_active']:
+                            continue
+                            
+                        options = option_regex.findall(select_inner)
+                        mapping = {}
+                        for val, text in options:
+                            val = val.strip()
+                            text = text.strip()
+                            # Ignore empty values or template variables
+                            if val and text and not val.startswith('<') and not val.startswith('{') and not text.startswith('<'):
+                                mapping[val] = text
+                                
+                        if mapping:
+                            # Guess table name from filename
+                            table_name = os.path.splitext(file)[0].replace('_list', '').replace('_add', '').replace('view_', '').replace('add_', '')
+                            table_name = table_name.lower()
+                            
+                            if table_name not in enums:
+                                enums[table_name] = {}
+                            if column_name not in enums[table_name]:
+                                enums[table_name][column_name] = mapping
+            except Exception:
+                pass
+                
+    print(f"🧠 Auto-discovered enum mappings for {len(enums)} tables.")
+    return enums
+
 def scan_project(root_path):
     print(f"🕵️  Scanning project at: {root_path}")
     
@@ -240,6 +291,21 @@ def sync_semantics_with_amoeba(semantics, api_key):
     except Exception as e:
         print(f"⚠️ Semantic sync skipped or failed (API might not exist yet): {e}")
 
+def sync_enums_with_amoeba(enums, api_key):
+    print(f"🚀 Syncing auto-discovered Enum mappings with Amoeba Brain...")
+    try:
+        data = json.dumps(enums).encode('utf-8')
+        url_with_key = f"{AMOEBA_ENUMS_URL}?api_key={api_key}"
+        
+        req = urllib.request.Request(url_with_key, data=data, headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'AmoebaConnector/2.0'
+        })
+        with urllib.request.urlopen(req) as response:
+            print(f"✅ Enum Sync Success! Amoeba responded: {response.read().decode('utf-8')}")
+    except Exception as e:
+        print(f"⚠️ Enum sync skipped or failed: {e}")
+
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("❌ Error: Missing arguments.")
@@ -270,3 +336,10 @@ if __name__ == "__main__":
         if len(semantics) > 5000:
             semantics = semantics[:5000]
         sync_semantics_with_amoeba(semantics, api_key)
+
+    # Auto-discover enums
+    enums = scan_codebase_for_enums(target_dir)
+    if enums:
+        sync_enums_with_amoeba(enums, api_key)
+    else:
+        print("ℹ️ No enum mappings auto-discovered.")
