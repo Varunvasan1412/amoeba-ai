@@ -111,22 +111,30 @@ async def sync_semantic_endpoint(
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
     # 2. Delete old mappings
-    await session.execute(text("DELETE FROM semanticmapping WHERE client_id = :cid"), {"cid": client.id})
+    from sqlmodel import delete
+    try:
+        await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
     
     # 3. Insert new mappings
     added = 0
-    for s in semantics:
-        new_map = SemanticMapping(
-            client_id=client.id,
-            ui_label=s.ui_label,
-            database_table=s.database_table,
-            source_file=s.source_file
-        )
-        session.add(new_map)
-        added += 1
-        
-    await session.commit()
-    return {"status": "success", "message": f"Synced {added} semantic mappings"}
+    try:
+        for s in semantics:
+            new_map = SemanticMapping(
+                client_id=client.id,
+                ui_label=s.ui_label,
+                database_table=s.database_table,
+                source_file=s.source_file
+            )
+            session.add(new_map)
+            added += 1
+            
+        await session.commit()
+        return {"status": "success", "message": f"Synced {added} semantic mappings"}
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during insert: {str(e)}")
 
 @router.post("/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
