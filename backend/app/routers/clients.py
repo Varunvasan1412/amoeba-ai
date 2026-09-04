@@ -62,6 +62,7 @@ class UpdateClientRequest(BaseModel):
     feature_backups_enabled: Optional[bool] = None
     feature_tenants_enabled: Optional[bool] = None
     feature_security_enabled: Optional[bool] = None
+    schema_rag_enabled: Optional[bool] = None
 
 class StatusRequest(BaseModel):
     is_active: bool
@@ -236,7 +237,9 @@ async def list_clients(
             "feature_health_enabled": getattr(c, "feature_health_enabled", True),
             "feature_backups_enabled": getattr(c, "feature_backups_enabled", True),
             "feature_tenants_enabled": getattr(c, "feature_tenants_enabled", True),
-            "feature_security_enabled": getattr(c, "feature_security_enabled", True)
+            "feature_security_enabled": getattr(c, "feature_security_enabled", True),
+            "schema_rag_enabled": getattr(c, "schema_rag_enabled", False),
+            "schema_synced": getattr(c, "schema_synced", False)
         }
         output.append(sanitize_client_data(base_data, current_user))
 
@@ -369,6 +372,8 @@ async def update_client(
             client.feature_tenants_enabled = payload.feature_tenants_enabled
         if payload.feature_security_enabled is not None:
             client.feature_security_enabled = payload.feature_security_enabled
+        if payload.schema_rag_enabled is not None:
+            client.schema_rag_enabled = payload.schema_rag_enabled
 
         session.add(client)
         await session.commit()

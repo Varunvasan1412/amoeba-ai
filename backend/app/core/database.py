@@ -14,6 +14,8 @@ from app.models.allowed_relationship import AllowedRelationship # [NEW] v3 Gover
 from app.models.approved_join_path import ApprovedJoinPath # [NEW] v3 Governance Layer
 from app.models.conversation_state import ConversationState # [NEW] v3 CRUD Layer
 from app.models.field_metadata import FieldMetadata # [NEW] v4 Field Metadata Layer
+from app.models.schema_metadata import SchemaMetadata # [NEW] Schema RAG Layer
+from app.models.semantic_mapping import SemanticMapping # [NEW] Semantic Mapping Layer
 from app.models.ai_settings import AISettings # [NEW] v6 AI Infrastructure Layer
 from app.models.document import Document, DocumentChunk # [NEW] Document Knowledge Layer
 from app.models.audit_log import AuditLog # [NEW] Audit Trail Layer
@@ -110,8 +112,22 @@ async def init_db():
             ))
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE clientconfig ADD COLUMN total_tokens_used INTEGER DEFAULT 0"))
+            # Check for schema_rag_enabled
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'clientconfig' AND column_name = 'schema_rag_enabled'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE clientconfig ADD COLUMN schema_rag_enabled BOOLEAN DEFAULT FALSE"))
+            
+            # Check for schema_synced
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'clientconfig' AND column_name = 'schema_synced'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE clientconfig ADD COLUMN schema_synced BOOLEAN DEFAULT FALSE"))
+                
         except Exception as e:
-            logger.warning(f"ClientConfig migration notice: {e}")
+            print(f"ClientConfig migration notice: {e}")
 
         # 3. Update 'field_metadata' table
         try:

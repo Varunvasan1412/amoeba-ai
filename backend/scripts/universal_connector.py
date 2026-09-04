@@ -13,7 +13,8 @@ from urllib.error import URLError
 # ==========================================
 
 # CONFIGURATION
-AMOEBA_API_URL = "http://localhost:8000/api/routes/learn" 
+AMOEBA_API_URL = "https://amoeba.space/api/routes/learn" 
+AMOEBA_SEMANTIC_URL = "https://amoeba.space/api/semantic/sync"
 IGNORE_DIRS = {'.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 'coverage'}
 
 def simple_title_case(s):
@@ -151,6 +152,39 @@ def scan_legacy_php(root_path, base_url):
                     seen_paths.add(full_url)
     return routes
 
+def scan_codebase_for_semantics(root_path):
+    print("🕵️  Profiling codebase for semantic UI-to-Database mappings...")
+    semantics = []
+    
+    # Very generic heuristic: finding SELECT FROM or $table = '...' in files
+    table_regex = re.compile(r'(?:FROM|INTO|UPDATE|JOIN|\$table\s*=\s*[\'"])\s*([a-zA-Z0-9_]+)', re.IGNORECASE)
+    
+    for subdir, dirs, files in os.walk(root_path):
+        dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
+        for file in files:
+            if not file.endswith(('.php', '.js', '.ts', '.py')): continue
+            
+            file_path = os.path.join(subdir, file)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    tables_found = set(table_regex.findall(content))
+                    tables_found = {t.lower() for t in tables_found if len(t) > 2 and t.lower() not in ['this', 'select', 'where', 'set']}
+                    
+                    if tables_found:
+                        label = simple_title_case(file)
+                        for t in tables_found:
+                            semantics.append({
+                                "ui_label": label,
+                                "database_table": t,
+                                "source_file": file
+                            })
+            except Exception:
+                pass
+                
+    print(f"🧠 Found {len(semantics)} potential semantic mappings in code.")
+    return semantics
+
 def scan_project(root_path):
     print(f"🕵️  Scanning project at: {root_path}")
     
@@ -169,7 +203,9 @@ def scan_project(root_path):
     else:
         routes = scan_legacy_php(root_path, base_url)
         
-    return routes, [] # Return empty DB files for now to keep it simple
+    semantics = scan_codebase_for_semantics(root_path)
+        
+    return routes, semantics
 
 def sync_with_amoeba(routes, api_key):
     print(f"🚀 Syncing {len(routes)} routes with Amoeba Brain...")
@@ -186,7 +222,22 @@ def sync_with_amoeba(routes, api_key):
         with urllib.request.urlopen(req) as response:
             print(f"✅ Success! Amoeba responded: {response.read().decode('utf-8')}")
     except Exception as e:
-        print(f"❌ Connection failed: {e}")
+        print(f"❌ Route sync failed: {e}")
+
+def sync_semantics_with_amoeba(semantics, api_key):
+    print(f"🚀 Syncing {len(semantics)} semantic mappings with Amoeba Brain...")
+    try:
+        data = json.dumps(semantics).encode('utf-8')
+        url_with_key = f"{AMOEBA_SEMANTIC_URL}?api_key={api_key}"
+        
+        req = urllib.request.Request(url_with_key, data=data, headers={
+            'Content-Type': 'application/json',
+            'User-Agent': 'AmoebaConnector/2.0'
+        })
+        with urllib.request.urlopen(req) as response:
+            print(f"✅ Semantic Sync Success! Amoeba responded: {response.read().decode('utf-8')}")
+    except Exception as e:
+        print(f"⚠️ Semantic sync skipped or failed (API might not exist yet): {e}")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -201,7 +252,7 @@ if __name__ == "__main__":
         print(f"❌ Error: Directory not found: {target_dir}")
         sys.exit(1)
         
-    routes, _ = scan_project(target_dir)
+    routes, semantics = scan_project(target_dir)
     
     # Cap routes to prevent massive payload errors (422) if they scan a huge directory like C:\
     if len(routes) > 2000:
@@ -212,3 +263,9 @@ if __name__ == "__main__":
         sync_with_amoeba(routes, api_key)
     else:
         print("🤷 No routes found.")
+        
+    if semantics:
+        # Cap semantics too
+        if len(semantics) > 5000:
+            semantics = semantics[:5000]
+        sync_semantics_with_amoeba(semantics, api_key)
