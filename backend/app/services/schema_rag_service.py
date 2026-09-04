@@ -70,20 +70,25 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     if target_table:
         tables_to_force.add(target_table)
         
-    if tables_to_force:
-        from sqlmodel import col
-        force_res = await session.execute(
-            select(SchemaMetadata).where(
-                SchemaMetadata.client_id == client_id,
-                col(SchemaMetadata.table_name).in_(tables_to_force)
-            )
-        )
-        force_schemas = force_res.scalars().all()
-        for fs in force_schemas:
-            if fs.schema_definition not in schema_definitions:
-                schema_definitions.append(fs.schema_definition)
-                
-    schema_context = "\n\n".join(schema_definitions)
+    # We will fetch ALL schema definitions for this client to give the LLM full visibility for JOINs.
+    from sqlmodel import col
+    all_res = await session.execute(
+        select(SchemaMetadata).where(SchemaMetadata.client_id == client_id)
+    )
+    all_schemas = all_res.scalars().all()
+    
+    # We prioritize semantic and RAG tables at the top, but include all others.
+    prioritized_schemas = []
+    other_schemas = []
+    
+    for fs in all_schemas:
+        if fs.table_name in tables_to_force or fs.schema_definition in schema_definitions:
+            if fs.schema_definition not in prioritized_schemas:
+                prioritized_schemas.append(fs.schema_definition)
+        else:
+            other_schemas.append(fs.schema_definition)
+            
+    schema_context = "\n\n".join(prioritized_schemas + other_schemas)
 
     # 2. Build LLM Prompt
     from langchain_openai import ChatOpenAI
@@ -103,6 +108,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
     7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that table instead of the guessed table.
     8. **ABSOLUTE RULE**: NEVER query a table that has (Row Count: 0) if there is an alternative table with a Row Count > 0 that fits the semantic meaning.
+    9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available. You have the entire database schema below to figure out the joins.
 
     {semantic_context}
 
