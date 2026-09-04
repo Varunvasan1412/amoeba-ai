@@ -113,7 +113,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
     <div className={`flex flex-col gap-2 min-w-0 max-w-full ${bubbleWidth} ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
         {/* Main Text Bubble */}
         <div
-        className={`p-4 rounded-2xl text-[15px] shadow-sm break-words leading-relaxed transition-theme min-w-0 max-w-full overflow-hidden ${
+        className={`p-4 rounded-2xl text-[15px] shadow-sm break-words leading-relaxed transition-theme min-w-0 max-w-full overflow-visible ${
             hasDataTable ? "w-full" : ""
         } ${
             msg.role === "user"
@@ -1378,7 +1378,7 @@ export default function AmoebaChat() {
         </div>
 
         {/* Main Content Area */}
-    <div className={`flex-1 flex flex-col h-screen transition-theme ${isSidebarOpen ? 'ml-80' : 'ml-20'} ${darkMode ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
+    <div className={`flex-1 flex flex-col min-w-0 h-screen transition-theme ${isSidebarOpen ? 'ml-80' : 'ml-20'} ${darkMode ? 'bg-gray-950 text-white' : 'bg-gray-50 text-gray-900'}`}>
         
         {/* Top Floating Header */}
         <div className={`fixed top-0 right-0 z-40 h-20 px-8 flex items-center justify-between backdrop-blur-md transition-theme border-b ${
@@ -1472,7 +1472,7 @@ export default function AmoebaChat() {
                 </div>
             </div>
             
-            <div className={`flex-1 overflow-y-auto p-8 pt-20 flex flex-col gap-6 scrollbar-custom w-full transition-theme ${darkMode ? 'bg-gray-950' : 'bg-white'}`}>
+            <div className={`flex-1 min-h-0 min-w-0 overflow-y-auto p-8 pt-20 flex flex-col gap-6 scrollbar-custom w-full transition-theme ${darkMode ? 'bg-gray-950' : 'bg-white'}`}>
                 {isLoadingHistory ? (
                     <div className="flex items-center justify-center h-full">
                         <Loader2 className="animate-spin text-blue-500" size={32} />
