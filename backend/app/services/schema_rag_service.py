@@ -110,6 +110,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     8. **ABSOLUTE RULE**: NEVER query a table that has (Row Count: 0) if there is an alternative table with a Row Count > 0 that fits the semantic meaning.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
     10. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
+    11. **MISSING DATA**: If the user specifically asks for a column (like "date", "status", etc) but that column physically DOES NOT EXIST in the schema for the table you are querying, you MUST output a brief apology inside a <message> block before the <thought> block. Example: <message>I cannot show the date because the Bank table does not have a date column.</message>
 
     {semantic_context}
 
@@ -126,9 +127,16 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     response = await llm.ainvoke(messages)
     raw_content = response.content.strip()
     
-    # Extract thought block for debugging
+    # Extract thought block and message block for debugging/UI
     thought_process = ""
+    user_message = ""
     sql_query = raw_content
+    
+    if "<message>" in raw_content and "</message>" in raw_content:
+        parts = raw_content.split("</message>")
+        user_message = parts[0].replace("<message>", "").strip()
+        raw_content = parts[1].strip()
+        
     if "<thought>" in raw_content and "</thought>" in raw_content:
         parts = raw_content.split("</thought>")
         thought_process = parts[0].replace("<thought>", "").strip()
@@ -165,7 +173,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         return {
             "generated_sql": sql_query,
             "records": records,
-            "thought_process": thought_process
+            "thought_process": thought_process,
+            "user_message": user_message
         }
     except Exception as e:
         raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")
