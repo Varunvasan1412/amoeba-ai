@@ -1219,7 +1219,7 @@ export default function ChatWidget() {
                 </div>
                 <div className="flex items-center gap-1">
                     <button
-                        onClick={() => window.open(`/ai?api_key=${currentApiKey}`, '_blank')}
+                        onClick={() => window.open(`/ai?api_key=${currentApiKey}&session_id=${currentSessionId}`, '_blank')}
                         className="hover:bg-white/10 p-2 rounded-xl transition-all duration-200 text-gray-400 hover:text-white"
                         title="Open Full Chat"
                     >

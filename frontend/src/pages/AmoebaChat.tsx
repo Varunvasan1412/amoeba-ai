@@ -110,10 +110,10 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
   const bubbleWidth = msg.role === "user" ? "max-w-[85%]" : hasDataTable ? "max-w-full w-full" : "max-w-[85%]";
 
   return (
-    <div className={`flex flex-col gap-2 ${bubbleWidth} ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
+    <div className={`flex flex-col gap-2 min-w-0 max-w-full ${bubbleWidth} ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
         {/* Main Text Bubble */}
         <div
-        className={`p-4 rounded-2xl text-[15px] shadow-sm break-words leading-relaxed transition-theme ${
+        className={`p-4 rounded-2xl text-[15px] shadow-sm break-words leading-relaxed transition-theme min-w-0 max-w-full overflow-hidden ${
             hasDataTable ? "w-full" : ""
         } ${
             msg.role === "user"
