@@ -95,9 +95,10 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     2. You MUST use the exact table and column names provided in the Schema Context below.
     3. Do NOT guess column names. If you don't know a column, use SELECT * or COUNT(*).
     4. Only return SELECT statements. Never INSERT, UPDATE, DROP, etc.
-    5. The primary table they are asking about is likely: {target_table}
-    6. Always add a LIMIT 100 to the query to prevent massive payloads, unless they are asking for a single aggregate value.
-    7. WARNING: If you find multiple tables that might match, ALWAYS prefer the table that has a Row Count > 0. Ignore tables with Row Count: 0 as they are empty/abandoned.
+    5. The system guessed they are asking about this table: '{target_table}'. HOWEVER, this guess is often wrong. You must evaluate the Row Counts and Semantic Mappings to find the true table.
+    6. Always add a LIMIT 100 to the query to prevent massive payloads.
+    7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that table instead of the guessed table.
+    8. **ABSOLUTE RULE**: NEVER query a table that has (Row Count: 0) if there is an alternative table with a Row Count > 0 that fits the semantic meaning.
 
     {semantic_context}
 
