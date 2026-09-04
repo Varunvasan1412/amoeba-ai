@@ -56,10 +56,14 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     semantic_context = ""
     semantic_tables = []
     if semantics:
-        semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
-        for s in semantics:
-            semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}' (Found in {s.source_file})\n"
-            semantic_tables.append(s.database_table)
+        query_lower = user_query.lower()
+        active_semantics = [s for s in semantics if s.ui_label.lower() in query_lower]
+        
+        if active_semantics:
+            semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
+            for s in active_semantics:
+                semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}' (Found in {s.source_file})\n"
+                semantic_tables.append(s.database_table)
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
