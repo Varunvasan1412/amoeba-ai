@@ -22,3 +22,6 @@ class SemanticMetadata(SQLModel, table=True):
     # Safety Flags
     is_pii: bool = Field(default=False)
     is_default_date: bool = Field(default=False)
+    
+    # Enum Mappings (e.g. {"1": "Active", "0": "Inactive"})
+    enum_mappings: Optional[dict] = Field(default=None, sa_column=Column(JSON))

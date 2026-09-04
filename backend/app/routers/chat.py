@@ -136,6 +136,58 @@ async def sync_semantic_endpoint(
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"Database error during insert: {str(e)}")
 
+@router.post("/enums/learn")
+async def learn_enums_endpoint(
+    enums: Dict[str, Dict[str, Dict[str, str]]], # table_name -> column_name -> mapping (e.g. {"unit": {"status": {"1": "Active"}}})
+    api_key: str = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Saves enum mappings to SemanticMetadata for a specific client."""
+    from app.models.semantic_metadata import SemanticMetadata
+    
+    # 1. Verify Client
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+
+    updated = 0
+    try:
+        # Fetch existing semantic metadata for this client
+        stmt = select(SemanticMetadata).where(SemanticMetadata.client_id == client.id)
+        res = await session.execute(stmt)
+        existing_meta = res.scalars().all()
+        
+        # Create a lookup for quick access
+        meta_lookup = {(m.table_name, m.column_name): m for m in existing_meta}
+        
+        for table_name, columns in enums.items():
+            for column_name, mapping in columns.items():
+                key = (table_name, column_name)
+                if key in meta_lookup:
+                    # Update existing
+                    meta = meta_lookup[key]
+                    meta.enum_mappings = mapping
+                    session.add(meta)
+                    updated += 1
+                else:
+                    # Create new semantic metadata entry just for this enum
+                    new_meta = SemanticMetadata(
+                        client_id=client.id,
+                        table_name=table_name,
+                        column_name=column_name,
+                        label=column_name.replace("_", " ").title(),
+                        enum_mappings=mapping
+                    )
+                    session.add(new_meta)
+                    updated += 1
+                    
+        await session.commit()
+        return {"status": "success", "message": f"Synced {updated} enum mappings"}
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error during enum sync: {str(e)}")
+
 @router.post("/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
 async def chat_endpoint(payload: Dict[str, Any], request: Request):

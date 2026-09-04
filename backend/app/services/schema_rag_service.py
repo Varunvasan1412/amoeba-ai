@@ -64,6 +64,23 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             for s in active_semantics:
                 semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}' (Found in {s.source_file})\n"
                 semantic_tables.append(s.database_table)
+                
+    # 1.6 Get Enum Mappings from SemanticMetadata
+    from app.models.semantic_metadata import SemanticMetadata
+    enum_res = await session.execute(
+        select(SemanticMetadata).where(
+            SemanticMetadata.client_id == client_id, 
+            SemanticMetadata.enum_mappings != None
+        )
+    )
+    enum_metadata = enum_res.scalars().all()
+    
+    if enum_metadata:
+        semantic_context += "\nENUM MAPPINGS (USE THESE TO CONVERT INTEGERS TO STRINGS VIA 'CASE WHEN' OR 'IF'):\n"
+        for em in enum_metadata:
+            # em.enum_mappings is a dict like {"1": "Active", "0": "Inactive"}
+            map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
+            semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
