@@ -7,7 +7,7 @@ from datetime import datetime, date
 
 def sanitize_for_json(obj):
     """Recursively converts Decimals and Date objects to JSON-serializable formats."""
-    if isinstance(obj, list):
+    if isinstance(obj, (list, tuple)):
         return [sanitize_for_json(i) for i in obj]
     elif isinstance(obj, dict):
         return {k: sanitize_for_json(v) for k, v in obj.items()}
@@ -89,6 +89,44 @@ async def learn_routes_endpoint(
     result_msg = await batch_learn_routes(routes_data, session, client.id)
     print(f"🧠 {result_msg}")
     return {"status": "success", "message": result_msg}
+
+class SemanticItem(BaseModel):
+    ui_label: str
+    database_table: str
+    source_file: str
+
+@router.post("/semantic/sync")
+async def sync_semantic_endpoint(
+    semantics: List[SemanticItem], 
+    api_key: str = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Saves discovered semantic mappings from the codebase profiler."""
+    from app.models.semantic_mapping import SemanticMapping
+    
+    # 1. Verify Client
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+
+    # 2. Delete old mappings
+    await session.execute(text("DELETE FROM semanticmapping WHERE client_id = :cid"), {"cid": client.id})
+    
+    # 3. Insert new mappings
+    added = 0
+    for s in semantics:
+        new_map = SemanticMapping(
+            client_id=client.id,
+            ui_label=s.ui_label,
+            database_table=s.database_table,
+            source_file=s.source_file
+        )
+        session.add(new_map)
+        added += 1
+        
+    await session.commit()
+    return {"status": "success", "message": f"Synced {added} semantic mappings"}
 
 @router.post("/chat")
 @limiter.limit(settings.RATE_LIMIT_CHAT)
@@ -388,9 +426,46 @@ async def websocket_endpoint(
                                             table_name = parts[1] if len(parts) > 1 else ""
                                             friendly_name = parts[2] if len(parts) > 2 else table_name
                                             
-                                            print(f"🔧 [DETERMINISTIC READ] Bypassing LLM for table: {table_name}")
+                                            print(f"🔧 [DETERMINISTIC READ] Processing table: {table_name}")
                                             
                                             try:
+                                                from app.models.client_config import ClientConfig
+                                                client_config = await local_session.get(ClientConfig, int(client_id))
+                                                if client_config and client_config.schema_rag_enabled:
+                                                    print(f"🧠 [SCHEMA RAG] Intercepting read request for {table_name}")
+                                                    from app.services.schema_rag_service import query_legacy_db_with_schema
+                                                    rag_result = await query_legacy_db_with_schema(user_text, table_name, int(client_id), local_session)
+                                                    
+                                                    result = sanitize_for_json(rag_result["records"])
+                                                    sql_used = rag_result["generated_sql"]
+                                                    
+                                                    actions_list = []
+                                                    if isinstance(result, (list, tuple)) and result:
+                                                        headers = list(result[0].keys())
+                                                        actions_list.append({
+                                                            "type": "data_table", 
+                                                            "payload": {
+                                                                "title": f"{friendly_name} (AI Generated)", 
+                                                                "headers": headers,
+                                                                "rows": list(result),
+                                                                "total": len(result)
+                                                            }
+                                                        })
+                                                        response_text = f"Found **{len(result)}** record(s) in **{friendly_name}** using AI Schema RAG.\n\n```sql\n{sql_used}\n```"
+                                                    elif isinstance(result, (list, tuple)):
+                                                        response_text = f"No records found for your query.\n\n```sql\n{sql_used}\n```"
+                                                    elif isinstance(result, str):
+                                                        response_text = f"Database returned a response:\n{result}\n\n```sql\n{sql_used}\n```"
+                                                    else:
+                                                        response_text = f"Query executed. Result type: {type(result)}.\n\n```sql\n{sql_used}\n```"
+                                                        
+                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+                                                    local_session.add(ai_msg)
+                                                    await local_session.commit()
+                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+                                                    await websocket.send_json({"type": "done", "session_id": s_id})
+                                                    return
+                                                    
                                                 from app.services.crud_service import CRUDService
                                                 from app.tools.dates import normalize_date_range
                                                 

@@ -138,7 +138,8 @@ app.include_router(backup.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(ui_schema.router, prefix="/api/ui-schema", tags=["UI Learning"])
 
-from app.routers import field_metadata, audit
+from app.routers import field_metadata, audit, schema_rag
+app.include_router(schema_rag.router, prefix="/api")
 app.include_router(field_metadata.router, prefix="/api")
 app.include_router(audit.router, prefix="/api")
 app.include_router(audit.purge_router, prefix="/api")

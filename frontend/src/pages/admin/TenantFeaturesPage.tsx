@@ -40,7 +40,8 @@ export default function TenantFeaturesPage() {
     feature_health_enabled: true,
     feature_backups_enabled: true,
     feature_tenants_enabled: true,
-    feature_security_enabled: true
+    feature_security_enabled: true,
+    schema_rag_enabled: false
   });
 
   useEffect(() => {
@@ -57,7 +58,8 @@ export default function TenantFeaturesPage() {
           feature_health_enabled: currentClient.feature_health_enabled ?? true,
           feature_backups_enabled: currentClient.feature_backups_enabled ?? true,
           feature_tenants_enabled: currentClient.feature_tenants_enabled ?? true,
-          feature_security_enabled: currentClient.feature_security_enabled ?? true
+          feature_security_enabled: currentClient.feature_security_enabled ?? true,
+          schema_rag_enabled: currentClient.schema_rag_enabled ?? false
         });
       }
     }
@@ -165,6 +167,13 @@ export default function TenantFeaturesPage() {
       description: 'Manage users, custom roles, and security permissions.',
       icon: Users,
       color: 'cyan'
+    },
+    {
+      key: 'schema_rag_enabled',
+      label: 'AI Schema RAG Engine',
+      description: 'Enable dynamic LLM SQL generation based on live synced schemas instead of hardcoded rules.',
+      icon: Database,
+      color: 'emerald'
     }
   ];
 
