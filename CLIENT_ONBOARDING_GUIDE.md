@@ -1,79 +1,82 @@
-# Amoeba AI: Client Onboarding & Integration Guide
+# Amoeba AI: Client Onboarding Guide (v2 Schema RAG Architecture)
 
-This document outlines the exact steps required to onboard a new client, integrate the AI chat widget into their website, and teach the AI their custom navigation routes and database structure.
+With the new AI-driven Schema RAG Engine, onboarding a new client is completely automated through codebase scanning and vector embeddings. You no longer need to manually map tables, configure relationships, or create data labels in the Wizard.
 
----
-
-## Phase 1: Create the Client Account
-Before touching any code, you must generate a unique identity for the client on your Amoeba AI platform.
-
-1. Log into your **Amoeba Admin Panel**.
-2. Navigate to the **Clients** section and click **Add New Client**.
-3. Fill in their business details.
-4. The system will generate a unique **API Key** for this client (e.g., `a68ed0d9-97ff-4b8a-a9a1-8ca5a6718645`). Save this key!
+Follow these 4 steps to onboard a new client to Amoeba AI.
 
 ---
 
-## Phase 2: Frontend Integration (The Widget)
-You must inject the Amoeba AI Widget into the client's website. This requires zero downloads or zip files—it is entirely cloud-hosted.
+## Step 1: Create Client & Connect Database (Admin Panel)
 
-**The Action:**
-Copy the following script tag and paste it into the client's global layout file (e.g., `footer.php`, `index.html`, or the main React/Next.js layout), right before the closing `</body>` tag.
+*The AI cannot guess database credentials, so this must be done manually.*
 
-```html
-<!-- Amoeba AI Cloud Widget -->
-<script 
-    src="https://amoeba.space/widget-loader.js" 
-    data-api-key="YOUR_CLIENTS_API_KEY_HERE"
-></script>
+1. Log in to the **Amoeba Admin Panel**.
+2. Navigate to **Clients** and create a new client (e.g., "New Look").
+3. Copy the client's unique **Widget API Key**.
+4. Navigate to the **Wizard** for the newly created client.
+5. In Step 1 of the Wizard, fill in the **Database Connection** details:
+   - **Database Type**: MySQL (or PostgreSQL depending on the client)
+   - **Host, Port, Username, Password, Database Name** (Must be accessible by the Amoeba VPS)
+6. Click **"Connect ERP Database"**.
+7. Once the connection is successful, click **"Skip Wizard"** at the bottom right. The AI will handle the rest!
+
+---
+
+## Step 2: Extract & Sync Database Schemas
+
+*This step teaches Amoeba's Vector Brain exactly what tables, columns, and row counts exist in the client's database.*
+
+Run the **Schema Extractor** script from the Amoeba backend:
+
+```bash
+docker exec amoeba-ai-backend-1 python scripts/schema_extractor.py <DB_HOST> <DB_PORT> <DB_USER> <DB_PASS> <DB_NAME> <API_KEY>
 ```
 
-*Note: The script automatically detects the environment. It will connect to your live server over the internet without conflicting with any of the client's existing CSS or JavaScript.*
+**Example:**
+```bash
+docker exec amoeba-ai-backend-1 python scripts/schema_extractor.py srv1556.hstgr.io 3306 u161593822_newlook MySuperSecretPassword u161593822_newlook am_live_123456...
+```
+
+*Expected Output:* `✅ Success! Amoeba responded: {"status":"success","tables_learned":145}`
 
 ---
 
-## Phase 3: Route Learning (Teaching Navigation)
-For the AI to successfully navigate the client's dashboard (e.g., redirecting users to the "Settings" page), it needs a map of their website. This map is generated using the `universal_connector.py` tool.
+## Step 3: Map Business Logic & Terminology (Universal Connector)
 
-### Scenario A: You have their Source Code (e.g., Local Projects)
-If you built the client's project or have a copy of their source code on your laptop:
+*The AI knows the tables exist, but it doesn't know that humans call `enquiry_header` a "Quotation". We scan the client's codebase to automatically build these Semantic Mappings.*
 
-1. Open your terminal on your laptop.
-2. Navigate to your Amoeba backend directory:
-   ```bash
-   cd D:\AHATTRICKZ-PROJECT\amoeba-ai\backend
-   ```
-3. Run the scanner script against their source code folder, using their specific API Key:
-   ```bash
-   python scripts\universal_connector.py "C:\Path\To\Their\Source\Code" "YOUR_CLIENTS_API_KEY_HERE"
-   ```
-4. **Done.** The script will instantly scan their files and upload the navigation map to your live Amoeba server. 
+Run the **Universal Connector** on the machine hosting the client's source code:
 
-### Scenario B: You DO NOT have their Source Code (e.g., Third-Party Enterprise)
-If the client's source code is strictly confidential and locked on their private servers, you have two options:
+```bash
+docker exec amoeba-ai-backend-1 python scripts/universal_connector.py "/path/to/client/codebase" "<API_KEY>"
+```
 
-**Option 1: The Client IT Team runs it (Recommended)**
-1. Email the `universal_connector.py` file to the client's IT department.
-2. Provide them with their API key.
-3. Ask their IT guy to place the file inside their main project folder, open their terminal, navigate to that folder, and run the script like this:
-   ```bash
-   python universal_connector.py "C:\Path\To\Their\Project" "YOUR_CLIENTS_API_KEY_HERE"
-   ```
-   *The script will safely map their routes and send the metadata to your Amoeba server.*
+*(Note: The Universal Connector analyzes `.php`, `.py`, and `.ts` files to find SQL queries and variables, mapping them directly to the database tables discovered in Step 2).*
 
-**Option 2: Manual Entry via Admin Panel**
-If they refuse to run scripts, simply ask them for a spreadsheet of their top 10 URLs (e.g., `Dashboard -> /dashboard`, `Profile -> /users/profile`). You can manually add these routes to their profile in your Amoeba Admin Panel.
+*Expected Output:* `✅ Semantic Sync Success! Amoeba responded: {"status":"success","mappings_learned":...}`
 
 ---
 
-## Phase 4: Data Integration (Optional)
-If the client wants the AI to answer specific questions about their live business data (e.g., "How many orders did we get today?"), you must connect Amoeba to their database.
+## Step 4: Install the Chat Widget
 
-1. Ask the client's IT team for a **Read-Only Database Connection String**. 
-   *(Example: `mysql://amoeba_user:password123@104.23.55.12/client_db`)*
-2. Log into your **Amoeba Admin Panel**.
-3. Open the client's profile.
-4. Scroll to the **Database Configuration** section and paste the connection string.
-5. Save. 
+*The AI is now fully trained on the client's database structure and custom terminology. It's ready to go live.*
 
-**Done.** The widget on their live website is now fully capable of reading their database and generating real-time charts and reports!
+Add the following snippet just before the closing `</body>` tag (e.g., in `footer.php` or `index.html`) in the client's web application:
+
+```html
+<script 
+  src="https://amoeba.space/widget-loader.js" 
+  data-api-key="YOUR_CLIENT_API_KEY">
+</script>
+```
+
+---
+
+### Troubleshooting
+
+- **AI says "Table not found" or hallucinates table names:** 
+  You probably missed Step 2 (Schema Extraction). The AI is guessing table names instead of using the real schema.
+- **AI queries the wrong table (e.g. `quotation_header` instead of `enquiry_header`):** 
+  You probably missed Step 3 (Universal Connector). The AI doesn't know the client's specific terminology. 
+- **Error: `Could not parse SQLAlchemy URL`:** 
+  The database connection details in Step 1 are empty, malformed, or have the wrong Database Type selected.

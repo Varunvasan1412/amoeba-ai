@@ -462,11 +462,11 @@ async def websocket_endpoint(
                                                                 "total": len(result)
                                                             }
                                                         })
-                                                        response_text = f"Found **{len(result)}** record(s) in **{friendly_name}** using AI Schema RAG.\n\n```sql\n{sql_used}\n```"
+                                                        response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**."
                                                     elif isinstance(result, (list, tuple)):
-                                                        response_text = f"No records found for your query.\n\n```sql\n{sql_used}\n```"
+                                                        response_text = f"No records found for your query."
                                                     elif isinstance(result, str):
-                                                        response_text = f"Database returned a response:\n{result}\n\n```sql\n{sql_used}\n```"
+                                                        response_text = f"Database returned a response:\n{result}"
                                                     else:
                                                         response_text = f"Query executed. Result type: {type(result)}.\n\n```sql\n{sql_used}\n```"
                                                         

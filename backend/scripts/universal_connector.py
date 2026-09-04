@@ -163,6 +163,7 @@ def scan_codebase_for_semantics(root_path):
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
         for file in files:
             if not file.endswith(('.php', '.js', '.ts', '.py')): continue
+            if file.endswith('.min.js') or file.lower() in ['jquery.js', 'bootstrap.js', 'vue.js', 'react.js']: continue
             
             file_path = os.path.join(subdir, file)
             try:
