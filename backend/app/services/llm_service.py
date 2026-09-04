@@ -339,18 +339,22 @@ async def get_brain(client_id: int = None, session: AsyncSession = None, model_o
     try:
         if provider == "GEMINI":
             if settings.GOOGLE_API_KEY:
+                valid_model = model_name if "gemini" in model_name.lower() else "gemini-1.5-flash"
                 llm = ChatGoogleGenerativeAI(
-                    model=model_name if "gemini" in model_name else "gemini-2.0-flash-lite", 
+                    model=valid_model, 
                     google_api_key=settings.GOOGLE_API_KEY,
                     temperature=temperature,
                     max_retries=5
                 )
         elif provider == "OPENAI" or provider == "GPT4":
             if settings.OPENAI_API_KEY:
+                # Users often put fake branding names like 'GPT-5.6-LUNA' in the DB. This crashes OpenAI with a 400 error.
+                valid_model = model_name if "gpt-" in model_name.lower() else "gpt-4o-mini"
                 llm = ChatOpenAI(
-                    model=model_name if "gpt" in model_name else "gpt-5.6-luna",
-                    api_key=settings.OPENAI_API_KEY,
-                    temperature=temperature
+                    model=valid_model,
+                    openai_api_key=settings.OPENAI_API_KEY,
+                    temperature=temperature,
+                    max_retries=5
                 )
         elif provider == "OLLAMA":
             import httpx
