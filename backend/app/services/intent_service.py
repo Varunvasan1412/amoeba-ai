@@ -117,9 +117,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         return {"intent": "inquiry", "status": "resolved"}
         
     # Priority 3: Operations Mode Action Logic
-    # If "where is" is asked in operations, we treat it as a 'navigate' intent
+    # If "where is" is asked in operations and bypassed FastPath, it means they are looking for a record, not a page.
     if mode == "operations" and re.search(r"where\s+is", query_lower):
-        detected_intent = "navigate"
+        detected_intent = "read"
     
     if not detected_intent:
         # If still no intent but it was a context inquiry, last resort is inquiry

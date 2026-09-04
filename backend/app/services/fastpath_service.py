@@ -36,7 +36,7 @@ def is_export_intent(query: str) -> bool:
 
 def is_navigation_intent(query: str) -> bool:
     # 1. Detect standard navigation verbs (can be anywhere in the sentence)
-    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|open)\s+(.+)$"
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open)\s+(.+)$"
     if re.search(nav_pattern, query.strip()):
         return True
     
@@ -55,7 +55,7 @@ def extract_nav_target(query: str) -> str:
         return query.split("->")[-1].strip()
         
     # 2. Clean standard navigation verbs
-    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|open)\s+(.+)$"
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open)\s+(.+)$"
     match = re.search(nav_pattern, query.strip())
     if match:
         target = match.group(2).strip()
@@ -64,6 +64,8 @@ def extract_nav_target(query: str) -> str:
         # Remove common "the " or " page" wrapping if present
         target = re.sub(r"(?i)^(the\s+)", "", target).strip()
         target = re.sub(r"(?i)(\s+page)$", "", target).strip()
+        # Remove "located" if asking "where is X located"
+        target = re.sub(r"(?i)(\s+located)$", "", target).strip()
         return target
         
     return query.strip()
@@ -267,7 +269,8 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
             }]
             return final_text, actions
 
-        return "I couldn't find that page in the sitemap.", []
+        # If fastpath fails to find a page, return None so it falls through to LLM for conversational handling
+        return None, []
 
     # ----------------------------
     # 3. EXPORT / REPORT FAST-PATH (REGISTRY ONLY)
