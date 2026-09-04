@@ -108,7 +108,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
     7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that table instead of the guessed table.
     8. **ABSOLUTE RULE**: NEVER query a table that has (Row Count: 0) if there is an alternative table with a Row Count > 0 that fits the semantic meaning.
-    9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available. You have the entire database schema below to figure out the joins.
+    9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
+    10. **COLUMN SELECTION**: You MUST select ALL columns from the primary table (e.g. `SELECT main_table.*, joined_table.name ...`) so that the user doesn't lose any data fields. Do not arbitrarily drop columns. You have the entire database schema below to figure out the joins.
 
     {semantic_context}
 
