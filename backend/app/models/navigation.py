@@ -1,5 +1,6 @@
-from sqlmodel import SQLModel, Field
-from typing import Optional
+from sqlmodel import SQLModel, Field, Column
+from pgvector.sqlalchemy import Vector
+from typing import Optional, List
 
 class NavigationItem(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -11,3 +12,4 @@ class NavigationItem(SQLModel, table=True):
     order: int = 0
     client_id: int = Field(index=True)
     is_discovered: bool = Field(default=False, index=True)
+    embedding: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))

@@ -182,13 +182,36 @@ def tool_search_unsplash(query: str):
     return search_unsplash_image(query)
 
 @tool
-def tool_navigate_frontend(url_path: str):
+async def tool_navigate_frontend(url_path: str, client_id: int = None):
     """
     REQUIRED: Call this tool when the user says 'navigate', 'go to', or 'open' a page.
     Args:
         url_path (str): The path to navigate to (e.g., '/about', '/contact', '/').
     """
-    return "Navigation signal sent."
+    if not client_id:
+        return "Navigation signal sent (No validation)."
+        
+    from app.core.database import async_session
+    from app.models.navigation import NavigationItem
+    from sqlmodel import select
+    
+    async with async_session() as session:
+        # Strip trailing slashes and base urls to compare paths safely
+        clean_path = url_path.split("?")[0].strip("/")
+        
+        stmt = select(NavigationItem).where(NavigationItem.client_id == client_id)
+        res = await session.execute(stmt)
+        valid_items = res.scalars().all()
+        
+        for item in valid_items:
+            item_clean = item.path.split("?")[0].strip("/")
+            # If the LLM guessed the exact path, allow it
+            if item_clean.endswith(clean_path) or clean_path.endswith(item_clean):
+                return f"Navigation signal sent. (Matched: {item.label})"
+                
+        # If no match found, block the navigation to prevent a 404
+        return f"ERROR: The path '{url_path}' DOES NOT EXIST in the database. DO NOT guess URLs. You MUST call tool_lookup_route with keywords (like 'Account') to find the real URLs, and ask the user to clarify if multiple match."
+
 
 @tool
 async def tool_create_table(query: str):
@@ -463,7 +486,8 @@ RULES:
 8. NAVIGATION CRITICAL:
    - If a user asks to Go/Navigate to a page:
    - Step 1: Call `tool_lookup_route(query="page name")` FIRST.
-   - Step 2: Analysis and IMMDIATE ACTION: if high-confidence match, CALL `tool_navigate_frontend` IMMEDIATELY.
+   - Step 2: Analysis and IMMEDIATE ACTION: if there is a single high-confidence match, CALL `tool_navigate_frontend` IMMEDIATELY.
+   - Step 3: DISAMBIGUATION: If multiple ambiguous routes are returned (e.g. they asked for 'Accounts' but you found 'Account Details' and 'Accounts Category'), DO NOT call the navigate tool. Instead, reply to the user listing the exact labels found and ask them which one they meant.
    - 🛑 CRITICAL: DO NOT construct URLs yourself. ONLY use path from `tool_lookup_route`.
 
 9. DATABASE ACTIONS:
@@ -596,8 +620,12 @@ EOE
                 tool_result = f"Error: Tool {tool_name} failed."
                 
                 if tool_name == "tool_navigate_frontend":
-                    pending_actions.append({"type": "NAVIGATE", "payload": args.get("url_path")})
-                    tool_result = "Navigation signal sent."
+                    selected_tool = TOOL_MAP.get(tool_name)
+                    args["client_id"] = client_id
+                    tool_result = await selected_tool.ainvoke(args)
+                    
+                    if "ERROR:" not in tool_result:
+                        pending_actions.append({"type": "NAVIGATE", "payload": args.get("url_path")})
                 elif tool_name == "tool_display_table":
                     try:
                         title = args.get("title")

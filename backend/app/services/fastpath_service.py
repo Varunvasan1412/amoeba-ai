@@ -35,15 +35,31 @@ def is_export_intent(query: str) -> bool:
     ))
 
 def is_navigation_intent(query: str) -> bool:
+    # 1. Detect standard navigation verbs
     nav_pattern = r"(?i)^(?:navigate|go|take me|open)(?:\s+to)?\s+(.+)$"
-    return bool(re.search(nav_pattern, query.strip()))
+    if re.search(nav_pattern, query.strip()):
+        return True
+    
+    # 2. Detect explicit button clicks from ambiguity resolution
+    if "→" in query or "->" in query:
+        return True
+        
+    return False
 
 def extract_nav_target(query: str) -> str:
-    """Helper to strip 'navigate to' prefix"""
+    """Helper to strip 'navigate to' prefix or button formatting"""
+    # 1. Clean explicit button clicks
+    if "→" in query:
+        return query.split("→")[-1].strip()
+    if "->" in query:
+        return query.split("->")[-1].strip()
+        
+    # 2. Clean standard navigation verbs
     nav_pattern = r"(?i)^(?:navigate|go|take me|open)(?:\s+to)?\s+(.+)$"
     match = re.search(nav_pattern, query.strip())
     if match:
         return match.group(1).strip()
+        
     return query.strip()
 
 # -----------------------------------------------------------------------------
@@ -185,8 +201,25 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 label = cand["label"]
                 is_custom = cand.get("is_custom", False)
                 
+                # --- BEAUTIFY THE LABEL ---
+                # 1. Remove redundant parent prefix if the label starts with it (e.g. "Master Master Account" -> "Account")
+                clean_label = label
+                for p in cand.get("parents", []):
+                    if clean_label.lower().startswith(p.lower()):
+                        clean_label = clean_label[len(p):].strip()
+                
+                # 2. Add spaces before common suffixes (list, edit, create, view, details)
+                clean_label = re.sub(r'(list|edit|create|view|details|category|head|master|report)$', r' \1', clean_label, flags=re.IGNORECASE)
+                clean_label = re.sub(r'(details)(list|edit|create|view)', r'\1 \2', clean_label, flags=re.IGNORECASE)
+                clean_label = re.sub(r'(category)(list|edit|create|view)', r'\1 \2', clean_label, flags=re.IGNORECASE)
+                
+                # 3. Capitalize words cleanly
+                clean_label = " ".join(word.capitalize() for word in clean_label.split())
+                if not clean_label:
+                    clean_label = label # fallback
+                
                 # Add a clear visual clue for custom routes
-                display = f"{parents} → {label}" if parents else label
+                display = f"{parents} → {clean_label}" if parents else clean_label
                 if is_custom:
                     display = f"⭐ {display} (Custom)"
                 

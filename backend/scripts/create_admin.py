@@ -19,7 +19,7 @@ async def create_admin():
             session.add(super_admin_role)
             await session.commit()
 
-        result = await session.execute(select(User).where(User.username == "Admin@ahattrickz#2026"))
+        result = await session.execute(select(User).where(User.username == "admin"))
         existing = result.scalars().first()
         
         if not existing:
