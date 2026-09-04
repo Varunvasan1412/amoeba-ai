@@ -148,11 +148,13 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             current_db_url.reset(token)
             
         if isinstance(records, str) and "Error" in records:
-            raise Exception(records)
+            print(f"Schema RAG execution failed: {records}")
+            records = []
             
         return {
+            "generated_sql": sql_query,
             "records": records,
-            "generated_sql": sql_query
+            "thought_process": thought_process
         }
     except Exception as e:
         raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")

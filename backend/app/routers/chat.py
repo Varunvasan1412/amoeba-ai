@@ -447,6 +447,9 @@ async def websocket_endpoint(
                                                     result = sanitize_for_json(rag_result["records"])
                                                     sql_used = rag_result["generated_sql"]
                                                     
+                                                    thought_process = rag_result.get("thought_process", "")
+                                                    thought_msg = f"\n\n**AI Thought Process:**\n_{thought_process}_" if thought_process else ""
+                                                    
                                                     actions_list = []
                                                     if isinstance(result, (list, tuple)) and result:
                                                         headers = list(result[0].keys())
