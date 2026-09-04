@@ -94,7 +94,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     1. You must ONLY output a raw SQL query. Do not output markdown code blocks (no ```sql). Do not explain your answer.
     2. You MUST use the exact table and column names provided in the Schema Context below.
     3. Do NOT guess column names. If you don't know a column, use SELECT * or COUNT(*).
-    4. Only return SELECT statements. Never INSERT, UPDATE, DROP, etc.
+    4. You must output your thought process in a <thought> block before the SQL query. Evaluate which tables match the user's query, check their Row Counts, and check the Semantic Mappings. After the </thought> block, output ONLY the SELECT statement.
     5. The system guessed they are asking about this table: '{target_table}'. HOWEVER, this guess is often wrong. You must evaluate the Row Counts and Semantic Mappings to find the true table.
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
     7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that table instead of the guessed table.
@@ -113,9 +113,18 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     
     # 3. Generate SQL
     response = await llm.ainvoke(messages)
-    sql_query = response.content.strip()
+    raw_content = response.content.strip()
     
-    # Clean up markdown formatting if the LLM ignored instructions
+    # Extract thought block for debugging
+    thought_process = ""
+    sql_query = raw_content
+    if "<thought>" in raw_content and "</thought>" in raw_content:
+        parts = raw_content.split("</thought>")
+        thought_process = parts[0].replace("<thought>", "").strip()
+        sql_query = parts[1].strip()
+        print(f"🧠 [SCHEMA RAG THOUGHT]: {thought_process}")
+    
+    # Clean up markdown formatting
     if sql_query.startswith("```sql"):
         sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
     if sql_query.startswith("```"):
