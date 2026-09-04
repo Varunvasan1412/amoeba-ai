@@ -16,9 +16,10 @@ type ChatMessage = {
 };
 
 // Memoized Message Bubble for performance
-const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, onEdit, darkMode }: { 
+const MessageBubble = memo(({ msg, index, isLatest, onSelect, onSubmitForm, onSwitchMode, onEdit, darkMode }: { 
     msg: ChatMessage, 
     index: number,
+    isLatest?: boolean,
     onSelect?: (val: string, index?: number) => void, 
     onSubmitForm?: (data: any) => void,
     onSwitchMode?: (mode: "assistant" | "operations") => void,
@@ -300,7 +301,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
         )}
 
         {/* Action Buttons (e.g. Choices or Entity Selection) */}
-        {msg.role === "ai" && (choices || entitySelection) && (
+        {msg.role === "ai" && isLatest && (choices || entitySelection) && (
             <div className="flex flex-col gap-2 mt-1 ml-1 duration-300">
                 {(choices?.payload || entitySelection?.payload || []).map((opt: any, idx: number) => (
                     <button
@@ -1311,6 +1312,7 @@ export default function ChatWidget() {
                     <MessageBubble 
                       msg={msg} 
                       index={i}
+                      isLatest={i === messages.length - 1}
                       onSelect={handleChoiceSelect} 
                       onSubmitForm={handleFormSubmit} 
                       onSwitchMode={handleSwitchAndResend}

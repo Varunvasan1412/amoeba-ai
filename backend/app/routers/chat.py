@@ -328,21 +328,21 @@ async def websocket_endpoint(
                                     return
 
                                 # E. Route to Service
+                                # 1. FastPath Navigation (GLOBAL FOR ALL MODES)
+                                from app.services.fastpath_service import execute_fastpath
+                                fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id}, db_session=local_session)
+                                
+                                if fast_text:
+                                    ai_msg = ChatMessage(role="ai", content=fast_text, actions=fast_actions, client_id=client_id, session_id=s_id)
+                                    local_session.add(ai_msg)
+                                    await local_session.commit()
+                                    await websocket.send_json({"text": fast_text, "actions": fast_actions, "type": "chat_response"})
+                                    await websocket.send_json({"type": "done", "session_id": s_id})
+                                    return
+
                                 if mode == "operations":
                                     # Suppression: log_audit(client_id, "CHAT_MODE_OPERATIONS", ...)
                                     
-                                    # 1. FastPath
-                                    from app.services.fastpath_service import execute_fastpath
-                                    fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id}, db_session=local_session)
-                                    
-                                    if fast_text:
-                                        ai_msg = ChatMessage(role="ai", content=fast_text, actions=fast_actions, client_id=client_id, session_id=s_id)
-                                        local_session.add(ai_msg)
-                                        await local_session.commit()
-                                        await websocket.send_json({"text": fast_text, "actions": fast_actions, "type": "chat_response"})
-                                        await websocket.send_json({"type": "done", "session_id": s_id})
-                                        return
-
                                     # 2. CRUD Intent (CONTEXT AWARE)
                                     from app.services.intent_service import resolve_crud_intent
                                     from app.services.conversation_service import process_conversation, get_active_conversation
@@ -581,6 +581,22 @@ async def websocket_endpoint(
                                                     actions_list = []
                                                     if isinstance(result, dict) and "aggregate" in result:
                                                         response_text = f"**{friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
+                                                    elif isinstance(result, dict) and "records" in result:
+                                                        records = result["records"]
+                                                        if records:
+                                                            response_text = f"Found **{len(records)}** record(s) in **{friendly_name}**.{date_info}"
+                                                            headers = list(records[0].keys()) if records else []
+                                                            actions_list.append({
+                                                                "type": "data_table", 
+                                                                "payload": {
+                                                                    "title": friendly_name, 
+                                                                    "headers": headers,
+                                                                    "rows": records,
+                                                                    "total": len(records)
+                                                                }
+                                                            })
+                                                        else:
+                                                            response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
                                                     elif isinstance(result, list):
                                                         if result:
                                                             response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**.{date_info}"
@@ -591,13 +607,7 @@ async def websocket_endpoint(
                                                                     "title": friendly_name, 
                                                                     "headers": headers,
                                                                     "rows": result,
-                                                                    "total": len(result),
-                                                                    "query_payload": {
-                                                                        "table_name": table_name,
-                                                                        "filters": filters if filters else None,
-                                                                        "user_query": user_text,
-                                                                        "client_id": int(client_id)
-                                                                    }
+                                                                    "total": len(result)
                                                                 }
                                                             })
                                                         else:

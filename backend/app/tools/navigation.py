@@ -124,10 +124,46 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         
         # Check if ALL query tokens are present in the doc_tokens
         if query_tokens.issubset(doc_tokens):
-            # Prioritize matches where the Label is involved (avoid matching only parents)
             label_overlap = len(query_tokens.intersection(label_tokens))
             score = 100 + label_overlap
             scored_candidates.append((score, r))
+
+    # 3. SEMANTIC VECTOR MATCH (pgvector fallback for fastpath)
+    if not scored_candidates:
+        try:
+            import os
+            if os.getenv("OPENAI_API_KEY"):
+                from langchain_openai import OpenAIEmbeddings
+                from sqlmodel import select
+                from app.models.navigation import NavigationItem
+                
+                embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+                query_vector = await embedder.aembed_query(query)
+                
+                # Fetch top 5 vector matches
+                stmt = select(NavigationItem).where(
+                    NavigationItem.client_id == client_id,
+                    NavigationItem.embedding != None
+                ).order_by(NavigationItem.embedding.cosine_distance(query_vector)).limit(5)
+                
+                vec_res = await session.execute(stmt)
+                vec_items = vec_res.scalars().all()
+                
+                if vec_items:
+                    # Convert to the expected ambiguous_list format
+                    ambig_list = []
+                    for item in vec_items:
+                        ambig_list.append({
+                            "label": item.label,
+                            "path": item.path,
+                            "module": item.module,
+                            "is_custom": not item.is_discovered,
+                            "parents": [item.module] if item.module else []
+                        })
+                    print(f"🎯 [FastPath Vector Search] Found {len(ambig_list)} semantic matches for '{query}'")
+                    return None, ambig_list
+        except Exception as e:
+            print(f"⚠️ [FastPath Vector Search] Failed: {e}")
 
     # Sort by score desc
     scored_candidates.sort(key=lambda x: x[0], reverse=True)
@@ -135,13 +171,11 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     # Filter top tier
     if scored_candidates:
         best_score = scored_candidates[0][0]
-        # Keep all with the best score
         best_matches = [item[1] for item in scored_candidates if item[0] == best_score]
         
         if len(best_matches) == 1:
             return best_matches[0]["path"], None
         else:
-            # Deduplicate by path
             unique_best = []
             seen_paths = set()
             for m in best_matches:
@@ -153,9 +187,7 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                 return unique_best[0]["path"], None
             return None, unique_best
 
-    # ---------------------------------------------------------
-    # 3. SUBSTRING/FUZZY FALLBACK (Lower Priority)
-    # ---------------------------------------------------------
+    # 4. SUBSTRING/FUZZY FALLBACK
     substring_matches = []
     for r in processed_routes:
         if query.lower() in r["label"].lower():
@@ -164,7 +196,6 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     if len(substring_matches) == 1:
         return substring_matches[0]["path"], None
     if len(substring_matches) > 1:
-        # Deduplicate by path
         unique_sub = []
         seen_paths = set()
         for m in substring_matches:
@@ -174,24 +205,83 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         
         if len(unique_sub) == 1:
              return unique_sub[0]["path"], None
-        return None, unique_sub # Ambiguous substring
+        return None, unique_sub
         
+    # 5. DIFFLIB FUZZY MATCH (Final Fallback)
+    import difflib
+    all_labels = [r["label"] for r in processed_routes]
+    # We use a lower cutoff (0.5) to catch spaced words like "pre welding list" vs "preweldinglist"
+    fuzzy_results = difflib.get_close_matches(query.lower(), [l.lower() for l in all_labels], n=5, cutoff=0.5)
+    
+    if fuzzy_results:
+        fuzzy_matches = []
+        seen_paths = set()
+        for fuzzy_label in fuzzy_results:
+            for r in processed_routes:
+                if r["label"].lower() == fuzzy_label:
+                    if r["path"] not in seen_paths:
+                        fuzzy_matches.append(r)
+                        seen_paths.add(r["path"])
+        
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]["path"], None
+        if len(fuzzy_matches) > 1:
+            return None, fuzzy_matches
+            
     return None, None
 
 
 async def lookup_external_route(query: str, session: AsyncSession, client_id: int) -> str:
     """
-    Tenant-Aware fallback search for a route.
+    Tenant-Aware fallback search for a route using pgvector and semantic search.
     """
-    routes = await load_client_sitemap(session, client_id)
+    import os
+    import json
+    from app.models.navigation import NavigationItem
+    
     query = query.lower().strip()
     
-    # 1. Exact Name/Label Match
+    # 1. Exact Name/Label Match (Fastest)
+    routes = await load_client_sitemap(session, client_id)
     for route in routes:
         if route["label"].lower() == query:
             return json.dumps([route])
             
-    # 2. Scored Matching
+    # 2. Vector Semantic Search (pgvector)
+    vector_matches = []
+    embedder = None
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+            query_vector = await embedder.aembed_query(query)
+            
+            # Perform pgvector cosine distance search
+            # Order by smallest distance (closest match)
+            stmt = select(NavigationItem).where(
+                NavigationItem.client_id == client_id,
+                NavigationItem.embedding != None
+            ).order_by(NavigationItem.embedding.cosine_distance(query_vector)).limit(5)
+            
+            vec_res = await session.execute(stmt)
+            vec_items = vec_res.scalars().all()
+            
+            for item in vec_items:
+                vector_matches.append({
+                    "label": item.label,
+                    "path": item.path,
+                    "module": item.module,
+                    "is_custom": not item.is_discovered
+                })
+                
+            if vector_matches:
+                print(f"🎯 [Vector Search] Found {len(vector_matches)} semantic matches for '{query}'")
+                return json.dumps(vector_matches)
+                
+        except Exception as e:
+            print(f"⚠️ [Vector Search] Failed: {e}. Falling back to fuzzy matching.")
+
+    # 3. Scored Matching / Fuzzy Match (Fallback)
     scored_matches = []
     query_parts = set(query.split())
     
@@ -209,15 +299,9 @@ async def lookup_external_route(query: str, session: AsyncSession, client_id: in
         intersection = query_parts.intersection(label_parts)
         score += len(intersection) * 10
         
-        # C. Keyword Match
-        for kw in route.get("keywords", []):
-            if kw == query: score += 30
-            elif kw in query: score += 10
-            
         if score > 0:
             scored_matches.append({"route": route, "score": score})
 
-    # 3. Fuzzy Match (Difflib) - Fallback
     import difflib
     all_labels = [r["label"] for r in routes]
     fuzzy_results = difflib.get_close_matches(query, all_labels, n=3, cutoff=0.6)
@@ -273,9 +357,11 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
     """
     Bulk adds discovered routes to the database for a specific client.
     Enriches them with Module, Table Name, and Descriptive Labels using the Intelligence Engine.
+    Also generates pgvector embeddings for Semantic Vector Search.
     """
     from app.models.client_config import ClientConfig
     from app.services.onboarding import discover_tables
+    import os
     
     # 0. Fetch Client Config to get DB URL for table discovery
     client_stmt = select(ClientConfig).where(ClientConfig.id == client_id)
@@ -289,6 +375,15 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
             db_tables = [t["name"].lower() for t in tables_raw]
         except Exception as e:
             print(f"⚠️ [AUTO MAP] Could not discover tables for client {client_id}: {e}")
+
+    # Initialize OpenAI Embedder (for Vector Search)
+    embedder = None
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from langchain_openai import OpenAIEmbeddings
+            embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+        except Exception as e:
+            print(f"⚠️ [EMBEDDINGS] Could not initialize OpenAI Embedder: {e}")
 
     count = 0
     for item in new_routes:
@@ -317,18 +412,28 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
         existing = result.scalars().first()
         
         # 🧠 INTELLIGENCE ENGINE: Auto-Map Logic
-        if not existing or existing.module is None or existing.table_name is None:
+        if not existing or existing.module is None or existing.table_name is None or existing.embedding is None:
             module = infer_module_from_path(path)
             entity = infer_entity_keyword(path, label)
             matched_table = match_entity_to_table(entity, db_tables)
             better_label = generate_friendly_label(module, entity)
             
-            print(f"🧠 [AUTO MAP] path={path} → module={module}, table={matched_table}, label={better_label}")
+            # Generate Vector Embedding for Semantic Search
+            embedding_vector = None
+            if embedder:
+                search_text = f"Route: {better_label}. Module: {module or ''}. Path: {path}"
+                try:
+                    embedding_vector = await embedder.aembed_query(search_text)
+                except Exception as e:
+                    print(f"⚠️ [EMBEDDINGS] Error generating vector for {path}: {e}")
+            
+            print(f"🧠 [AUTO MAP] path={path} → module={module}, table={matched_table}, label={better_label}, vectorized={bool(embedding_vector)}")
 
             if existing:
                 # Only update if current data is missing (don't override manual config)
                 if existing.module is None: existing.module = module
                 if existing.table_name is None: existing.table_name = matched_table
+                if existing.embedding is None and embedding_vector: existing.embedding = embedding_vector
                 # Update label if it's too short or contains technical chars
                 if len(existing.label) < 5 or "_" in existing.label:
                     existing.label = better_label
@@ -339,13 +444,14 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
                     module=module,
                     table_name=matched_table,
                     client_id=client_id,
-                    is_discovered=True
+                    is_discovered=True,
+                    embedding=embedding_vector
                 )
                 session.add(new_item)
                 count += 1
             
     await session.commit()
-    return f"Learned {count} new routes for Client {client_id} (All enriched via Intelligence Engine)."
+    return f"Learned {count} new routes for Client {client_id} (Enriched via Intelligence Engine & pgvector)."
 
 # --- INTELLIGENCE ENGINE HELPERS ---
 

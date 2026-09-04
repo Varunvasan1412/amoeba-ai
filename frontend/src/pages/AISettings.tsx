@@ -74,7 +74,7 @@ export default function AISettings() {
 
     const providers = [
         { id: 'gemini', name: 'Google Gemini', icon: <Sparkles className="text-blue-500"/>, models: ['gemini-2.0-flash-lite', 'gemini-1.5-pro'] },
-        { id: 'openai', name: 'OpenAI GPT', icon: <Zap className="text-emerald-500"/>, models: ['gpt-4-turbo', 'gpt-3.5-turbo'] },
+        { id: 'openai', name: 'OpenAI GPT', icon: <Zap className="text-emerald-500"/>, models: ['gpt-4-turbo', 'gpt-3.5-turbo', 'gpt-5.6-luna'] },
         { id: 'ollama', name: 'Local Ollama', icon: <Terminal className="text-orange-500"/>, models: ['llama3:latest', 'llama3.2:latest', 'mistral', 'phi3'] },
     ];
 

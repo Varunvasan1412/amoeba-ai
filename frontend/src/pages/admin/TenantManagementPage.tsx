@@ -51,11 +51,31 @@ export default function TenantManagementPage() {
     }
   };
 
-  const copyToClipboard = (text: string, id: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-    toast.success("Copied to clipboard");
+  const copyToClipboard = async (text: string, id: number) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "absolute";
+        textArea.style.left = "-999999px";
+        document.body.prepend(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+        } catch (error) {
+          console.error("Fallback copy failed", error);
+        } finally {
+          textArea.remove();
+        }
+      }
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+      toast.success("Copied to clipboard");
+    } catch (err) {
+      toast.error("Failed to copy API key");
+    }
   };
 
   const handleCreateTenant = async (e: React.FormEvent) => {

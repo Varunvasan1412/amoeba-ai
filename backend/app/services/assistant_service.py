@@ -117,8 +117,28 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
             nav_match = re.search(r"\[NAVIGATE:\s*(.*?)\]", content)
             if nav_match:
                 path = nav_match.group(1).strip()
-                pending_actions.append({"type": "NAVIGATE", "payload": path})
-                content = content.replace(nav_match.group(0), "").strip()
+                # 🛡️ VALIDATE URL AGAINST DATABASE TO PREVENT 404 HALLUCINATIONS
+                from app.models.navigation import NavigationItem
+                from sqlmodel import select
+                
+                clean_path = path.split("?")[0].strip("/")
+                stmt = select(NavigationItem).where(NavigationItem.client_id == client_id)
+                res = await session.execute(stmt)
+                valid_items = res.scalars().all()
+                
+                is_valid = False
+                for item in valid_items:
+                    item_clean = item.path.split("?")[0].strip("/")
+                    if item_clean.endswith(clean_path) or clean_path.endswith(item_clean):
+                        is_valid = True
+                        break
+                        
+                if is_valid:
+                    pending_actions.append({"type": "NAVIGATE", "payload": path})
+                    content = content.replace(nav_match.group(0), "").strip()
+                else:
+                    print(f"🛑 [Assistant] Blocked invalid navigation attempt to: {path}")
+                    content = content.replace(nav_match.group(0), "\n\n⚠️ *I tried to navigate, but could not find an exact match for that page in the database. Please select an option directly from the menu.*").strip()
 
         # 6. Structured Sources & Confidence
         doc_results = retrieval_results.get("documents", [])

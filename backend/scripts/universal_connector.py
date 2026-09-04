@@ -13,7 +13,7 @@ from urllib.error import URLError
 # ==========================================
 
 # CONFIGURATION
-AMOEBA_API_URL = "http://187.52.122.56:8000/api/routes/learn" 
+AMOEBA_API_URL = "http://localhost:8000/api/routes/learn" 
 IGNORE_DIRS = {'.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 'coverage'}
 
 def simple_title_case(s):

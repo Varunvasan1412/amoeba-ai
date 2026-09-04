@@ -64,13 +64,24 @@ def normalize_entity_name(name: Optional[str]) -> str:
         
     return name
 
-async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession, history: list = [], mode: str = "operations") -> Optional[Dict[str, Any]]:
+async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession, history: list = None, mode: str = "assistant") -> dict:
     """
-    Detects CRUD intent and resolves entity. 
+    Analyzes user intent and resolves the target entity (database table) if applicable.
+    Returns: {"intent": "read|create|update|delete|inquiry|navigate|unknown", "entity": "table_name_or_none", "url": "path_or_none"}
     Accepts optional history for context-aware pronoun resolution (e.g., "take me there").
     'mode' determines if we treat "how to" as an inquiry (Assistant) or an action (Operations).
     """
     query_lower = query.lower().strip()
+
+    # --- CONTEXT-AWARE DISAMBIGUATION GUARD ---
+    # If the AI just asked a disambiguation question, do not intercept as CRUD
+    if history:
+        last_ai_msg = [m for m in history if (m.get("role") if isinstance(m, dict) else getattr(m, "role", "user")) in ["ai", "assistant"]]
+        if last_ai_msg:
+            last_ai_content = last_ai_msg[-1].get("content", "") if isinstance(last_ai_msg[-1], dict) else getattr(last_ai_msg[-1], "content", "")
+            if "Which" in last_ai_content and "would you like" in last_ai_content:
+                print("🛡️ [INTENT] User is answering a disambiguation prompt. Forcing navigation intent.")
+                return {"intent": "navigate", "url": None, "entity": None}
 
     # --- INQUIRY DETECTION ---
     # Patterns that are PURE inquiries (always guide, never act)
@@ -356,6 +367,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             # Since the user query might be a full sentence (e.g. "show me stock where > 10"),
             # standard difflib over the whole sentence fails. We will check if the table name 
             # closely matches any sub-phrase of the query.
+
             query_words = norm_query.split()
             
             # Check Semantic Metadata first

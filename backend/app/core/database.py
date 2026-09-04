@@ -124,6 +124,17 @@ async def init_db():
         except Exception as e:
             logger.warning(f"FieldMetadata migration notice: {e}")
 
+        # 4. Update 'navigationitem' table (pgvector)
+        try:
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'navigationitem' AND column_name = 'embedding'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE navigationitem ADD COLUMN embedding vector(1536)"))
+                print("  ✅ Added 'embedding' vector column to navigationitem")
+        except Exception as e:
+            print(f"NavigationItem migration notice: {e}")
+
     # Seed RBAC Data
     from app.services.rbac_service import seed_rbac_data
     await seed_rbac_data()
