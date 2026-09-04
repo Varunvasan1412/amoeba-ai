@@ -48,17 +48,38 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
 
     # 1. Get Schema Context
     schema_definitions = await get_relevant_schemas(user_query, client_id, session)
-    schema_context = "\n\n".join(schema_definitions)
     # 1.5 Get Codebase Semantic Mappings
     from app.models.semantic_mapping import SemanticMapping
     semantics_res = await session.execute(select(SemanticMapping).where(SemanticMapping.client_id == client_id))
     semantics = semantics_res.scalars().all()
     
     semantic_context = ""
+    semantic_tables = []
     if semantics:
         semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
         for s in semantics:
             semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}' (Found in {s.source_file})\n"
+            semantic_tables.append(s.database_table)
+            
+    # Force include target_table and semantic_tables in the schema context so the AI isn't blind
+    tables_to_force = set(semantic_tables)
+    if target_table:
+        tables_to_force.add(target_table)
+        
+    if tables_to_force:
+        from sqlmodel import col
+        force_res = await session.execute(
+            select(SchemaMetadata).where(
+                SchemaMetadata.client_id == client_id,
+                col(SchemaMetadata.table_name).in_(tables_to_force)
+            )
+        )
+        force_schemas = force_res.scalars().all()
+        for fs in force_schemas:
+            if fs.schema_definition not in schema_definitions:
+                schema_definitions.append(fs.schema_definition)
+                
+    schema_context = "\n\n".join(schema_definitions)
 
     # 2. Build LLM Prompt
     from langchain_openai import ChatOpenAI
