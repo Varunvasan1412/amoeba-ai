@@ -35,8 +35,8 @@ def is_export_intent(query: str) -> bool:
     ))
 
 def is_navigation_intent(query: str) -> bool:
-    # 1. Detect standard navigation verbs
-    nav_pattern = r"(?i)^(?:navigate|go|take me|open)(?:\s+to)?\s+(.+)$"
+    # 1. Detect standard navigation verbs (can be anywhere in the sentence)
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|open)\s+(.+)$"
     if re.search(nav_pattern, query.strip()):
         return True
     
@@ -55,10 +55,16 @@ def extract_nav_target(query: str) -> str:
         return query.split("->")[-1].strip()
         
     # 2. Clean standard navigation verbs
-    nav_pattern = r"(?i)^(?:navigate|go|take me|open)(?:\s+to)?\s+(.+)$"
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|open)\s+(.+)$"
     match = re.search(nav_pattern, query.strip())
     if match:
-        return match.group(1).strip()
+        target = match.group(2).strip()
+        # Remove common trailing punctuation
+        target = re.sub(r"[?.!]+$", "", target).strip()
+        # Remove common "the " or " page" wrapping if present
+        target = re.sub(r"(?i)^(the\s+)", "", target).strip()
+        target = re.sub(r"(?i)(\s+page)$", "", target).strip()
+        return target
         
     return query.strip()
 

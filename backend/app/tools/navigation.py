@@ -150,18 +150,27 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                 vec_items = vec_res.scalars().all()
                 
                 if vec_items:
-                    # Convert to the expected ambiguous_list format
-                    ambig_list = []
+                    # Convert to the expected ambiguous_list format and deduplicate
+                    unique_vec = []
+                    seen_paths = set()
+                    
                     for item in vec_items:
-                        ambig_list.append({
-                            "label": item.label,
-                            "path": item.path,
-                            "module": item.module,
-                            "is_custom": not item.is_discovered,
-                            "parents": [item.module] if item.module else []
-                        })
-                    print(f"🎯 [FastPath Vector Search] Found {len(ambig_list)} semantic matches for '{query}'")
-                    return None, ambig_list
+                        if item.path not in seen_paths:
+                            unique_vec.append({
+                                "label": item.label,
+                                "path": item.path,
+                                "module": item.module,
+                                "is_custom": not item.is_discovered,
+                                "parents": [item.module] if item.module else []
+                            })
+                            seen_paths.add(item.path)
+                            
+                    print(f"🎯 [FastPath Vector Search] Found {len(unique_vec)} unique semantic matches for '{query}'")
+                    
+                    if len(unique_vec) == 1:
+                        return unique_vec[0]["path"], None
+                    elif len(unique_vec) > 1:
+                        return None, unique_vec
         except Exception as e:
             print(f"⚠️ [FastPath Vector Search] Failed: {e}")
 
