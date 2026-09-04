@@ -91,11 +91,16 @@ const MessageBubble = memo(({ msg, index, isLatest, onSelect, onSubmitForm, onSw
     }
   }, [viewingSource]);
 
+  const hasDataTable = !!dataTable;
+  const bubbleWidth = msg.role === "user" ? "max-w-[85%]" : hasDataTable ? "max-w-[95%] w-full" : "max-w-[85%]";
+
   return (
-    <div className={`flex flex-col gap-2 max-w-[85%] ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
+    <div className={`flex flex-col gap-2 min-w-0 max-w-full ${bubbleWidth} ${msg.role === "user" ? "self-end items-end" : "self-start items-start"}`}> 
         {/* Main Text Bubble */}
         <div
-        className={`p-3.5 rounded-2xl text-sm shadow-sm break-words leading-relaxed transition-theme ${
+        className={`p-3.5 rounded-2xl text-sm shadow-sm break-words leading-relaxed transition-theme min-w-0 max-w-full overflow-visible ${
+            hasDataTable ? "w-full" : ""
+        } ${
             msg.role === "user"
             ? "bg-blue-600 text-white rounded-br-sm" 
             : darkMode 
@@ -1286,7 +1291,7 @@ export default function ChatWidget() {
           </div>
 
           {/* Messages Area */}
-          <div className={`flex-1 p-4 overflow-y-auto overflow-x-hidden flex flex-col gap-3 scrollbar-custom transition-colors transition-theme ${darkMode ? 'bg-gray-950' : 'bg-gray-50'}`}>
+          <div className={`flex-1 p-4 overflow-y-auto overflow-x-hidden min-w-0 min-h-0 flex flex-col gap-3 scrollbar-custom transition-colors transition-theme ${darkMode ? 'bg-gray-950' : 'bg-gray-50'}`}>
             {isLoadingHistory ? (
               <div className="flex flex-col items-center justify-center h-full gap-2">
                 <Loader2 className="animate-spin text-blue-500" size={32} />
