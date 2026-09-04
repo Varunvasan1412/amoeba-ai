@@ -38,7 +38,7 @@ class ClientConfig(SQLModel, table=True):
     feature_security_enabled: bool = Field(default=True)
     
     # --- SCHEMA RAG ENGINE (Option B) ---
-    schema_rag_enabled: bool = Field(default=False)
+    schema_rag_enabled: bool = Field(default=True)
     schema_synced: bool = Field(default=False)
 
     # Onboarding Status
