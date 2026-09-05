@@ -170,17 +170,32 @@ def scan_codebase_for_semantics(root_path):
             try:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                    tables_found = set(table_regex.findall(content))
-                    tables_found = {t.lower() for t in tables_found if len(t) > 2 and t.lower() not in ['this', 'select', 'where', 'set']}
+                    raw_tables = table_regex.findall(content)
+                    valid_tables = [t.lower() for t in raw_tables if len(t) > 2 and t.lower() not in ['this', 'select', 'where', 'set']]
                     
-                    if tables_found:
+                    if valid_tables:
+                        from collections import Counter
+                        # Only take the most frequently referenced table as the primary mapping for this UI page
+                        most_common_table = Counter(valid_tables).most_common(1)[0][0]
                         label = simple_title_case(file)
-                        for t in tables_found:
-                            semantics.append({
-                                "ui_label": label,
-                                "database_table": t,
-                                "source_file": file
-                            })
+                        
+                        # Extract HTML table headers (<th>) to give the AI context on what is physically displayed
+                        th_regex = re.compile(r'<th[^>]*>(.*?)</th>', re.IGNORECASE | re.DOTALL)
+                        headers_found = th_regex.findall(content)
+                        clean_headers = []
+                        for h in headers_found:
+                            clean_h = re.sub(r'<[^>]+>', '', h).strip()
+                            if clean_h and len(clean_h) > 1:
+                                clean_headers.append(clean_h)
+                                
+                        ui_columns_str = ", ".join(clean_headers[:15]) if clean_headers else None
+                        
+                        semantics.append({
+                            "ui_label": label,
+                            "database_table": most_common_table,
+                            "source_file": file,
+                            "ui_columns": ui_columns_str
+                        })
             except Exception:
                 pass
                 

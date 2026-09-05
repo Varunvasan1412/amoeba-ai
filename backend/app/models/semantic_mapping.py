@@ -7,3 +7,4 @@ class SemanticMapping(SQLModel, table=True):
     ui_label: str = Field(index=True)
     database_table: str = Field(index=True)
     source_file: Optional[str] = Field(default=None)
+    ui_columns: Optional[str] = Field(default=None)

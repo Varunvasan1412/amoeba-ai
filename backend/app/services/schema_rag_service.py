@@ -62,7 +62,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         if active_semantics:
             semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
             for s in active_semantics:
-                semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}' (Found in {s.source_file})\n"
+                cols_str = f" (Displayed Columns: {s.ui_columns})" if s.ui_columns else ""
+                semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}'{cols_str}\n"
                 semantic_tables.append(s.database_table)
                 
     # 1.6 Get Enum Mappings from SemanticMetadata

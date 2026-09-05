@@ -94,6 +94,7 @@ class SemanticItem(BaseModel):
     ui_label: str
     database_table: str
     source_file: str
+    ui_columns: Optional[str] = None
 
 @router.post("/semantic/sync")
 async def sync_semantic_endpoint(
@@ -125,7 +126,8 @@ async def sync_semantic_endpoint(
                 client_id=client.id,
                 ui_label=s.ui_label,
                 database_table=s.database_table,
-                source_file=s.source_file
+                source_file=s.source_file,
+                ui_columns=s.ui_columns
             )
             session.add(new_map)
             added += 1
