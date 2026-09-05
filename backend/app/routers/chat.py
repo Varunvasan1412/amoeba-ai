@@ -523,7 +523,11 @@ async def websocket_endpoint(
                                                         else:
                                                             response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**."
                                                     elif isinstance(result, (list, tuple)):
-                                                        response_text = f"No records found for your query."
+                                                        msg_text = rag_result.get("user_message", "")
+                                                        if msg_text:
+                                                            response_text = msg_text
+                                                        else:
+                                                            response_text = f"No records found for your query."
                                                     elif isinstance(result, str):
                                                         response_text = f"Database returned a response:\n{result}"
                                                     else:
