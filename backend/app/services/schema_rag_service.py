@@ -150,31 +150,35 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     user_message = ""
     sql_query = raw_content
     
-    if "<message>" in raw_content and "</message>" in raw_content:
-        parts = raw_content.split("</message>")
+    if "<message>" in sql_query and "</message>" in sql_query:
+        parts = sql_query.split("</message>")
         user_message = parts[0].replace("<message>", "").strip()
-        raw_content = parts[1].strip()
+        sql_query = parts[1].strip()
         
-    if "<thought>" in raw_content and "</thought>" in raw_content:
-        parts = raw_content.split("</thought>")
+    if "<thought>" in sql_query and "</thought>" in sql_query:
+        parts = sql_query.split("</thought>")
         thought_process = parts[0].replace("<thought>", "").strip()
         sql_query = parts[1].strip()
         print(f"🧠 [SCHEMA RAG THOUGHT]: {thought_process}")
     
     # Clean up markdown formatting
     if sql_query.startswith("```sql"):
-        sql_query = sql_query.replace("```sql", "").replace("```", "").strip()
+        sql_query = sql_query.replace("```sql", "").strip()
     if sql_query.startswith("```"):
         sql_query = sql_query.replace("```", "").strip()
+    if sql_query.endswith("```"):
+        sql_query = sql_query[:-3].strip()
         
     print(f"🧠 [SCHEMA RAG] Generated SQL: {sql_query}")
     
     # 4. Execute SQL
-    # Security: Ensure it's a SELECT query
-    if not sql_query.lower().startswith("select"):
-         raise Exception("Generated query was not a SELECT statement. Operation blocked.")
-         
-    try:
+    records = []
+    if sql_query:
+        # Security: Ensure it's a SELECT query
+        if not sql_query.lower().startswith("select"):
+             raise Exception("Generated query was not a SELECT statement. Operation blocked.")
+             
+        try:
         # execute_sql_query uses the global connection in the current tool, 
         # but we should temporarily set it to the client's DB url if it's tenant-aware
         from app.core.context import current_db_url
@@ -184,15 +188,15 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         finally:
             current_db_url.reset(token)
             
-        if isinstance(records, str) and "Error" in records:
-            print(f"Schema RAG execution failed: {records}")
-            records = []
+            if isinstance(records, str) and "Error" in records:
+                print(f"Schema RAG execution failed: {records}")
+                records = []
+        except Exception as e:
+            raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")
             
-        return {
-            "generated_sql": sql_query,
-            "records": records,
-            "thought_process": thought_process,
-            "user_message": user_message
-        }
-    except Exception as e:
-        raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")
+    return {
+        "generated_sql": sql_query,
+        "records": records,
+        "thought_process": thought_process,
+        "user_message": user_message
+    }
