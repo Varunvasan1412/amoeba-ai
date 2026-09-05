@@ -96,6 +96,17 @@ async def init_db():
         except Exception as e:
             logger.warning(f"SemanticMetadata migration notice: {e}")
 
+        # 1.6 Update 'semanticmapping' table
+        try:
+            # Check for ui_columns column
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'semanticmapping' AND column_name = 'ui_columns'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN ui_columns VARCHAR"))
+        except Exception as e:
+            logger.warning(f"SemanticMapping migration notice: {e}")
+
         # 2. Update 'clientconfig' table
         try:
             # Check for company_code
