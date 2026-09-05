@@ -527,7 +527,7 @@ async def websocket_endpoint(
                                                         if msg_text:
                                                             response_text = msg_text
                                                         else:
-                                                            response_text = f"No records found for your query."
+                                                            response_text = f"No records found for your query.\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>"
                                                     elif isinstance(result, str):
                                                         response_text = f"Database returned a response:\n{result}"
                                                     else:
