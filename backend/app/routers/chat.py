@@ -21,7 +21,7 @@ import traceback
 from app.services.llm_service import get_response
 from app.core.context import current_db_url
 from app.tools.navigation import batch_learn_routes
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.core.database import get_session
 from app.models.chat import ChatMessage
