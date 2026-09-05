@@ -179,15 +179,15 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
              raise Exception("Generated query was not a SELECT statement. Operation blocked.")
              
         try:
-        # execute_sql_query uses the global connection in the current tool, 
-        # but we should temporarily set it to the client's DB url if it's tenant-aware
-        from app.core.context import current_db_url
-        token = current_db_url.set(client_config.db_connection_url)
-        try:
-            records = await execute_sql_query(sql_query)
-        finally:
-            current_db_url.reset(token)
-            
+            # execute_sql_query uses the global connection in the current tool, 
+            # but we should temporarily set it to the client's DB url if it's tenant-aware
+            from app.core.context import current_db_url
+            token = current_db_url.set(client_config.db_connection_url)
+            try:
+                records = await execute_sql_query(sql_query)
+            finally:
+                current_db_url.reset(token)
+                
             if isinstance(records, str) and "Error" in records:
                 print(f"Schema RAG execution failed: {records}")
                 records = []
