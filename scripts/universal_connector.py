@@ -431,7 +431,9 @@ def scan_fullstack_semantics(root_path):
 
         handled_via_endpoints = False
         primary_pending_table = None
-        primary_pending_filters = []
+        primary_pending_filters = None
+        last_primary_table = None
+        last_ui_cols = None
 
         if discovered_endpoints:
             for idx, ep in enumerate(discovered_endpoints):
@@ -443,6 +445,7 @@ def scan_fullstack_semantics(root_path):
                 if c_data and c_data.get("tables"):
                     handled_via_endpoints = True
                     primary_table = choose_primary_table(c_data["tables"])
+                    last_primary_table = primary_table
                     
                     # Choose headers for this endpoint/tab
                     endpoint_headers = v["headers"]
@@ -457,6 +460,7 @@ def scan_fullstack_semantics(root_path):
                         ui_cols = f"{headers_str} [Filter: {filter_str}]".strip()
                     else:
                         ui_cols = headers_str if headers_str else None
+                    last_ui_cols = ui_cols
                         
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
@@ -487,7 +491,7 @@ def scan_fullstack_semantics(root_path):
                                 tab_match = f"{status_keyword.capitalize()} Inspection" if 'inspection' in v['ui_label'].lower() else f"{status_keyword.capitalize()} {v['ui_label']}"
                             break
                             
-                    if is_pending or idx == 0:
+                    if is_pending or primary_pending_table is None:
                         primary_pending_table = primary_table
                         primary_pending_filters = ui_cols
 
@@ -504,14 +508,15 @@ def scan_fullstack_semantics(root_path):
                     if len(method_label) >= 3:
                         add_endpoint_entry(method_label, primary_table, ui_cols)
 
-            # Assign default main view title to the primary/pending table
-            target_main_table = primary_pending_table if primary_pending_table else primary_table
-            main_cols = primary_pending_filters if primary_pending_filters else ui_cols
-            add_endpoint_entry(v["ui_label"], target_main_table, main_cols)
-            add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols)
-            base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
-            if base_label and base_label.lower() != v["ui_label"].lower():
-                add_endpoint_entry(base_label, target_main_table, main_cols)
+            if handled_via_endpoints:
+                # Assign default main view title to the primary/pending table
+                target_main_table = primary_pending_table if primary_pending_table else last_primary_table
+                main_cols = primary_pending_filters if primary_pending_filters else last_ui_cols
+                add_endpoint_entry(v["ui_label"], target_main_table, main_cols)
+                add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols)
+                base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
+                if base_label and base_label.lower() != v["ui_label"].lower():
+                    add_endpoint_entry(base_label, target_main_table, main_cols)
                             
         # If not handled via AJAX endpoints, fall back to View / Controller correlation
         if not handled_via_endpoints:
