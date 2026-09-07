@@ -252,6 +252,21 @@ def scan_fullstack_semantics(root_path):
                     class_name = os.path.splitext(file)[0].lower()
                     methods_in_file = {}
                     
+                    # Extract class-level table declarations (CodeIgniter var $table, Eloquent protected $table, Django db_table)
+                    class_default_tables = []
+                    for prop_m in re.finditer(r'(?:var|public|protected|private)\s+\$table\s*=\s*[\'"]([a-zA-Z0-9_]+)[\'"]', content, re.IGNORECASE):
+                        tbl = prop_m.group(1).lower()
+                        if tbl not in SQL_STOP_WORDS and len(tbl) > 2:
+                            class_default_tables.append(tbl)
+                    for prop_m in re.finditer(r'\$this->table\s*=\s*[\'"]([a-zA-Z0-9_]+)[\'"]', content, re.IGNORECASE):
+                        tbl = prop_m.group(1).lower()
+                        if tbl not in SQL_STOP_WORDS and len(tbl) > 2:
+                            class_default_tables.append(tbl)
+                    for prop_m in re.finditer(r'(?:db_table|__tablename__)\s*=\s*[\'"]([a-zA-Z0-9_]+)[\'"]', content, re.IGNORECASE):
+                        tbl = prop_m.group(1).lower()
+                        if tbl not in SQL_STOP_WORDS and len(tbl) > 2:
+                            class_default_tables.append(tbl)
+                    
                     for match in method_regex.finditer(content):
                         fn_name = match.group(1).lower()
                         fn_body = match.group(2)
@@ -262,6 +277,22 @@ def scan_fullstack_semantics(root_path):
                         raw_tables = table_regex.findall(fn_body)
                         clean_tables = [t.lower() for t in raw_tables if len(t) > 2 and t.lower() not in SQL_STOP_WORDS]
                         
+                        # If method references $this->table or is in a model with class-level table, inherit it
+                        if class_default_tables:
+                            if '$this->table' in fn_body or not clean_from:
+                                for dt in class_default_tables:
+                                    if dt not in clean_from:
+                                        clean_from.append(dt)
+                                    if dt not in clean_tables:
+                                        clean_tables.append(dt)
+                        
+                        raw_joins = []
+                        for j_m in re.finditer(r'->join\s*\(\s*[\'"]([a-zA-Z0-9_]+(?:\s+[a-zA-Z0-9_]+)?)[\'"]\s*,\s*[\'"]([^\'"]+)[\'"](?:\s*,\s*[\'"]([^\'"]+)[\'"])?', fn_body, re.IGNORECASE):
+                            j_table = j_m.group(1).strip()
+                            j_cond = j_m.group(2).strip()
+                            j_type = (j_m.group(3) or 'left').strip().upper()
+                            raw_joins.append(f"{j_type} JOIN {j_table} ON {j_cond}")
+                        
                         loaded_views = [v.replace('\\', '/').lower() for v in view_regex.findall(fn_body)]
                         subcalls = [s.lower() for s in subcall_regex.findall(fn_body)]
                         filters = extract_sql_filters(fn_body)
@@ -269,6 +300,7 @@ def scan_fullstack_semantics(root_path):
                         methods_in_file[fn_name] = {
                             "tables": clean_tables,
                             "from_tables": clean_from,
+                            "joins": raw_joins,
                             "views": loaded_views,
                             "subcalls": subcalls,
                             "filters": filters,
@@ -280,7 +312,8 @@ def scan_fullstack_semantics(root_path):
                         
                     controller_files[class_name] = {
                         "file": rel_path,
-                        "methods": methods_in_file
+                        "methods": methods_in_file,
+                        "default_tables": class_default_tables
                     }
                 except Exception: pass
 
@@ -301,6 +334,11 @@ def scan_fullstack_semantics(root_path):
                     for f in target_data.get("filters", []):
                         if f not in data["filters"]:
                             data["filters"].append(f)
+                    for j in target_data.get("joins", []):
+                        if "joins" not in data:
+                            data["joins"] = []
+                        if j not in data["joins"]:
+                            data["joins"].append(j)
 
     print(f"📊 Indexed {len(controller_files)} backend controllers/models ({len(controller_methods)} methods).")
 
@@ -465,9 +503,16 @@ def scan_fullstack_semantics(root_path):
         c_name = None
         for cn, c_info in controller_files.items():
             if cn in v["view_base"] or v["view_base"] in cn or any(cn in ep for ep in v["ajax_endpoints"]):
-                related_ctrl_methods = c_info["methods"]
+                related_ctrl_methods = dict(c_info["methods"])
                 related_ctrl_file = c_info["file"]
                 c_name = cn
+                # Also merge companion model methods & tables (e.g. quotation_model for quotation)
+                for comp_suffix in ['_model', 'model', '_mdl', 'mdl']:
+                    comp_name = f"{cn}{comp_suffix}"
+                    if comp_name in controller_files:
+                        for m_name, m_data in controller_files[comp_name]["methods"].items():
+                            if m_name not in related_ctrl_methods:
+                                related_ctrl_methods[m_name] = m_data
                 break
 
         handled_via_tabs = False
@@ -476,14 +521,17 @@ def scan_fullstack_semantics(root_path):
         last_primary_table = None
         last_ui_cols = None
 
-        def add_endpoint_entry(label_text, target_tbl, cols, src):
+        def add_endpoint_entry(label_text, target_tbl, cols, src, default_filter=None, base_query=None, required_joins=None):
             key = (label_text.lower(), target_tbl)
             if key not in seen and len(label_text) >= 3:
                 semantics.append({
                     "ui_label": label_text,
                     "database_table": target_tbl,
                     "source_file": f"{v['rel_path']} -> {src}",
-                    "ui_columns": cols
+                    "ui_columns": cols,
+                    "default_filter": default_filter,
+                    "base_query": base_query,
+                    "required_joins": required_joins
                 })
                 seen.add(key)
 
@@ -535,13 +583,17 @@ def scan_fullstack_semantics(root_path):
                         tab_cols = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                         last_ui_cols = tab_cols
                         
+                        joins_list = best_m_data.get("joins", [])
+                        joins_str = " ".join(joins_list) if joins_list else None
+                        base_query_str = f"SELECT * FROM {target_tbl} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {target_tbl} WHERE {filter_str}".strip() if filter_str else None)
+                        
                         source_ctrl = f"{best_m_data['file']}::{c_name}/{best_m_name}" if c_name else f"{best_m_data['file']}::{best_m_name}"
                         
-                        add_endpoint_entry(tab_name, target_tbl, tab_cols, source_ctrl)
-                        add_endpoint_entry(f"{tab_name} List", target_tbl, tab_cols, source_ctrl)
+                        add_endpoint_entry(tab_name, target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                        add_endpoint_entry(f"{tab_name} List", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
                         if v['ui_label'].lower() not in tab_name.lower():
-                            add_endpoint_entry(f"{v['ui_label']} {tab_name}", target_tbl, tab_cols, source_ctrl)
-                            add_endpoint_entry(f"{tab_name} {v['ui_label']}", target_tbl, tab_cols, source_ctrl)
+                            add_endpoint_entry(f"{v['ui_label']} {tab_name}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                            add_endpoint_entry(f"{tab_name} {v['ui_label']}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
                             
                         # Default active tab (Pending / First tab) represents the default screen view
                         if tab_idx == 0 or 'pending' in tab_l or primary_pending_table is None:
@@ -573,12 +625,19 @@ def scan_fullstack_semantics(root_path):
                     filter_str = " AND ".join(c_data.get("filters", []))
                     ui_cols = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                     
+                    joins_list = c_data.get("joins", [])
+                    joins_str = " ".join(joins_list) if joins_list else None
+                    base_query_str = f"SELECT * FROM {primary_table} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {primary_table} WHERE {filter_str}".strip() if filter_str else None)
+                    
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
                     clean_m = re.sub(r'(_json|_ajax|_data|_list)$', '', m_only, flags=re.IGNORECASE)
                     method_label = simple_title_case(clean_m)
                     if len(method_label) >= 3:
-                        add_endpoint_entry(method_label, primary_table, ui_cols, source_ctrl)
+                        add_endpoint_entry(method_label, primary_table, ui_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                        add_endpoint_entry(f"{method_label} List", primary_table, ui_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                        if v['ui_label'].lower() not in method_label.lower():
+                            add_endpoint_entry(f"{v['ui_label']} {method_label}", primary_table, ui_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
                         
                     if not primary_pending_table:
                         primary_pending_table = primary_table
@@ -602,6 +661,7 @@ def scan_fullstack_semantics(root_path):
             matched_tables = []
             source_controller = None
             extracted_filters = []
+            extracted_joins = []
             
             for fn_key, c_data in controller_methods.items():
                 for loaded_view in c_data["views"]:
@@ -609,6 +669,7 @@ def scan_fullstack_semantics(root_path):
                         if c_data["tables"]:
                             matched_tables.extend(c_data["tables"])
                             extracted_filters.extend(c_data.get("filters", []))
+                            extracted_joins.extend(c_data.get("joins", []))
                             source_controller = f"{c_data['file']}::{fn_key}"
                             break
                 if matched_tables:
@@ -621,6 +682,20 @@ def scan_fullstack_semantics(root_path):
                         for m in c_info["methods"].values():
                             all_c_tables.extend(m["tables"])
                             extracted_filters.extend(m.get("filters", []))
+                            extracted_joins.extend(m.get("joins", []))
+                        if c_info.get("default_tables"):
+                            all_c_tables.extend(c_info["default_tables"])
+                        # Also include companion model tables
+                        for comp_suffix in ['_model', 'model', '_mdl', 'mdl']:
+                            comp_name = f"{cn}{comp_suffix}"
+                            if comp_name in controller_files:
+                                comp_info = controller_files[comp_name]
+                                for m in comp_info["methods"].values():
+                                    all_c_tables.extend(m["tables"])
+                                    extracted_filters.extend(m.get("filters", []))
+                                    extracted_joins.extend(m.get("joins", []))
+                                if comp_info.get("default_tables"):
+                                    all_c_tables.extend(comp_info["default_tables"])
                         if all_c_tables:
                             matched_tables.extend(all_c_tables)
                             source_controller = c_info["file"]
@@ -637,7 +712,9 @@ def scan_fullstack_semantics(root_path):
             if matched_tables:
                 primary_table = choose_primary_table(matched_tables, headers=v["headers"])
                 headers_str = ", ".join(v["headers"]) if v["headers"] else ""
-                filter_str = " AND ".join(list(set(extracted_filters)))
+                filter_str = " AND ".join(list(set(extracted_filters))) if extracted_filters else ""
+                joins_str = " ".join(list(set(extracted_joins))) if extracted_joins else ""
+                base_query_str = f"SELECT * FROM {primary_table} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {primary_table} WHERE {filter_str}".strip() if filter_str else None)
                 ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                 
                 def add_semantic_entry(label_text):
@@ -647,7 +724,10 @@ def scan_fullstack_semantics(root_path):
                             "ui_label": label_text,
                             "database_table": primary_table,
                             "source_file": f"{v['rel_path']} -> {source_controller}" if source_controller else v["rel_path"],
-                            "ui_columns": ui_cols_str
+                            "ui_columns": ui_cols_str,
+                            "default_filter": filter_str or None,
+                            "base_query": base_query_str or None,
+                            "required_joins": joins_str or None
                         })
                         seen.add(key)
                 

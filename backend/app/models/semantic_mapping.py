@@ -8,3 +8,6 @@ class SemanticMapping(SQLModel, table=True):
     database_table: str = Field(index=True)
     source_file: Optional[str] = Field(default=None)
     ui_columns: Optional[str] = Field(default=None)
+    default_filter: Optional[str] = Field(default=None)
+    base_query: Optional[str] = Field(default=None)
+    required_joins: Optional[str] = Field(default=None)

@@ -102,6 +102,18 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                         cols_str = f"{cols_part} [Required Default Filter: {filter_expr}]"
                     else:
                         cols_str = f" (Displayed Columns: {s.ui_columns})"
+                        
+                extra_parts = []
+                if s.default_filter and "[Required Default Filter:" not in cols_str:
+                    extra_parts.append(f"[Required Default Filter: {s.default_filter}]")
+                if s.required_joins:
+                    extra_parts.append(f"[Mandatory Joins: {s.required_joins}]")
+                if s.base_query:
+                    extra_parts.append(f"[Controller Base Query Template: {s.base_query}]")
+                
+                if extra_parts:
+                    cols_str += " " + " ".join(extra_parts)
+                    
                 semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}'{cols_str}\n"
                 semantic_tables.append(s.database_table)
                 
@@ -170,12 +182,15 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         - NEVER switch to an entirely unrelated business entity (e.g. never query purchase orders when the user asks for quotations, sales, or customers).
     8. **MULTI-TABLE DEDUCTION**: If there are multiple candidate tables for a UI Term (e.g. parent vs child tables), choose the main parent table (usually without `_detail`, `_item`, or `_history`) that represents the business entity and has active rows.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
-    10. **DEFAULT FILTERS (CRITICAL)**: If a semantic mapping specifies a '[Required Default Filter: <condition>]' (such as `po.status = 1`, `grn.status = 1`, or `is_deleted = 0`):
-        - You MUST include that condition in your WHERE clause (for example: `WHERE po.status = 1`).
-        - If you alias the table in your FROM clause, ensure the table prefix in the filter matches your query's alias (or qualify it with the full table name).
-        - This filter is essential to match what the user's ERP web screen displays and avoid returning inactive, deleted, or cancelled records.
-        - If the filter references a related table (such as `gh` for `grn_header`), ensure you include the appropriate LEFT JOIN so the filter can be evaluated.
-        - However, ONLY apply the filter if the column referenced in the filter actually exists in the table or its joined tables according to the Schema Context below. If a column is not present in the schema, do not include it.
+    10. **CONTROLLER QUERY & DEFAULT FILTERS (CRITICAL - HIGHEST PRIORITY)**:
+        - If a semantic mapping specifies a '[Controller Base Query Template: <sql>]':
+          * You MUST base your SQL on that exact driving table, mandatory JOINs, and WHERE clause structure. This represents the exact query executed by the ERP controller for this screen!
+        - If a semantic mapping specifies '[Required Default Filter: <condition>]' (such as `eh.enquiry_status_id = 2 AND eh.log_status = 1`, `po.status = 1`, or `gh.status = 1`):
+          * You MUST include that condition in your WHERE clause.
+          * If the user specifies additional constraints in their question (e.g., date range, customer name, keyword), append them as additional AND conditions. NEVER omit or bypass the Required Default Filter!
+        - If a semantic mapping specifies '[Mandatory Joins: <joins>]' or if the filter references joined tables (such as `gh` for `grn_header` or `c` for `customer`):
+          * Ensure you include the appropriate LEFT JOIN so the filter and readable display columns can be evaluated.
+        - This rule ensures 200% exact alignment with the ERP frontend web screen and eliminates discrepancies between raw database rows and custom workflow screens.
     11. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
     12. **UNDERSTANDING USER INTENT**: The user's query refers to business entities or UI screens (such as "GRN Inspection", "Purchase Orders", "Quotations"). DO NOT treat the entity name as a column name! Query the matching table and select its primary displayed columns. Never output apologies about missing columns for the main entity name.
     13. **ENUM/STATUS MAPPING**: If a table has an integer column named `status` or `type`, DO NOT return raw numbers like 0 or 1. You MUST use a SQL CASE statement to map them to readable text. Use standard ERP conventions: For `status`, 1='Active', 0='Inactive'. For `type`, map 1='Standard', 0='Custom' or similar. Example: `CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END AS status`.

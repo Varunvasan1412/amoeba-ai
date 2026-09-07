@@ -95,6 +95,9 @@ class SemanticItem(BaseModel):
     database_table: str
     source_file: str
     ui_columns: Optional[str] = None
+    default_filter: Optional[str] = None
+    base_query: Optional[str] = None
+    required_joins: Optional[str] = None
 
 @router.post("/semantic/sync")
 async def sync_semantic_endpoint(
@@ -131,7 +134,10 @@ async def sync_semantic_endpoint(
                 ui_label=s.ui_label,
                 database_table=s.database_table,
                 source_file=s.source_file,
-                ui_columns=s.ui_columns
+                ui_columns=s.ui_columns,
+                default_filter=s.default_filter,
+                base_query=s.base_query,
+                required_joins=s.required_joins
             )
             session.add(new_map)
             added += 1

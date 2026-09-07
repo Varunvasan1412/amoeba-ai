@@ -104,6 +104,27 @@ async def init_db():
             ))
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN ui_columns VARCHAR"))
+                
+            # Check for default_filter column
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'semanticmapping' AND column_name = 'default_filter'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN default_filter VARCHAR"))
+                
+            # Check for base_query column
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'semanticmapping' AND column_name = 'base_query'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN base_query TEXT"))
+                
+            # Check for required_joins column
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'semanticmapping' AND column_name = 'required_joins'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN required_joins TEXT"))
         except Exception as e:
             logger.warning(f"SemanticMapping migration notice: {e}")
 
