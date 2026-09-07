@@ -181,6 +181,19 @@ def extract_sql_filters(code_snippet):
             filters.append(f"{col} = {val}")
         elif val.lower() in ['true', 'false', 'null']:
             filters.append(f"{col} IS {val.upper()}")
+
+    # Pattern 1B: ->where('col !=', val) or ->where('col >', val)
+    for m in re.finditer(r'->where\s*\(\s*[\'"]([a-zA-Z0-9_\.]+\s*(?:!=|<>|>|<|>=|<=))\s*[\'"]\s*,\s*[\'"]?([a-zA-Z0-9_]+)[\'"]?\s*\)', code_snippet, re.IGNORECASE):
+        col_op, val = m.group(1).strip(), m.group(2).strip()
+        if not val.startswith('$'):
+            filters.append(f"{col_op} {val}")
+
+    # Pattern 1C: Associative array ->where(array('po.status' => 1)) or ->where(['po.status' => 1])
+    for m in re.finditer(r'[\'"]([a-zA-Z0-9_\.]+)[\'"]\s*=>\s*[\'"]?([a-zA-Z0-9_]+)[\'"]?', code_snippet):
+        col, val = m.group(1).strip(), m.group(2).strip()
+        if any(k in col.lower() for k in ['status', 'deleted', 'active', 'state', 'type', 'inspection']):
+            if not val.startswith('$') and val.lower() not in ['true', 'false', 'null']:
+                filters.append(f"{col} = {val}")
             
     # Pattern 2: ->where('col = val') or ->where("po.status = 1") or ->where("is_deleted = 0")
     for m in re.finditer(r'->where\s*\(\s*[\'"]([a-zA-Z0-9_\.]+\s*(?:=|!=|<>|IS)\s*[^$\'"]+?)[\'"]\s*\)', code_snippet, re.IGNORECASE):
@@ -191,7 +204,7 @@ def extract_sql_filters(code_snippet):
     # Pattern 3: Raw SQL WHERE conditions for status, active, deleted flags
     for m in re.finditer(r'\b(?:WHERE|AND)\s+([a-zA-Z0-9_\.]+\s*(?:=|!=|<>)\s*(?:[0-9]+|\'[a-zA-Z0-9_]+\'))\b', code_snippet, re.IGNORECASE):
         cond = m.group(1).strip()
-        if any(k in cond.lower() for k in ['status', 'deleted', 'active', 'state', 'type']):
+        if any(k in cond.lower() for k in ['status', 'deleted', 'active', 'state', 'type', 'inspection']):
             filters.append(cond)
             
     # Pattern 4: Soft deletes ->whereNull('deleted_at')

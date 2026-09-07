@@ -77,6 +77,12 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             if overlap:
                 score += len(overlap) * 5
                 
+            # Tab affinity bonus
+            if ("pending" in query_lower and "pending" in label_lower) or ("completed" in query_lower and "completed" in label_lower):
+                score += 20
+            elif ("pending" in query_lower and "completed" in label_lower) or ("completed" in query_lower and "pending" in label_lower):
+                score -= 30
+                
             if score > 0:
                 scored_semantics.append((score, s))
                 
