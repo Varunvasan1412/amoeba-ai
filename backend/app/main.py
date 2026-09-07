@@ -154,6 +154,21 @@ if ENABLE_SEMANTIC_LAYER:
     app.include_router(relationships.router, prefix="/api")
     app.include_router(relationships_bulk.router, prefix="/api")
 
+from fastapi.responses import JSONResponse, FileResponse
+
+@app.get("/api/connector/download")
+def download_connector():
+    possible_paths = [
+        os.path.join(os.getcwd(), "scripts", "universal_connector.py"),
+        os.path.join(os.getcwd(), "backend", "scripts", "universal_connector.py"),
+        os.path.abspath("scripts/universal_connector.py"),
+        os.path.abspath("backend/scripts/universal_connector.py")
+    ]
+    for p in possible_paths:
+        if os.path.exists(p):
+            return FileResponse(p, filename="universal_connector.py", media_type="text/x-python")
+    return JSONResponse(status_code=404, content={"detail": "Connector script not found"})
+
 @app.get("/")
 def read_root():
     return {"status": "Amoeba AI is active"}

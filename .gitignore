@@ -162,7 +162,6 @@ backend/*.log
 # Debug / One-off Scripts (root)
 /debug_connection.py
 /test_get_clients.py
-/universal_connector.py
 /verify_builder_live.py
 /verify_v2_live.py
 /diagnostic.md

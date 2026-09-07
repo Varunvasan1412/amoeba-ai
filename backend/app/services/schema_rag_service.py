@@ -50,6 +50,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     schema_definitions = await get_relevant_schemas(user_query, client_id, session)
     # 1.5 Get Codebase Semantic Mappings
     from app.models.semantic_mapping import SemanticMapping
+    import re
     semantics_res = await session.execute(select(SemanticMapping).where(SemanticMapping.client_id == client_id))
     semantics = semantics_res.scalars().all()
     
@@ -57,7 +58,29 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     semantic_tables = []
     if semantics:
         query_lower = user_query.lower()
-        active_semantics = [s for s in semantics if s.ui_label.lower() in query_lower]
+        stop_words = {"list", "show", "get", "fetch", "find", "the", "all", "me", "from", "in", "of", "to", "for", "please", "can", "you", "a", "an", "records", "data", "details"}
+        query_tokens = set(re.findall(r'[a-zA-Z0-9_]+', query_lower)) - stop_words
+        
+        scored_semantics = []
+        for s in semantics:
+            label_lower = s.ui_label.lower()
+            label_tokens = set(re.findall(r'[a-zA-Z0-9_]+', label_lower)) - stop_words
+            
+            score = 0
+            if label_lower in query_lower:
+                score += 15 + len(label_lower)
+            elif query_lower in label_lower:
+                score += 8
+                
+            overlap = query_tokens.intersection(label_tokens)
+            if overlap:
+                score += len(overlap) * 5
+                
+            if score > 0:
+                scored_semantics.append((score, s))
+                
+        scored_semantics.sort(key=lambda x: x[0], reverse=True)
+        active_semantics = [s for _, s in scored_semantics[:6]]
         
         if active_semantics:
             semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
@@ -124,8 +147,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     4. You must output your thought process in a <thought> block before the SQL query. Evaluate which tables match the user's query, check their Row Counts, and check the Semantic Mappings. After the </thought> block, output ONLY the SELECT statement.
     5. The system guessed they are asking about this table: '{target_table}'. HOWEVER, this guess is often wrong. You must evaluate the Row Counts and Semantic Mappings to find the true table.
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
-    7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that table instead of the guessed table.
-    8. **ABSOLUTE RULE**: If there are multiple semantic mappings for a UI Term, you must logically deduce the primary main table (e.g. usually the one without '_detail' or the one that represents the core object) and query that table.
+    7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that mapped table instead of the guessed table or any similarly named schema table (for example, if the user asks for "GRN Inspection" and the semantic mapping specifies table 'purchase_order', query 'purchase_order' and NOT 'grn_inspection_header').
+    8. **ABSOLUTE RULE**: If there are multiple semantic mappings for a UI Term, you must logically deduce the primary main table (e.g. usually the one without '_detail' or the one that represents the core object) and query that table. Use the Displayed Columns listed in the mapping to guide which columns to include in your SELECT clause.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
     10. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
     11. **MISSING DATA**: If the user specifically asks for a column (like "date", "status", etc) but that column physically DOES NOT EXIST in the schema for the table you are querying, you MUST output a brief apology inside a <message> block before the <thought> block. Example: <message>I cannot show the date because the Bank table does not have a date column.</message>
