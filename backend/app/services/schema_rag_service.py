@@ -59,7 +59,11 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     semantic_tables = []
     if semantics:
         query_lower = user_query.lower()
-        stop_words = {"list", "show", "get", "fetch", "find", "the", "all", "me", "from", "in", "of", "to", "for", "please", "can", "you", "a", "an", "records", "data", "details"}
+        stop_words = {
+            "list", "show", "get", "fetch", "find", "the", "all", "me", "from", "in", "of", "to", "for", 
+            "please", "can", "you", "a", "an", "records", "data", "details", "total", "count", "sum", 
+            "number", "how", "many", "much", "want", "just", "no", "yes", "i", "entries", "rows"
+        }
         query_tokens = set(re.findall(r'[a-zA-Z0-9_]+', query_lower)) - stop_words
         
         scored_semantics = []

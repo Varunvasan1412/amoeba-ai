@@ -17,6 +17,19 @@ INTENT_MAP = {
     "read": ["list", "view", "get", "fetch", "display", "show", "search"]
 }
 
+NON_ENTITY_WORDS = {
+    # Conversational fillers & request framing
+    "no", "yes", "i", "just", "want", "need", "give", "can", "you", "please", "would", 
+    "like", "to", "see", "know", "tell", "me", "the", "a", "an", "of", "in", "for", 
+    "at", "from", "on", "by", "with", "about", "what", "which", "is", "are", "was", "were",
+    "hey", "hi", "hello", "now", "so", "then", "also", "only", "there", "here",
+    # SQL aggregations & metrics (NEVER match these to table names like master_country!)
+    "total", "count", "sum", "average", "avg", "min", "max", "number", "qty", "quantity", 
+    "amount", "value", "rate", "cost", "price", "figure", "figures", "how", "many", "much",
+    # Generic entity placeholders
+    "table", "tables", "record", "records", "data", "row", "rows", "entries", "entry", "item", "items"
+}
+
 def normalize_entity_name(name: Optional[str]) -> str:
     """Removes common prefixes/suffixes and singularizes basic plurals."""
     if not name:
@@ -219,6 +232,13 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         if reduced_query != norm_query:
             candidate_queries.append(reduced_query)
 
+        # Add clean query without fillers and SQL aggregation keywords (e.g. "total sales count" -> "sales")
+        clean_words = [w for w in words if w not in NON_ENTITY_WORDS]
+        if clean_words:
+            clean_query = " ".join(clean_words)
+            if clean_query not in candidate_queries:
+                candidate_queries.insert(0, clean_query) # Prioritize clean query!
+
         # =========================================================================
         # STRATEGY 0A: Codebase Semantic Mapping Match (HIGHEST PRIORITY)
         # Ground truth extracted directly from actual PHP/MVC controllers, views, tabs, and database queries.
@@ -230,7 +250,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             sm_all = sm_res.scalars().all()
             
             clean_q = norm_query.replace("_", " ").lower()
-            q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - {"list", "show", "get", "fetch", "the", "all", "of", "in"}
+            q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - NON_ENTITY_WORDS
             
             best_sm = None
             best_sm_score = 0
@@ -423,8 +443,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     sz = len(sem_words)
                     for i in range(len(query_words) - sz + 1):
                         sub_phrase = " ".join(query_words[i:i+sz])
+                        if sub_phrase in NON_ENTITY_WORDS or len(sub_phrase) < 4:
+                            continue
                         ratio = difflib.SequenceMatcher(None, sub_phrase, sem_norm).ratio()
-                        if ratio > best_ratio:
+                        min_ratio = 0.88 if len(sub_phrase) < 6 else 0.80
+                        if ratio > best_ratio and ratio >= min_ratio:
                             best_ratio = ratio
                             best_table = sem.table_name
             
@@ -437,12 +460,15 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     # Create moving window of same length
                     for i in range(len(query_words) - sz + 1):
                         sub_phrase = " ".join(query_words[i:i+sz])
+                        if sub_phrase in NON_ENTITY_WORDS or len(sub_phrase) < 4:
+                            continue
                         ratio = difflib.SequenceMatcher(None, sub_phrase, t_norm).ratio()
-                        if ratio > best_ratio:
+                        min_ratio = 0.88 if len(sub_phrase) < 6 else 0.80
+                        if ratio > best_ratio and ratio >= min_ratio:
                             best_ratio = ratio
                             best_table = t["name"]
                     
-            if best_ratio > 0.8: # high strictness for substrings
+            if best_ratio >= 0.80 and best_table:
                 detected_entity = best_table
                 detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                 print(f"🎯 [INTENT] Fuzzy subphrase match found: '{norm_query}' -> {best_table} (ratio: {best_ratio:.2f})")
