@@ -179,6 +179,13 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     12. **UNDERSTANDING USER INTENT**: The user's query refers to business entities or UI screens (such as "GRN Inspection", "Purchase Orders", "Quotations"). DO NOT treat the entity name as a column name! Query the matching table and select its primary displayed columns. Never output apologies about missing columns for the main entity name.
     13. **ENUM/STATUS MAPPING**: If a table has an integer column named `status` or `type`, DO NOT return raw numbers like 0 or 1. You MUST use a SQL CASE statement to map them to readable text. Use standard ERP conventions: For `status`, 1='Active', 0='Inactive'. For `type`, map 1='Standard', 0='Custom' or similar. Example: `CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END AS status`.
     14. **ALWAYS OUTPUT A SELECT STATEMENT**: You must ALWAYS generate a complete, valid SELECT query. NEVER refuse to write a query and NEVER output messages claiming no data exists. Let the database execute the query.
+    15. **WORKFLOW LIFECYCLE & STATUS AWARENESS (UNIVERSAL ACROSS ALL MODULES)**:
+        - When a user asks for 'Pending', 'Active', 'Draft', 'Approved', 'Completed', 'Cancelled', or 'Closed' records for ANY business entity (such as Quotations, Sales Orders, Purchase Orders, Invoices, Delivery Challans, Payments, or Inspections):
+          * Check the ENUM MAPPINGS and CODEBASE SEMANTIC MAPPINGS for the corresponding status column (e.g. `status`, `approval_status`, `order_status_id`, `state`).
+          * If the user asks for 'Pending' records of an entity that progresses into a downstream receiving or approval stage: ensure completed records (e.g. status=2 or companion receiving note status=2) are excluded, and only active/pending records (status=1 or downstream status IS NULL / 1) are returned.
+          * If the user asks for 'Completed' or 'Approved' records: match the status value indicating completion (e.g. status=2 or approval_status=1).
+          * If the user asks for 'Draft' records: match status=0 or draft status.
+          * If the user asks for 'Cancelled' or 'Inactive' records: match status=0 or cancelled status.
 
     {semantic_context}
 
