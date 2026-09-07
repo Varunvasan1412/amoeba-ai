@@ -348,10 +348,33 @@ def scan_fullstack_semantics(root_path):
                     if ct and len(ct) > 2 and len(ct) < 60 and not ct.startswith('$') and not ct.startswith('<?'):
                         titles.append(ct)
                         
-                # Extract AJAX endpoints
+                # Extract AJAX endpoints using multi-pattern scanning
                 ajax_endpoints = []
-                for c_name, m_name in ajax_regex.findall(content):
-                    ajax_endpoints.append(f"{c_name.lower()}/{m_name.lower()}")
+                seen_eps = set()
+                
+                # Pattern 1: base_url('controller/method') or site_url('controller/method')
+                for c, m in re.findall(r'(?:base_url|site_url)\s*\(\s*[\'"]/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]+)[\'"]', content, re.I):
+                    if c.lower() not in ['assets', 'static', 'plugins', 'css', 'js', 'images', 'vendor', 'dist']:
+                        ep = f"{c.lower()}/{m.lower()}"
+                        if ep not in seen_eps:
+                            ajax_endpoints.append(ep)
+                            seen_eps.add(ep)
+                            
+                # Pattern 2: url/ajax: "<?= base_url(...) ?>/controller/method" or "controller/method"
+                for c, m in re.findall(r'(?:url|ajax|data-url|action)\s*(?::|=)\s*[\'"]?(?:<\?php\s+echo\s+|\<\?=\s*)?(?:base_url\([^)]*\)|site_url\([^)]*\))?[\s\.\'"]*/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]+)', content, re.I):
+                    if c.lower() not in ['http', 'https', 'window', 'document', 'location', 'assets', 'static', 'plugins', 'css', 'js']:
+                        ep = f"{c.lower()}/{m.lower()}"
+                        if ep not in seen_eps:
+                            ajax_endpoints.append(ep)
+                            seen_eps.add(ep)
+
+                # Pattern 3: Any quoted path with endpoint keywords
+                for c, m in re.findall(r'[\'"]/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]*(?:json|ajax|data|list|pending|completed|datatable)[a-zA-Z0-9_]*)[\'"]', content, re.I):
+                    if c.lower() not in ['http', 'https', 'assets', 'static', 'plugins', 'css', 'js', 'images', 'vendor', 'dist']:
+                        ep = f"{c.lower()}/{m.lower()}"
+                        if ep not in seen_eps:
+                            ajax_endpoints.append(ep)
+                            seen_eps.add(ep)
                     
                 ui_label = titles[0] if titles else simple_title_case(file)
                 view_key = os.path.splitext(rel_path)[0].lower()
@@ -385,10 +408,33 @@ def scan_fullstack_semantics(root_path):
         return Counter(chosen_pool).most_common(1)[0][0]
 
     for v in views:
-        # Multi-Endpoint / Multi-Tab Correlation
+        # Resolve companion controller for this view
+        related_ctrl_methods = {}
+        related_ctrl_file = None
+        for c_name, c_info in controller_files.items():
+            if c_name in v["view_base"] or v["view_base"] in c_name or any(c_name in ep for ep in v["ajax_endpoints"]):
+                related_ctrl_methods = c_info["methods"]
+                related_ctrl_file = c_info["file"]
+                break
+
+        # Discover endpoints from view tabs matched against companion controller methods
+        discovered_endpoints = list(v["ajax_endpoints"])
+        for tab in v["clean_tabs"]:
+            tab_l = tab.lower()
+            for m_name, m_data in related_ctrl_methods.items():
+                # Check if method contains tab keywords (e.g. pending, completed, approved)
+                for kw in ['pending', 'completed', 'approved', 'rejected', 'cancelled', 'history', 'draft', 'active']:
+                    if kw in tab_l and kw in m_name:
+                        ep_key = f"{c_name}/{m_name}"
+                        if ep_key not in discovered_endpoints and m_data.get("tables"):
+                            discovered_endpoints.append(ep_key)
+
         handled_via_endpoints = False
-        if v["ajax_endpoints"]:
-            for idx, ep in enumerate(v["ajax_endpoints"]):
+        primary_pending_table = None
+        primary_pending_filters = []
+
+        if discovered_endpoints:
+            for idx, ep in enumerate(discovered_endpoints):
                 c_data = controller_methods.get(ep)
                 m_only = ep.split('/')[-1]
                 if not c_data:
@@ -414,21 +460,24 @@ def scan_fullstack_semantics(root_path):
                         
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
-                    def add_endpoint_entry(label_text):
-                        key = (label_text.lower(), primary_table)
+                    def add_endpoint_entry(label_text, target_tbl, cols):
+                        key = (label_text.lower(), target_tbl)
                         if key not in seen and len(label_text) >= 3:
                             semantics.append({
                                 "ui_label": label_text,
-                                "database_table": primary_table,
+                                "database_table": target_tbl,
                                 "source_file": f"{v['rel_path']} -> {source_ctrl}",
-                                "ui_columns": ui_cols
+                                "ui_columns": cols
                             })
                             seen.add(key)
                             
                     # Find matching tab label
                     tab_match = None
+                    is_pending = False
                     for status_keyword in ['pending', 'completed', 'approved', 'rejected', 'cancelled', 'history', 'draft', 'active', 'closed']:
                         if status_keyword in ep:
+                            if status_keyword == 'pending':
+                                is_pending = True
                             # Look for matching tab
                             for tab_name in v["clean_tabs"]:
                                 if status_keyword in tab_name.lower():
@@ -438,25 +487,31 @@ def scan_fullstack_semantics(root_path):
                                 tab_match = f"{status_keyword.capitalize()} Inspection" if 'inspection' in v['ui_label'].lower() else f"{status_keyword.capitalize()} {v['ui_label']}"
                             break
                             
+                    if is_pending or idx == 0:
+                        primary_pending_table = primary_table
+                        primary_pending_filters = ui_cols
+
                     if tab_match:
-                        add_endpoint_entry(tab_match)
-                        add_endpoint_entry(f"{tab_match} List")
+                        add_endpoint_entry(tab_match, primary_table, ui_cols)
+                        add_endpoint_entry(f"{tab_match} List", primary_table, ui_cols)
                         if v['ui_label'].lower() not in tab_match.lower():
-                            add_endpoint_entry(f"{v['ui_label']} {tab_match}")
-                            add_endpoint_entry(f"{tab_match} {v['ui_label']}")
+                            add_endpoint_entry(f"{v['ui_label']} {tab_match}", primary_table, ui_cols)
+                            add_endpoint_entry(f"{tab_match} {v['ui_label']}", primary_table, ui_cols)
                             
                     # Method name derived label
                     clean_m = re.sub(r'(_json|_ajax|_data|_list)$', '', m_only, flags=re.IGNORECASE)
                     method_label = simple_title_case(clean_m)
                     if len(method_label) >= 3:
-                        add_endpoint_entry(method_label)
-                        
-                    # First endpoint is considered the primary/default screen view
-                    if idx == 0:
-                        add_endpoint_entry(v["ui_label"])
-                        base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
-                        if base_label and base_label.lower() != v["ui_label"].lower():
-                            add_endpoint_entry(base_label)
+                        add_endpoint_entry(method_label, primary_table, ui_cols)
+
+            # Assign default main view title to the primary/pending table
+            target_main_table = primary_pending_table if primary_pending_table else primary_table
+            main_cols = primary_pending_filters if primary_pending_filters else ui_cols
+            add_endpoint_entry(v["ui_label"], target_main_table, main_cols)
+            add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols)
+            base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
+            if base_label and base_label.lower() != v["ui_label"].lower():
+                add_endpoint_entry(base_label, target_main_table, main_cols)
                             
         # If not handled via AJAX endpoints, fall back to View / Controller correlation
         if not handled_via_endpoints:
