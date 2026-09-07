@@ -286,6 +286,38 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 print(f"❌ [INTENT] Strategy -1B (word overlap) failed for candidates: {candidate_queries}")
 
 
+        # Strategy 0A: Codebase Semantic Mapping Match (from Universal Connector)
+        if not detected_entity:
+            from app.models.semantic_mapping import SemanticMapping
+            sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == client_id)
+            sm_res = await session.execute(sm_stmt)
+            sm_all = sm_res.scalars().all()
+            
+            clean_q = norm_query.replace("_", " ").lower()
+            q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - {"list", "show", "get", "fetch", "the", "all", "of", "in", "pending", "completed"}
+            
+            best_sm = None
+            best_sm_score = 0
+            for sm in sm_all:
+                sm_label_norm = normalize_entity_name(sm.ui_label.lower().strip())
+                sm_label_clean = sm.ui_label.lower().strip()
+                if sm_label_norm == norm_query or sm_label_clean == clean_q or sm_label_clean in clean_q or clean_q in sm_label_clean:
+                    score = 20 + len(sm_label_clean)
+                else:
+                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - {"list", "view", "details", "pending", "completed"}
+                    overlap = q_toks.intersection(sm_toks)
+                    score = len(overlap) * 5 if overlap else 0
+                    
+                if score > best_sm_score and score >= 5:
+                    best_sm_score = score
+                    best_sm = sm
+                    
+            if best_sm:
+                detected_entity = best_sm.database_table
+                detected_label = best_sm.ui_label
+                detected_module = await resolve_module_for_table(detected_entity, client_id, session)
+                print(f"🎯 [INTENT] Codebase Semantic Mapping Match: '{best_sm.ui_label}' -> {best_sm.database_table} (Score: {best_sm_score})")
+
         # Strategy 0: Semantic Metadata Match
         if not detected_entity:
             print(f"DEBUG [INTENT] Starting Strategy 0 (Semantic Metadata)")

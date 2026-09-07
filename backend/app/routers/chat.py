@@ -520,16 +520,17 @@ async def websocket_endpoint(
                                                         })
                                                         
                                                         msg_text = rag_result.get("user_message", "")
-                                                        if msg_text:
+                                                        if msg_text and not msg_text.lower().startswith("i cannot show"):
                                                             response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{friendly_name}**."
                                                         else:
                                                             response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**."
                                                     elif isinstance(result, (list, tuple)):
                                                         msg_text = rag_result.get("user_message", "")
-                                                        if msg_text:
-                                                            response_text = msg_text
+                                                        debug_block = f"\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>" if sql_used else ""
+                                                        if msg_text and not msg_text.lower().startswith("i cannot show"):
+                                                            response_text = f"{msg_text}{debug_block}"
                                                         else:
-                                                            response_text = f"No records found for your query.\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>"
+                                                            response_text = f"No records found for your query.{debug_block}"
                                                     elif isinstance(result, str):
                                                         response_text = f"Database returned a response:\n{result}"
                                                     else:
