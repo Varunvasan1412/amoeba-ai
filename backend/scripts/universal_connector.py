@@ -14,7 +14,7 @@ from collections import Counter
 # Supports: CodeIgniter, Laravel, Django, Express, Next.js, React, Vue, PHP
 # =========================================================================
 
-DEFAULT_AMOEBA_HOST = os.environ.get("AMOEBA_HOST", "http://localhost:8000").rstrip("/")
+DEFAULT_AMOEBA_HOST = os.environ.get("AMOEBA_HOST", "https://amoeba.space").rstrip("/")
 IGNORE_DIRS = {
     '.git', 'node_modules', 'vendor', '__pycache__', 'dist', 'build', '.next', 
     'coverage', '.venv', 'venv', 'cache', 'logs', 'assets', 'plugins'
