@@ -294,7 +294,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             sm_all = sm_res.scalars().all()
             
             clean_q = norm_query.replace("_", " ").lower()
-            q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - {"list", "show", "get", "fetch", "the", "all", "of", "in", "pending", "completed"}
+            q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - {"list", "show", "get", "fetch", "the", "all", "of", "in"}
             
             best_sm = None
             best_sm_score = 0
@@ -304,9 +304,15 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 if sm_label_norm == norm_query or sm_label_clean == clean_q or sm_label_clean in clean_q or clean_q in sm_label_clean:
                     score = 20 + len(sm_label_clean)
                 else:
-                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - {"list", "view", "details", "pending", "completed"}
+                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - {"list", "view", "details"}
                     overlap = q_toks.intersection(sm_toks)
                     score = len(overlap) * 5 if overlap else 0
+                
+                # Tab distinction bonus: if both query and label specify pending or completed, boost score
+                if ("pending" in clean_q and "pending" in sm_label_clean) or ("completed" in clean_q and "completed" in sm_label_clean):
+                    score += 15
+                elif ("pending" in clean_q and "completed" in sm_label_clean) or ("completed" in clean_q and "pending" in sm_label_clean):
+                    score -= 20 # Penalize opposite tab
                     
                 if score > best_sm_score and score >= 5:
                     best_sm_score = score

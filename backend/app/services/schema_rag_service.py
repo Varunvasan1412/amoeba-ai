@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import Dict, Any, List
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -85,7 +86,16 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         if active_semantics:
             semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
             for s in active_semantics:
-                cols_str = f" (Displayed Columns: {s.ui_columns})" if s.ui_columns else ""
+                cols_str = ""
+                if s.ui_columns:
+                    filter_match = re.search(r'\[Filter:\s*(.*?)\]', s.ui_columns)
+                    if filter_match:
+                        filter_expr = filter_match.group(1).strip()
+                        clean_cols = s.ui_columns[:filter_match.start()].rstrip(" ,;")
+                        cols_part = f" (Displayed Columns: {clean_cols})" if clean_cols else ""
+                        cols_str = f"{cols_part} [Required Default Filter: {filter_expr}]"
+                    else:
+                        cols_str = f" (Displayed Columns: {s.ui_columns})"
                 semantic_context += f"- UI Term: '{s.ui_label}' is stored in table -> '{s.database_table}'{cols_str}\n"
                 semantic_tables.append(s.database_table)
                 
@@ -150,11 +160,14 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that mapped table instead of the guessed table or any similarly named schema table (for example, if the user asks for "GRN Inspection" and the semantic mapping specifies table 'purchase_order', query 'purchase_order' and NOT 'grn_inspection_header').
     8. **ABSOLUTE RULE**: If there are multiple semantic mappings for a UI Term, you must logically deduce the primary main table (e.g. usually the one without '_detail' or the one that represents the core object) and query that table. Use the Displayed Columns listed in the mapping to guide which columns to include in your SELECT clause.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
-    10. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
-    11. **UNDERSTANDING USER INTENT**: The user's query refers to business entities or UI screens (such as "GRN Inspection", "Purchase Orders", "Quotations"). DO NOT treat the entity name as a column name! Query the matching table and select its primary displayed columns. Never output apologies about missing columns for the main entity name.
-    12. **ENUM/STATUS MAPPING**: If a table has an integer column named `status` or `type`, DO NOT return raw numbers like 0 or 1. You MUST use a SQL CASE statement to map them to readable text. Use standard ERP conventions: For `status`, 1='Active', 0='Inactive'. For `type`, map 1='Standard', 0='Custom' or similar. Example: `CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END AS status`.
-    13. **ALWAYS OUTPUT A SELECT STATEMENT**: Even if a table appears to have Row Count 0 in the schema, you MUST STILL generate the complete, valid SELECT query against the appropriate mapped table. NEVER refuse to write the query and NEVER output messages claiming a table has no rows. ALWAYS let the database execute the SELECT query.
-    14. **ERP WORKFLOW: PENDING VS COMPLETED INSPECTION**: In ERP systems, "Pending Inspection" / "Pending GRN" / "GRN Inspection" displays purchase orders awaiting goods receipt note creation (stored in the 'purchase_order' table, joined with 'vendor'). When the user asks for "pending inspection", "inspection pending", "grn inspection", or "pending grn", you MUST query 'purchase_order' (selecting po.po_number AS purchase_order_no, v.name AS vendor_name, and po.gross_value). Only query 'grn_inspection_header' or 'grn' if the user explicitly asks for completed inspections.
+    10. **DEFAULT FILTERS (CRITICAL)**: If a semantic mapping specifies a '[Required Default Filter: <condition>]' (such as `po.status = 1`, `grn.status = 1`, or `is_deleted = 0`):
+        - You MUST include that condition in your WHERE clause (for example: `WHERE po.status = 1`).
+        - If you alias the table in your FROM clause, ensure the table prefix in the filter matches your query's alias (or qualify it with the full table name).
+        - This filter is essential to match what the user's ERP web screen displays and avoid returning inactive, deleted, or cancelled records.
+    11. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
+    12. **UNDERSTANDING USER INTENT**: The user's query refers to business entities or UI screens (such as "GRN Inspection", "Purchase Orders", "Quotations"). DO NOT treat the entity name as a column name! Query the matching table and select its primary displayed columns. Never output apologies about missing columns for the main entity name.
+    13. **ENUM/STATUS MAPPING**: If a table has an integer column named `status` or `type`, DO NOT return raw numbers like 0 or 1. You MUST use a SQL CASE statement to map them to readable text. Use standard ERP conventions: For `status`, 1='Active', 0='Inactive'. For `type`, map 1='Standard', 0='Custom' or similar. Example: `CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END AS status`.
+    14. **ALWAYS OUTPUT A SELECT STATEMENT**: Even if a table appears to have Row Count 0 in the schema, you MUST STILL generate the complete, valid SELECT query against the appropriate mapped table. NEVER refuse to write the query and NEVER output messages claiming a table has no rows. ALWAYS let the database execute the SELECT query.
 
     {semantic_context}
 
