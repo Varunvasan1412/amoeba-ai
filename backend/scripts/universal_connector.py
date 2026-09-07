@@ -228,10 +228,11 @@ def scan_fullstack_semantics(root_path):
     print("🕵️  Executing Fullstack MVC Cross-Correlation Profiler...")
     
     # --- PHASE 1: Index Controllers, Models, Database Queries & Query Filters ---
-    controller_methods = {} # key -> { tables, views, subcalls, filters, file }
+    controller_methods = {} # key -> { tables, from_tables, views, subcalls, filters, file }
     controller_files = {}   # class_name -> { file, methods }
     
     method_regex = re.compile(r'(?:public\s+)?function\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{(.*?)(?=(?:public\s+)?function|\Z)', re.DOTALL | re.IGNORECASE)
+    from_table_regex = re.compile(r'(?:\$table\s*=\s*[\'"]|->(?:from|get|table)\s*\(\s*[\'"]|DB::table\s*\(\s*[\'"]|\bFROM\s+`?)([a-zA-Z0-9_]+)', re.IGNORECASE)
     table_regex = re.compile(r'(?:\$table\s*=\s*[\'"]|->(?:from|get|join|table)\s*\(\s*[\'"]|DB::table\s*\(\s*[\'"]|(?:FROM|JOIN)\s+`?)([a-zA-Z0-9_]+)', re.IGNORECASE)
     view_regex = re.compile(r'(?:load->view|view|render)\s*\(\s*[\'"]([^\'"]+)[\'"]', re.IGNORECASE)
     subcall_regex = re.compile(r'(?:->|::)([a-zA-Z0-9_]+)\s*\(', re.IGNORECASE)
@@ -255,6 +256,9 @@ def scan_fullstack_semantics(root_path):
                         fn_name = match.group(1).lower()
                         fn_body = match.group(2)
                         
+                        raw_from = from_table_regex.findall(fn_body)
+                        clean_from = [t.lower() for t in raw_from if len(t) > 2 and t.lower() not in SQL_STOP_WORDS]
+                        
                         raw_tables = table_regex.findall(fn_body)
                         clean_tables = [t.lower() for t in raw_tables if len(t) > 2 and t.lower() not in SQL_STOP_WORDS]
                         
@@ -264,6 +268,7 @@ def scan_fullstack_semantics(root_path):
                         
                         methods_in_file[fn_name] = {
                             "tables": clean_tables,
+                            "from_tables": clean_from,
                             "views": loaded_views,
                             "subcalls": subcalls,
                             "filters": filters,
@@ -288,6 +293,11 @@ def scan_fullstack_semantics(root_path):
                     for t in target_data.get("tables", []):
                         if t not in data["tables"]:
                             data["tables"].append(t)
+                    for t in target_data.get("from_tables", []):
+                        if "from_tables" not in data:
+                            data["from_tables"] = []
+                        if t not in data["from_tables"]:
+                            data["from_tables"].append(t)
                     for f in target_data.get("filters", []):
                         if f not in data["filters"]:
                             data["filters"].append(f)
@@ -300,7 +310,6 @@ def scan_fullstack_semantics(root_path):
     table_block_regex = re.compile(r'<table[^>]*>(.*?)</table>', re.IGNORECASE | re.DOTALL)
     tab_regex = re.compile(r'<(?:a|button|li)[^>]+(?:data-toggle=["\']tab["\']|role=["\']tab["\']|href=["\']#[^"\']+["\'])[^>]*>(.*?)</(?:a|button|li)>', re.IGNORECASE | re.DOTALL)
     title_regex = re.compile(r'<(?:h[1-4]|title)[^>]*>(.*?)</(?:h[1-4]|title)>|<div[^>]*class=["\'][^"\']*(?:card-title|box-title|page-title|page-header)[^"\']*["\'][^>]*>(.*?)</div>', re.IGNORECASE | re.DOTALL)
-    ajax_regex = re.compile(r'["\']?url["\']?\s*:\s*["\']?(?:<\?=[^>]*\?>)?/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]+)', re.IGNORECASE)
 
     for subdir, dirs, files in os.walk(root_path):
         dirs[:] = [d for d in dirs if d not in IGNORE_DIRS]
@@ -360,8 +369,8 @@ def scan_fullstack_semantics(root_path):
                             ajax_endpoints.append(ep)
                             seen_eps.add(ep)
                             
-                # Pattern 2: url/ajax: "<?= base_url(...) ?>/controller/method" or "controller/method"
-                for c, m in re.findall(r'(?:url|ajax|data-url|action)\s*(?::|=)\s*[\'"]?(?:<\?php\s+echo\s+|\<\?=\s*)?(?:base_url\([^)]*\)|site_url\([^)]*\))?[\s\.\'"]*/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]+)', content, re.I):
+                # Pattern 2: url/ajax/sAjaxSource: "<?= base_url(...) ?>/controller/method" or "controller/method"
+                for c, m in re.findall(r'(?:url|ajax|sAjaxSource|data-url|action)\s*(?::|=)\s*[\'"]?(?:<\?php\s+echo\s+|\<\?=\s*)?(?:base_url\([^)]*\)|site_url\([^)]*\))?[\s\.\'"]*/?([a-zA-Z0-9_]+)/([a-zA-Z0-9_]+)', content, re.I):
                     if c.lower() not in ['http', 'https', 'window', 'document', 'location', 'assets', 'static', 'plugins', 'css', 'js']:
                         ep = f"{c.lower()}/{m.lower()}"
                         if ep not in seen_eps:
@@ -400,43 +409,149 @@ def scan_fullstack_semantics(root_path):
     semantics = []
     seen = set()
 
-    def choose_primary_table(table_list):
-        core_tables = [t for t in table_list if t not in ['users', 'user', 'employee', 'branch', 'city', 'state']]
-        pool = core_tables if core_tables else table_list
-        header_tables = [t for t in pool if not any(t.endswith(sfx) for sfx in ['_detail', '_details', '_items', '_item', '_history'])]
-        chosen_pool = header_tables if header_tables else pool
-        return Counter(chosen_pool).most_common(1)[0][0]
+    def choose_primary_table(table_list, headers=None, from_tables=None):
+        if not table_list:
+            return None
+            
+        lookup_tables = {'users', 'user', 'employee', 'branch', 'city', 'state', 'country', 'settings', 'currency', 'company', 'admin', 'auth'}
+        
+        # Priority 1: Driving tables (from_tables) that are not lookup tables
+        core_from = [t for t in (from_tables or []) if t not in lookup_tables]
+        core_all = [t for t in table_list if t not in lookup_tables]
+        
+        pool = core_from if core_from else (core_all if core_all else table_list)
+        
+        # Prefer header/parent tables over detail/items tables
+        header_tables = [t for t in pool if not any(t.endswith(sfx) for sfx in ['_detail', '_details', '_items', '_item', '_history', '_log'])]
+        candidate_pool = header_tables if header_tables else pool
+        
+        # Priority 2: Score candidate tables against UI column headers if available
+        if headers:
+            header_text = " ".join(headers).lower()
+            header_tokens = set(re.findall(r'[a-zA-Z0-9]+', header_text))
+            
+            best_tbl = None
+            best_score = -1
+            for tbl in candidate_pool:
+                tbl_clean = tbl.replace('_', ' ').lower()
+                tbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', tbl_clean))
+                overlap = len(header_tokens.intersection(tbl_tokens))
+                score = overlap * 15
+                
+                # Substring match (e.g. "purchase" or "order" in header text)
+                for t in tbl_tokens:
+                    if len(t) >= 4 and t in header_text:
+                        score += 10
+                        
+                # Driving FROM table bonus
+                if core_from and tbl in core_from:
+                    score += 8
+                    
+                score += table_list.count(tbl)
+                
+                if score > best_score:
+                    best_score = score
+                    best_tbl = tbl
+                    
+            if best_tbl and best_score > 0:
+                return best_tbl
+                
+        return Counter(candidate_pool).most_common(1)[0][0]
 
     for v in views:
         # Resolve companion controller for this view
         related_ctrl_methods = {}
         related_ctrl_file = None
-        for c_name, c_info in controller_files.items():
-            if c_name in v["view_base"] or v["view_base"] in c_name or any(c_name in ep for ep in v["ajax_endpoints"]):
+        c_name = None
+        for cn, c_info in controller_files.items():
+            if cn in v["view_base"] or v["view_base"] in cn or any(cn in ep for ep in v["ajax_endpoints"]):
                 related_ctrl_methods = c_info["methods"]
                 related_ctrl_file = c_info["file"]
+                c_name = cn
                 break
 
-        # Discover endpoints from view tabs matched against companion controller methods
-        discovered_endpoints = list(v["ajax_endpoints"])
-        for tab in v["clean_tabs"]:
-            tab_l = tab.lower()
-            for m_name, m_data in related_ctrl_methods.items():
-                # Check if method contains tab keywords (e.g. pending, completed, approved)
-                for kw in ['pending', 'completed', 'approved', 'rejected', 'cancelled', 'history', 'draft', 'active']:
-                    if kw in tab_l and kw in m_name:
-                        ep_key = f"{c_name}/{m_name}"
-                        if ep_key not in discovered_endpoints and m_data.get("tables"):
-                            discovered_endpoints.append(ep_key)
-
-        handled_via_endpoints = False
+        handled_via_tabs = False
         primary_pending_table = None
         primary_pending_filters = None
         last_primary_table = None
         last_ui_cols = None
 
-        if discovered_endpoints:
-            for idx, ep in enumerate(discovered_endpoints):
+        def add_endpoint_entry(label_text, target_tbl, cols, src):
+            key = (label_text.lower(), target_tbl)
+            if key not in seen and len(label_text) >= 3:
+                semantics.append({
+                    "ui_label": label_text,
+                    "database_table": target_tbl,
+                    "source_file": f"{v['rel_path']} -> {src}",
+                    "ui_columns": cols
+                })
+                seen.add(key)
+
+        # A. TAB-BASED CORRELATION (Multi-tab views: e.g. Pending Inspection vs Completed Inspection)
+        if v["clean_tabs"]:
+            for tab_idx, tab_name in enumerate(v["clean_tabs"]):
+                tab_l = tab_name.lower()
+                tab_headers = v["table_headers_list"][tab_idx] if tab_idx < len(v["table_headers_list"]) else v["headers"]
+                
+                # Find candidate methods from related_ctrl_methods
+                candidate_matches = []
+                for m_name, m_data in related_ctrl_methods.items():
+                    if not m_data.get("tables"): continue
+                    
+                    match_score = 0
+                    for kw in ['pending', 'completed', 'approved', 'rejected', 'cancelled', 'history', 'draft', 'active', 'closed', 'new', 'open']:
+                        if kw in tab_l and kw in m_name:
+                            match_score += 40
+                            
+                    table_score = 0
+                    if tab_headers:
+                        hdr_text = " ".join(tab_headers).lower()
+                        for t in m_data.get("tables", []):
+                            t_clean = t.replace('_', ' ').lower()
+                            t_tokens = [tok for tok in re.findall(r'[a-zA-Z0-9]+', t_clean) if len(tok) >= 3]
+                            for tok in t_tokens:
+                                if tok in hdr_text:
+                                    table_score += 25
+                                    
+                    total_score = match_score + table_score
+                    if total_score > 0:
+                        candidate_matches.append((total_score, m_name, m_data))
+                        
+                if candidate_matches:
+                    candidate_matches.sort(key=lambda x: x[0], reverse=True)
+                    best_score, best_m_name, best_m_data = candidate_matches[0]
+                    
+                    target_tbl = choose_primary_table(
+                        best_m_data["tables"], 
+                        headers=tab_headers, 
+                        from_tables=best_m_data.get("from_tables")
+                    )
+                    
+                    if target_tbl:
+                        handled_via_tabs = True
+                        last_primary_table = target_tbl
+                        headers_str = ", ".join(tab_headers) if tab_headers else ""
+                        filter_str = " AND ".join(best_m_data.get("filters", []))
+                        tab_cols = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
+                        last_ui_cols = tab_cols
+                        
+                        source_ctrl = f"{best_m_data['file']}::{c_name}/{best_m_name}" if c_name else f"{best_m_data['file']}::{best_m_name}"
+                        
+                        add_endpoint_entry(tab_name, target_tbl, tab_cols, source_ctrl)
+                        add_endpoint_entry(f"{tab_name} List", target_tbl, tab_cols, source_ctrl)
+                        if v['ui_label'].lower() not in tab_name.lower():
+                            add_endpoint_entry(f"{v['ui_label']} {tab_name}", target_tbl, tab_cols, source_ctrl)
+                            add_endpoint_entry(f"{tab_name} {v['ui_label']}", target_tbl, tab_cols, source_ctrl)
+                            
+                        # Default active tab (Pending / First tab) represents the default screen view
+                        if tab_idx == 0 or 'pending' in tab_l or primary_pending_table is None:
+                            primary_pending_table = target_tbl
+                            primary_pending_filters = tab_cols
+
+        # B. ENDPOINT-BASED CORRELATION (AJAX endpoints declared in scripts / DataTables)
+        handled_via_endpoints = handled_via_tabs
+        if v["ajax_endpoints"]:
+            for idx, ep in enumerate(v["ajax_endpoints"]):
                 c_data = controller_methods.get(ep)
                 m_only = ep.split('/')[-1]
                 if not c_data:
@@ -444,87 +559,50 @@ def scan_fullstack_semantics(root_path):
                 
                 if c_data and c_data.get("tables"):
                     handled_via_endpoints = True
-                    primary_table = choose_primary_table(c_data["tables"])
-                    last_primary_table = primary_table
-                    
-                    # Choose headers for this endpoint/tab
                     endpoint_headers = v["headers"]
                     if idx < len(v["table_headers_list"]) and v["table_headers_list"][idx]:
                         endpoint_headers = v["table_headers_list"][idx]
                         
-                    headers_str = ", ".join(endpoint_headers) if endpoint_headers else ""
+                    primary_table = choose_primary_table(
+                        c_data["tables"], 
+                        headers=endpoint_headers, 
+                        from_tables=c_data.get("from_tables")
+                    )
                     
-                    # Embed Filters if present
+                    headers_str = ", ".join(endpoint_headers) if endpoint_headers else ""
                     filter_str = " AND ".join(c_data.get("filters", []))
-                    if filter_str:
-                        ui_cols = f"{headers_str} [Filter: {filter_str}]".strip()
-                    else:
-                        ui_cols = headers_str if headers_str else None
-                    last_ui_cols = ui_cols
-                        
+                    ui_cols = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
+                    
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
-                    def add_endpoint_entry(label_text, target_tbl, cols):
-                        key = (label_text.lower(), target_tbl)
-                        if key not in seen and len(label_text) >= 3:
-                            semantics.append({
-                                "ui_label": label_text,
-                                "database_table": target_tbl,
-                                "source_file": f"{v['rel_path']} -> {source_ctrl}",
-                                "ui_columns": cols
-                            })
-                            seen.add(key)
-                            
-                    # Find matching tab label
-                    tab_match = None
-                    is_pending = False
-                    for status_keyword in ['pending', 'completed', 'approved', 'rejected', 'cancelled', 'history', 'draft', 'active', 'closed']:
-                        if status_keyword in ep:
-                            if status_keyword == 'pending':
-                                is_pending = True
-                            # Look for matching tab
-                            for tab_name in v["clean_tabs"]:
-                                if status_keyword in tab_name.lower():
-                                    tab_match = tab_name
-                                    break
-                            if not tab_match:
-                                tab_match = f"{status_keyword.capitalize()} Inspection" if 'inspection' in v['ui_label'].lower() else f"{status_keyword.capitalize()} {v['ui_label']}"
-                            break
-                            
-                    if is_pending or primary_pending_table is None:
-                        primary_pending_table = primary_table
-                        primary_pending_filters = ui_cols
-
-                    if tab_match:
-                        add_endpoint_entry(tab_match, primary_table, ui_cols)
-                        add_endpoint_entry(f"{tab_match} List", primary_table, ui_cols)
-                        if v['ui_label'].lower() not in tab_match.lower():
-                            add_endpoint_entry(f"{v['ui_label']} {tab_match}", primary_table, ui_cols)
-                            add_endpoint_entry(f"{tab_match} {v['ui_label']}", primary_table, ui_cols)
-                            
-                    # Method name derived label
                     clean_m = re.sub(r'(_json|_ajax|_data|_list)$', '', m_only, flags=re.IGNORECASE)
                     method_label = simple_title_case(clean_m)
                     if len(method_label) >= 3:
-                        add_endpoint_entry(method_label, primary_table, ui_cols)
+                        add_endpoint_entry(method_label, primary_table, ui_cols, source_ctrl)
+                        
+                    if not primary_pending_table:
+                        primary_pending_table = primary_table
+                        primary_pending_filters = ui_cols
+                    last_primary_table = primary_table
+                    last_ui_cols = ui_cols
 
-            if handled_via_endpoints:
-                # Assign default main view title to the primary/pending table
-                target_main_table = primary_pending_table if primary_pending_table else last_primary_table
-                main_cols = primary_pending_filters if primary_pending_filters else last_ui_cols
-                add_endpoint_entry(v["ui_label"], target_main_table, main_cols)
-                add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols)
+        # C. Default Main View Title (e.g. "GRN Inspection" -> default tab / table)
+        if handled_via_tabs or handled_via_endpoints:
+            target_main_table = primary_pending_table if primary_pending_table else last_primary_table
+            main_cols = primary_pending_filters if primary_pending_filters else last_ui_cols
+            if target_main_table:
+                add_endpoint_entry(v["ui_label"], target_main_table, main_cols, v["rel_path"])
+                add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols, v["rel_path"])
                 base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
                 if base_label and base_label.lower() != v["ui_label"].lower():
-                    add_endpoint_entry(base_label, target_main_table, main_cols)
-                            
-        # If not handled via AJAX endpoints, fall back to View / Controller correlation
-        if not handled_via_endpoints:
+                    add_endpoint_entry(base_label, target_main_table, main_cols, v["rel_path"])
+
+        # D. Single View / Non-AJAX Fallback
+        if not handled_via_tabs and not handled_via_endpoints:
             matched_tables = []
             source_controller = None
             extracted_filters = []
             
-            # Link 2: Controller load->view() correlation
             for fn_key, c_data in controller_methods.items():
                 for loaded_view in c_data["views"]:
                     if v["view_base"] in loaded_view or loaded_view in v["view_key"]:
@@ -536,10 +614,9 @@ def scan_fullstack_semantics(root_path):
                 if matched_tables:
                     break
 
-            # Link 3: Controller naming convention match
             if not matched_tables:
-                for c_name, c_info in controller_files.items():
-                    if c_name in v["view_base"] or v["view_base"] in c_name:
+                for cn, c_info in controller_files.items():
+                    if cn in v["view_base"] or v["view_base"] in cn:
                         all_c_tables = []
                         for m in c_info["methods"].values():
                             all_c_tables.extend(m["tables"])
@@ -549,7 +626,6 @@ def scan_fullstack_semantics(root_path):
                             source_controller = c_info["file"]
                             break
 
-            # Link 4: Direct query inside view (for procedural / standalone PHP scripts)
             if not matched_tables:
                 direct_tables = table_regex.findall(v["content"])
                 clean_direct = [t.lower() for t in direct_tables if len(t) > 2 and t.lower() not in SQL_STOP_WORDS]
@@ -558,15 +634,11 @@ def scan_fullstack_semantics(root_path):
                     extracted_filters.extend(extract_sql_filters(v["content"]))
                     source_controller = v["rel_path"]
 
-            # Build Semantic Mappings for non-AJAX / Single views
             if matched_tables:
-                primary_table = choose_primary_table(matched_tables)
+                primary_table = choose_primary_table(matched_tables, headers=v["headers"])
                 headers_str = ", ".join(v["headers"]) if v["headers"] else ""
                 filter_str = " AND ".join(list(set(extracted_filters)))
-                if filter_str:
-                    ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip()
-                else:
-                    ui_cols_str = headers_str if headers_str else None
+                ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                 
                 def add_semantic_entry(label_text):
                     key = (label_text.lower(), primary_table)
@@ -579,15 +651,11 @@ def scan_fullstack_semantics(root_path):
                         })
                         seen.add(key)
                 
-                # 1. Full Screen Title (e.g. "Grn Inspection Pending List")
                 add_semantic_entry(v["ui_label"])
-                
-                # 2. Normalized Base Term (e.g. "Grn Inspection")
                 base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
                 if base_label and base_label.lower() != v["ui_label"].lower():
                     add_semantic_entry(base_label)
                     
-                # 3. Clean Filename Label if distinct
                 file_label = simple_title_case(v["file"])
                 if file_label.lower() not in [v["ui_label"].lower(), base_label.lower()]:
                     add_semantic_entry(file_label)
