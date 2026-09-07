@@ -163,8 +163,11 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     4. You must output your thought process in a <thought> block before the SQL query. Evaluate which tables match the user's query, check their Row Counts, and check the Semantic Mappings. After the </thought> block, output ONLY the SELECT statement.
     5. The system guessed they are asking about this table: '{target_table}'. HOWEVER, this guess is often wrong. You must evaluate the Row Counts and Semantic Mappings to find the true table.
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
-    7. **ABSOLUTE RULE**: If a table is listed in the 'CODEBASE SEMANTIC MAPPINGS' below, you MUST use that mapped table instead of the guessed table or any similarly named schema table (for example, if a semantic mapping specifies a table that differs from the guessed table name, you MUST prioritize the semantic mapping table).
-    8. **ABSOLUTE RULE**: If there are multiple semantic mappings for a UI Term, you must logically deduce the primary main table (e.g. usually the one without '_detail' or the one that represents the core object) and query that table. Use the Displayed Columns listed in the mapping to guide which columns to include in your SELECT clause.
+    7. **CODEBASE SEMANTIC MAPPINGS (PRIMARY GUIDE)**:
+        - Prioritize the table listed in the 'CODEBASE SEMANTIC MAPPINGS' below.
+        - CRITICAL DISAMBIGUATION (COLUMN & ROW CHECK): If a mapped table has 0 rows in the Schema Context and lacks the columns matching the user's query or Displayed Columns (for example, the mapped table has 0 rows and lacks 'purchase_order_number' or 'gross_value'), while another table in the Schema Context (such as `purchase_order_header` or `purchase_order`) contains those exact matching columns and active rows (Row Count > 0), you MUST query the active table with the matching columns!
+        - Use the Displayed Columns listed in the mapping to guide which columns to include in your SELECT clause.
+    8. **MULTI-TABLE DEDUCTION**: If there are multiple candidate tables for a UI Term (e.g. parent vs child tables), choose the main parent table (usually without `_detail`, `_item`, or `_history`) that represents the business entity and has active rows.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
     10. **DEFAULT FILTERS (CRITICAL)**: If a semantic mapping specifies a '[Required Default Filter: <condition>]' (such as `po.status = 1`, `grn.status = 1`, or `is_deleted = 0`):
         - You MUST include that condition in your WHERE clause (for example: `WHERE po.status = 1`).
@@ -174,7 +177,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     11. **COLUMN SELECTION**: Do NOT use `SELECT *` or `SELECT main_table.*`. You MUST explicitly list all relevant columns from the primary table to ensure no data is lost. HOWEVER, you MUST EXCLUDE the original raw `_id` columns (like `customer_id`) and replace them entirely with your joined readable columns (like `customer.name AS customer`). The final output must look perfectly clean to a non-technical user.
     12. **UNDERSTANDING USER INTENT**: The user's query refers to business entities or UI screens (such as "GRN Inspection", "Purchase Orders", "Quotations"). DO NOT treat the entity name as a column name! Query the matching table and select its primary displayed columns. Never output apologies about missing columns for the main entity name.
     13. **ENUM/STATUS MAPPING**: If a table has an integer column named `status` or `type`, DO NOT return raw numbers like 0 or 1. You MUST use a SQL CASE statement to map them to readable text. Use standard ERP conventions: For `status`, 1='Active', 0='Inactive'. For `type`, map 1='Standard', 0='Custom' or similar. Example: `CASE WHEN status = 1 THEN 'Active' ELSE 'Inactive' END AS status`.
-    14. **ALWAYS OUTPUT A SELECT STATEMENT**: Even if a table appears to have Row Count 0 in the schema, you MUST STILL generate the complete, valid SELECT query against the appropriate mapped table. NEVER refuse to write the query and NEVER output messages claiming a table has no rows. ALWAYS let the database execute the SELECT query.
+    14. **ALWAYS OUTPUT A SELECT STATEMENT**: You must ALWAYS generate a complete, valid SELECT query. NEVER refuse to write a query and NEVER output messages claiming no data exists. Let the database execute the query.
 
     {semantic_context}
 
@@ -225,8 +228,6 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
              raise Exception("Generated query was not a SELECT statement. Operation blocked.")
              
         try:
-            # execute_sql_query uses the global connection in the current tool, 
-            # but we should temporarily set it to the client's DB url if it's tenant-aware
             from app.core.context import current_db_url
             token = current_db_url.set(client_config.db_connection_url)
             try:
@@ -239,6 +240,44 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                 records = []
         except Exception as e:
             raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")
+            
+        # Self-Healing Fallback: If query returned 0 records, try alternative active table from schema
+        if not records:
+            print("⚠️ [SCHEMA RAG] Query returned 0 records. Attempting self-healing fallback...")
+            fallback_prompt = f"""The previous query returned 0 records:
+{sql_query}
+
+User Question: {user_query}
+
+CRITICAL: In the Schema Context, find an alternative table that represents this business entity with active rows (Row Count > 0). If the previous table had 0 rows or lacked matching data, query the alternative table (e.g. `purchase_order_header` or `purchase_order` instead of `grn_inspection_header`).
+Write a valid SELECT query to retrieve the user's requested records. Output ONLY the raw SELECT statement (no markdown, no explanations)."""
+            try:
+                fb_messages = [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=fallback_prompt)
+                ]
+                fb_resp = await llm.ainvoke(fb_messages)
+                fb_sql = fb_resp.content.strip()
+                if "<thought>" in fb_sql and "</thought>" in fb_sql:
+                    fb_sql = fb_sql.split("</thought>")[1].strip()
+                if fb_sql.startswith("```sql"): fb_sql = fb_sql.replace("```sql", "").strip()
+                if fb_sql.startswith("```"): fb_sql = fb_sql.replace("```", "").strip()
+                if fb_sql.endswith("```"): fb_sql = fb_sql[:-3].strip()
+                
+                if fb_sql.lower().startswith("select") and fb_sql != sql_query:
+                    print(f"🧠 [SCHEMA RAG] Retrying with alternative SQL: {fb_sql}")
+                    token = current_db_url.set(client_config.db_connection_url)
+                    try:
+                        fb_records = await execute_sql_query(fb_sql)
+                    finally:
+                        current_db_url.reset(token)
+                        
+                    if fb_records and not (isinstance(fb_records, str) and "Error" in fb_records):
+                        print(f"🎉 [SCHEMA RAG] Self-healing succeeded with {len(fb_records)} records!")
+                        records = fb_records
+                        sql_query = fb_sql
+            except Exception as fb_err:
+                print(f"Self-healing fallback error: {fb_err}")
             
     return {
         "generated_sql": sql_query,

@@ -111,10 +111,14 @@ async def sync_semantic_endpoint(
     if not client:
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
-    # 2. Delete old mappings
+    # 2. Delete old mappings (selective if small batch, full if bulk scan)
     from sqlmodel import delete
     try:
-        await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id))
+        if len(semantics) < 50:
+            labels_to_del = [s.ui_label for s in semantics]
+            await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id, SemanticMapping.ui_label.in_(labels_to_del)))
+        else:
+            await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
     
