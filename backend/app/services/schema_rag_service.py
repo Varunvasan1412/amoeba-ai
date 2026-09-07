@@ -165,8 +165,9 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     6. Always add a LIMIT 100 to the query to prevent massive payloads.
     7. **CODEBASE SEMANTIC MAPPINGS (PRIMARY GUIDE)**:
         - Prioritize the table listed in the 'CODEBASE SEMANTIC MAPPINGS' below.
-        - CRITICAL DISAMBIGUATION (COLUMN & ROW CHECK): If a mapped table has 0 rows in the Schema Context and lacks the columns matching the user's query or Displayed Columns (for example, the mapped table has 0 rows and lacks 'purchase_order_number' or 'gross_value'), while another table in the Schema Context (such as `purchase_order_header` or `purchase_order`) contains those exact matching columns and active rows (Row Count > 0), you MUST query the active table with the matching columns!
+        - CRITICAL DISAMBIGUATION (COLUMN & ROW CHECK): If a mapped table has 0 rows in the Schema Context and lacks the columns matching the user's query or Displayed Columns, while another table in the Schema Context representing the same entity contains those exact matching columns and active rows (Row Count > 0), you MUST query that active entity table!
         - Use the Displayed Columns listed in the mapping to guide which columns to include in your SELECT clause.
+        - NEVER switch to an entirely unrelated business entity (e.g. never query purchase orders when the user asks for quotations, sales, or customers).
     8. **MULTI-TABLE DEDUCTION**: If there are multiple candidate tables for a UI Term (e.g. parent vs child tables), choose the main parent table (usually without `_detail`, `_item`, or `_history`) that represents the business entity and has active rows.
     9. **AUTOMATIC JOINS FOR READABILITY (CRITICAL)**: Users do not want to see raw IDs (like `customer_id`, `employee_id`, `city_id`). If the table you select has foreign key IDs, you MUST use LEFT JOINs to connect to the related tables (e.g., `customer`, `employee`, `city`) and select their readable names (e.g., `customer.name AS customer_name`). Never return raw IDs if a joined readable name is available.
     10. **DEFAULT FILTERS (CRITICAL)**: If a semantic mapping specifies a '[Required Default Filter: <condition>]' (such as `po.status = 1`, `grn.status = 1`, or `is_deleted = 0`):
@@ -249,16 +250,19 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         except Exception as e:
             raise Exception(f"Failed to execute AI-generated SQL: {str(e)}")
             
-        # Self-Healing Fallback: If query returned 0 records, try alternative active table from schema
-        if not records:
+        # Self-Healing Fallback: If query returned 0 records, check if WHERE clause was overly restrictive
+        if not records and "WHERE" in sql_query.upper():
             print("⚠️ [SCHEMA RAG] Query returned 0 records. Attempting self-healing fallback...")
             fallback_prompt = f"""The previous query returned 0 records:
 {sql_query}
 
 User Question: {user_query}
 
-CRITICAL: In the Schema Context, find an alternative table that represents this business entity with active rows (Row Count > 0). If the previous table had 0 rows or lacked matching data, query the alternative table (e.g. `purchase_order_header` or `purchase_order` instead of `grn_inspection_header`).
-Write a valid SELECT query to retrieve the user's requested records. Output ONLY the raw SELECT statement (no markdown, no explanations)."""
+CRITICAL RULES FOR RETRY:
+1. Check if the WHERE clause was overly restrictive (for example, filtering on an unneeded status or specific value) and relax it if appropriate for the entity being queried.
+2. If the user's requested entity genuinely has 0 records in the database, output 'SELECT 1 WHERE 1=0' so the system accurately reports no records found.
+3. NEVER switch to an entirely different or unrelated business entity (for example, NEVER return purchase orders when asked for quotations, and NEVER return sales when asked for vendors).
+Write a valid SELECT query for the requested entity, or 'SELECT 1 WHERE 1=0' if no records exist. Output ONLY the raw SELECT statement."""
             try:
                 fb_messages = [
                     SystemMessage(content=system_prompt),
