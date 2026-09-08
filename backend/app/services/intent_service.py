@@ -252,6 +252,82 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             clean_q = norm_query.replace("_", " ").lower()
             q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - NON_ENTITY_WORDS
             
+            # --- TAB DISAMBIGUATION CHECK ---
+            # If the user asks for a general entity or screen that has multiple tabs/stages
+            # (e.g. "grn inspection", "quotations", "invoices") and did NOT specify a discriminating tab:
+            # We do not guess arbitrarily. We ask the user which tab they want to view!
+            TAB_DISCRIMINATORS = {
+                "pending", "completed", "complete", "active", "inactive", "converted", 
+                "open", "closed", "approved", "rejected", "cancelled", "draft", "tax"
+            }
+            has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
+            
+            if not has_tab_discriminator and sm_all:
+                # Group mappings by explicit tab_group
+                tab_groups: Dict[str, List[SemanticMapping]] = {}
+                for sm in sm_all:
+                    grp = getattr(sm, "tab_group", None)
+                    if grp:
+                        tab_groups.setdefault(grp, []).append(sm)
+                
+                matched_group = None
+                matched_tabs = []
+                for grp, grp_sms in tab_groups.items():
+                    grp_lower = grp.lower()
+                    grp_toks = set(re.findall(r'[a-zA-Z0-9]+', grp_lower))
+                    if grp_lower in clean_q or clean_q in grp_lower or len(q_toks.intersection(grp_toks)) >= 2:
+                        # Deduplicate tabs by distinct view/table/filter to avoid showing aliases
+                        views_map = {}
+                        for s in grp_sms:
+                            view_key = (s.database_table, s.default_filter or "")
+                            clean_lbl = s.ui_label.strip()
+                            if view_key not in views_map:
+                                views_map[view_key] = clean_lbl
+                            else:
+                                existing = views_map[view_key]
+                                if "list" in existing.lower() and "list" not in clean_lbl.lower():
+                                    views_map[view_key] = clean_lbl
+                                elif len(clean_lbl) < len(existing) and "list" not in clean_lbl.lower():
+                                    views_map[view_key] = clean_lbl
+
+                        unique_tabs = list(views_map.values())
+                        if len(unique_tabs) >= 2:
+                            matched_group = grp
+                            matched_tabs = unique_tabs
+                            break
+                            
+                # Fallback: Auto-detect tab groups if tab_group wasn't explicitly populated
+                if not matched_group:
+                    candidate_tabs = []
+                    seen_labels = set()
+                    for sm in sm_all:
+                        lbl_clean = sm.ui_label.lower().strip()
+                        toks = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - {"list", "view", "details"}
+                        if q_toks.intersection(toks):
+                            if any(td in lbl_clean for td in TAB_DISCRIMINATORS):
+                                if sm.ui_label.strip() not in seen_labels:
+                                    seen_labels.add(sm.ui_label.strip())
+                                    candidate_tabs.append(sm.ui_label.strip())
+                    
+                    if len(candidate_tabs) >= 2:
+                        matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
+                        matched_tabs = candidate_tabs
+                
+                if matched_group and matched_tabs:
+                    print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
+                    return {
+                        "intent": "tab_disambiguation",
+                        "screen": matched_group,
+                        "tabs": [
+                            {
+                                "label": tab_label # Clean UI displayed name, NEVER table name!
+                            }
+                            for tab_label in matched_tabs
+                        ],
+                        "entity": None,
+                        "url": None
+                    }
+
             best_sm = None
             best_sm_score = 0
             for sm in sm_all:

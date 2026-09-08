@@ -125,6 +125,13 @@ async def init_db():
             ))
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN required_joins TEXT"))
+
+            # Check for tab_group column
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'semanticmapping' AND column_name = 'tab_group'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN tab_group VARCHAR(100)"))
         except Exception as e:
             logger.warning(f"SemanticMapping migration notice: {e}")
 

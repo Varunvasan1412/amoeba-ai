@@ -448,7 +448,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                 {(choices?.payload || entitySelection?.payload || []).map((opt: any, idx: number) => (
                     <button
                         key={idx}
-                        onClick={() => onSelect && onSelect(opt.table_name || opt.label, opt.index)} 
+                        onClick={() => onSelect && onSelect(opt.label || opt.table_name, opt.index)} 
                         className={`text-left text-sm transition-all p-3 rounded-xl shadow-sm flex items-center gap-2 group border ${
                             darkMode 
                             ? 'bg-gray-800 border-gray-700 hover:bg-gray-700 hover:border-blue-500 text-gray-200' 
@@ -645,7 +645,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                     fields={formAction.payload.fields} 
                     onSubmit={(data) => onSubmitForm && onSubmitForm(data)}
                     onCancel={() => onSelect && onSelect("Cancel")}
-                    title={formAction.payload.table_name}
+                    title={formAction.payload.display_title || formAction.payload.label || (formAction.payload.table_name ? formAction.payload.table_name.replace(/_/g, ' ') : "Form")}
                     darkMode={darkMode}
                 />
             </div>

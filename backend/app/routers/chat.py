@@ -98,6 +98,7 @@ class SemanticItem(BaseModel):
     default_filter: Optional[str] = None
     base_query: Optional[str] = None
     required_joins: Optional[str] = None
+    tab_group: Optional[str] = None
 
 @router.post("/semantic/sync")
 async def sync_semantic_endpoint(
@@ -137,7 +138,8 @@ async def sync_semantic_endpoint(
                 ui_columns=s.ui_columns,
                 default_filter=s.default_filter,
                 base_query=s.base_query,
-                required_joins=s.required_joins
+                required_joins=s.required_joins,
+                tab_group=s.tab_group
             )
             session.add(new_map)
             added += 1
@@ -455,12 +457,82 @@ async def websocket_endpoint(
                                 if mode == "operations":
                                     # Suppression: log_audit(client_id, "CHAT_MODE_OPERATIONS", ...)
                                     
+                                    # 1.9 Tab Disambiguation Choice Resolution
+                                    from app.services.conversation_service import get_active_conversation
+                                    from app.models.conversation_state import ConversationState
+                                    tab_state = await get_active_conversation(local_session, int(client_id), s_id)
+                                    if tab_state and tab_state.current_step == "resolve_tab_choice":
+                                        saved_tabs = tab_state.collected_data.get("tabs", []) if tab_state.collected_data else []
+                                        user_trimmed = user_text.strip()
+                                        chosen_tab = None
+                                        if user_trimmed.isdigit():
+                                            idx = int(user_trimmed) - 1
+                                            if 0 <= idx < len(saved_tabs):
+                                                chosen_tab = saved_tabs[idx]
+                                        else:
+                                            for t in saved_tabs:
+                                                if t.lower() in user_trimmed.lower() or user_trimmed.lower() in t.lower():
+                                                    chosen_tab = t
+                                                    break
+                                        
+                                        if chosen_tab:
+                                            await local_session.delete(tab_state)
+                                            await local_session.commit()
+                                            user_text = f"Show me the {chosen_tab.lower()} list"
+                                        elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                            await local_session.delete(tab_state)
+                                            await local_session.commit()
+                                            cancel_msg = "Tab selection cancelled."
+                                            ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                            local_session.add(ai_msg)
+                                            await local_session.commit()
+                                            await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
+
                                     # 2. CRUD Intent (CONTEXT AWARE)
                                     from app.services.intent_service import resolve_crud_intent
-                                    from app.services.conversation_service import process_conversation, get_active_conversation
+                                    from app.services.conversation_service import process_conversation
                                     
                                     crud_intent = await resolve_crud_intent(user_text, int(client_id), local_session, history=formatted_history, mode=mode)
                                     
+                                    # Handle Tab Disambiguation Intent directly
+                                    if crud_intent and crud_intent.get("intent") == "tab_disambiguation":
+                                        screen_name = crud_intent.get("screen", "this screen")
+                                        tabs = crud_intent.get("tabs", [])
+                                        res_text = f"I found multiple views for **{screen_name}**. Which tab would you like to see?"
+                                        res_actions = [{
+                                            "type": "CHOICE",
+                                            "payload": tabs
+                                        }]
+
+                                        # Save state to allow numeric choice resolution ("1", "2") or text clicks
+                                        existing_states = await local_session.execute(
+                                            select(ConversationState).where(
+                                                ConversationState.client_id == int(client_id),
+                                                ConversationState.session_id == s_id
+                                            )
+                                        )
+                                        for old_s in existing_states.scalars().all():
+                                            await local_session.delete(old_s)
+
+                                        ambig_state = ConversationState(
+                                            client_id=int(client_id),
+                                            session_id=s_id,
+                                            intent="tab_disambiguation",
+                                            entity_name=screen_name,
+                                            current_step="resolve_tab_choice",
+                                            collected_data={"tabs": [t["label"] for t in tabs]}
+                                        )
+                                        local_session.add(ambig_state)
+
+                                        ai_msg = ChatMessage(role="ai", content=res_text, actions=res_actions, client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": res_text, "actions": res_actions, "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
                                     # Handle Navigation Intent directly for speed
                                     if crud_intent and crud_intent.get("intent") == "navigate" and crud_intent.get("url"):
                                         dest_url = crud_intent["url"]
@@ -517,12 +589,16 @@ async def websocket_endpoint(
                                                     thought_msg = f"\n\n**AI Thought Process:**\n_{thought_process}_" if thought_process else ""
                                                     
                                                     actions_list = []
+                                                    display_title = rag_result.get("display_title") or friendly_name
+                                                    if display_title and "_" in display_title and display_title.islower():
+                                                        display_title = display_title.replace("_", " ").title()
+
                                                     if isinstance(result, (list, tuple)) and result:
                                                         headers = list(result[0].keys())
                                                         actions_list.append({
                                                             "type": "data_table", 
                                                             "payload": {
-                                                                "title": f"{friendly_name} (AI Generated)", 
+                                                                "title": display_title, 
                                                                 "headers": headers,
                                                                 "rows": list(result),
                                                                 "total": len(result)
@@ -531,9 +607,9 @@ async def websocket_endpoint(
                                                         
                                                         msg_text = rag_result.get("user_message", "")
                                                         if msg_text and not msg_text.lower().startswith("i cannot show"):
-                                                            response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{friendly_name}**."
+                                                            response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{display_title}**."
                                                         else:
-                                                            response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**."
+                                                            response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
                                                     elif isinstance(result, (list, tuple)):
                                                         msg_text = rag_result.get("user_message", "")
                                                         debug_block = f"\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>" if sql_used else ""
@@ -590,26 +666,27 @@ async def websocket_endpoint(
                                                     date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**"
                                                 
                                                 # Step 4: Format the response
+                                                clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
                                                 actions_list = []
                                                 if isinstance(result, dict) and "aggregate" in result:
                                                     # Aggregation result
                                                     agg_type = result["aggregate"]
                                                     value = result["value"]
-                                                    response_text = f"**{friendly_name}** — {agg_type.upper()}: **{value}**{date_info}"
+                                                    response_text = f"**{clean_friendly_name}** — {agg_type.upper()}: **{value}**{date_info}"
                                                 elif isinstance(result, dict) and "grouped_results" in result:
                                                     # Grouped aggregation
-                                                    response_text = f"**{friendly_name}** — Grouped Results:{date_info}"
-                                                    actions_list.append({"type": "DISPLAY_TABLE", "payload": {"title": friendly_name, "data": result["grouped_results"]}})
+                                                    response_text = f"**{clean_friendly_name}** — Grouped Results:{date_info}"
+                                                    actions_list.append({"type": "DISPLAY_TABLE", "payload": {"title": clean_friendly_name, "data": result["grouped_results"]}})
                                                 elif isinstance(result, dict) and "records" in result:
                                                     # Records with warnings
                                                     records = result["records"]
                                                     if records:
-                                                        response_text = f"Found **{len(records)}** record(s) in **{friendly_name}**.{date_info}"
+                                                        response_text = f"Found **{len(records)}** record(s) in **{clean_friendly_name}**.{date_info}"
                                                         headers = list(records[0].keys()) if records else []
                                                         actions_list.append({
                                                             "type": "data_table", 
                                                             "payload": {
-                                                                "title": friendly_name, 
+                                                                "title": clean_friendly_name, 
                                                                 "headers": headers,
                                                                 "rows": records,
                                                                 "total": len(records),
@@ -622,15 +699,15 @@ async def websocket_endpoint(
                                                             }
                                                         })
                                                     else:
-                                                        response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                        response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
                                                 elif isinstance(result, list):
                                                     if result:
-                                                        response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**.{date_info}"
+                                                        response_text = f"Found **{len(result)}** record(s) in **{clean_friendly_name}**.{date_info}"
                                                         headers = list(result[0].keys()) if result else []
                                                         actions_list.append({
                                                             "type": "data_table", 
                                                             "payload": {
-                                                                "title": friendly_name, 
+                                                                "title": clean_friendly_name, 
                                                                 "headers": headers,
                                                                 "rows": result,
                                                                 "total": len(result),
@@ -740,42 +817,43 @@ async def websocket_endpoint(
                                                     date_start, date_end = normalize_date_range(user_text)
                                                     date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**" if date_start else ""
                                                     
+                                                    clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
                                                     actions_list = []
                                                     if isinstance(result, dict) and "aggregate" in result:
-                                                        response_text = f"**{friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
+                                                        response_text = f"**{clean_friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
                                                     elif isinstance(result, dict) and "records" in result:
                                                         records = result["records"]
                                                         if records:
-                                                            response_text = f"Found **{len(records)}** record(s) in **{friendly_name}**.{date_info}"
+                                                            response_text = f"Found **{len(records)}** record(s) in **{clean_friendly_name}**.{date_info}"
                                                             headers = list(records[0].keys()) if records else []
                                                             actions_list.append({
                                                                 "type": "data_table", 
                                                                 "payload": {
-                                                                    "title": friendly_name, 
+                                                                    "title": clean_friendly_name, 
                                                                     "headers": headers,
                                                                     "rows": records,
                                                                     "total": len(records)
                                                                 }
                                                             })
                                                         else:
-                                                            response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
                                                     elif isinstance(result, list):
                                                         if result:
-                                                            response_text = f"Found **{len(result)}** record(s) in **{friendly_name}**.{date_info}"
+                                                            response_text = f"Found **{len(result)}** record(s) in **{clean_friendly_name}**.{date_info}"
                                                             headers = list(result[0].keys()) if result else []
                                                             actions_list.append({
                                                                 "type": "data_table", 
                                                                 "payload": {
-                                                                    "title": friendly_name, 
+                                                                    "title": clean_friendly_name, 
                                                                     "headers": headers,
                                                                     "rows": result,
                                                                     "total": len(result)
                                                                 }
                                                             })
                                                         else:
-                                                            response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
+                                                            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
                                                     else:
-                                                        response_text = f"Result from **{friendly_name}**: {result}{date_info}"
+                                                        response_text = f"Result from **{clean_friendly_name}**: {result}{date_info}"
                                                     
                                                     ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
                                                     local_session.add(ai_msg)

@@ -55,6 +55,17 @@ async def get_friendly_entity_label(client_id: int, table_name: str, session: As
         if not base_label:
             base_label = nav_items[0][0]
 
+    # 1.25. Search Semantic Mappings (Codebase UI Labels)
+    from app.models.semantic_mapping import SemanticMapping
+    map_stmt = select(SemanticMapping.ui_label).where(
+        SemanticMapping.client_id == client_id,
+        SemanticMapping.database_table == table_name
+    )
+    map_res = await session.execute(map_stmt)
+    mapping_label = map_res.scalars().first()
+    if mapping_label:
+        base_label = mapping_label
+
     # 1.5. Search Semantic Metadata (Admin Label) - Priority over Navigation if explicitly set
     sem_stmt = select(SemanticMetadata.label).where(
         SemanticMetadata.client_id == client_id,
@@ -70,6 +81,10 @@ async def get_friendly_entity_label(client_id: int, table_name: str, session: As
     if not base_label:
         from app.services.entity_selector import EntitySelector
         base_label = EntitySelector.format_table_label(table_name)
+
+    # 2.5 Ensure base_label never contains raw table underscores
+    if base_label and "_" in base_label:
+        base_label = base_label.replace("_", " ").title()
 
     # 3. Intelligence: Apply Module Prefix only if missing
     # This prevents "Sales Sales Enquiry" but ensures "Sales Enquiry"
@@ -193,12 +208,13 @@ async def process_conversation(
 
         elif intent_data.get("status") == "resolved":
             # Start a fresh flow
+            init_data = {"ui_label": intent_data.get("label")} if intent_data.get("label") else {}
             state = ConversationState(
                 client_id=client_id, session_id=session_id,
                 intent=intent_data["intent"], entity_name=intent_data["entity"],
                 module=intent_data.get("module"),
                 view_mode=view_mode,
-                current_step="start", collected_data={}
+                current_step="start", collected_data=init_data
             )
             db_session.add(state)
             await db_session.commit()
@@ -236,17 +252,36 @@ async def process_conversation(
             await db_session.commit()
             return f"I couldn't find a direct database link for that, but I can take you to the page.", [{"type": "NAVIGATE", "payload": url}]
 
-        # NEW: Check if input is table_name or label from matches (UI sends table_name usually)
-        # We try to recover the module if possible
+        # Check if input is table_name or label from matches
         from app.models.navigation import NavigationItem
-        nav_stmt = select(NavigationItem).where(NavigationItem.client_id == client_id, NavigationItem.table_name == user_input.strip())
+        from app.models.semantic_mapping import SemanticMapping
+        clean_in = user_input.strip()
+        nav_stmt = select(NavigationItem).where(
+            NavigationItem.client_id == client_id,
+            (NavigationItem.table_name == clean_in) | (NavigationItem.label == clean_in)
+        )
         nav_res = await db_session.execute(nav_stmt)
         nav_item = nav_res.scalars().first()
         if nav_item:
             state.module = nav_item.module
-            log_event(client_id, action="CONTEXT_MODULE_SET", entity=user_input.strip(), table_name=user_input.strip(), details={"module": nav_item.module, "entity": user_input.strip()})
+            state.entity_name = nav_item.table_name or clean_in
+            if not state.collected_data: state.collected_data = {}
+            state.collected_data["ui_label"] = nav_item.label
+            log_event(client_id, action="CONTEXT_MODULE_SET", entity=nav_item.label, table_name=state.entity_name, details={"module": nav_item.module, "entity": state.entity_name})
+        else:
+            sm_stmt = select(SemanticMapping).where(
+                SemanticMapping.client_id == client_id,
+                (SemanticMapping.database_table == clean_in) | (SemanticMapping.ui_label == clean_in)
+            )
+            sm_res = await db_session.execute(sm_stmt)
+            sm_item = sm_res.scalars().first()
+            if sm_item:
+                state.entity_name = sm_item.database_table
+                if not state.collected_data: state.collected_data = {}
+                state.collected_data["ui_label"] = sm_item.ui_label
+            else:
+                state.entity_name = clean_in
 
-        state.entity_name = user_input.strip()
         state.current_step = "start"
         state.updated_at = datetime.utcnow()
         db_session.add(state)
@@ -328,7 +363,11 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
     return "Flow in unexpected state.", []
 
 async def handle_read_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
-    friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
+    ui_label = state.collected_data.get("ui_label") if state.collected_data else None
+    if ui_label:
+        friendly_name = ui_label
+    else:
+        friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "read"})
     

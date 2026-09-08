@@ -311,7 +311,7 @@ const MessageBubble = memo(({ msg, index, isLatest, onSelect, onSubmitForm, onSw
                 {(choices?.payload || entitySelection?.payload || []).map((opt: any, idx: number) => (
                     <button
                         key={idx}
-                        onClick={() => onSelect && onSelect(opt.table_name || opt.label, opt.index)} 
+                        onClick={() => onSelect && onSelect(opt.label || opt.table_name, opt.index)} 
                         className={`text-left text-xs transition-all p-3 rounded-xl shadow-sm flex items-center gap-2 group border ${
                             darkMode 
                             ? 'bg-gray-800 border-gray-700 hover:bg-gray-700 hover:border-blue-500 text-gray-200' 
@@ -511,8 +511,7 @@ const MessageBubble = memo(({ msg, index, isLatest, onSelect, onSubmitForm, onSw
           const resolvedTitle = 
             formAction?.payload?.display_title ?? 
             formAction?.payload?.label ?? 
-            formAction?.payload?.table_name ?? 
-            "Form";
+            (formAction?.payload?.table_name ? formAction.payload.table_name.replace(/_/g, ' ') : "Form");
           
           
           return (

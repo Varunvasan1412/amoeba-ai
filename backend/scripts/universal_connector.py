@@ -521,7 +521,7 @@ def scan_fullstack_semantics(root_path):
         last_primary_table = None
         last_ui_cols = None
 
-        def add_endpoint_entry(label_text, target_tbl, cols, src, default_filter=None, base_query=None, required_joins=None):
+        def add_endpoint_entry(label_text, target_tbl, cols, src, default_filter=None, base_query=None, required_joins=None, tab_group=None):
             key = (label_text.lower(), target_tbl)
             if key not in seen and len(label_text) >= 3:
                 semantics.append({
@@ -531,7 +531,8 @@ def scan_fullstack_semantics(root_path):
                     "ui_columns": cols,
                     "default_filter": default_filter,
                     "base_query": base_query,
-                    "required_joins": required_joins
+                    "required_joins": required_joins,
+                    "tab_group": tab_group
                 })
                 seen.add(key)
 
@@ -588,12 +589,13 @@ def scan_fullstack_semantics(root_path):
                         base_query_str = f"SELECT * FROM {target_tbl} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {target_tbl} WHERE {filter_str}".strip() if filter_str else None)
                         
                         source_ctrl = f"{best_m_data['file']}::{c_name}/{best_m_name}" if c_name else f"{best_m_data['file']}::{best_m_name}"
+                        screen_group = v['ui_label']
                         
-                        add_endpoint_entry(tab_name, target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
-                        add_endpoint_entry(f"{tab_name} List", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                        add_endpoint_entry(tab_name, target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str, tab_group=screen_group)
+                        add_endpoint_entry(f"{tab_name} List", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str, tab_group=screen_group)
                         if v['ui_label'].lower() not in tab_name.lower():
-                            add_endpoint_entry(f"{v['ui_label']} {tab_name}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
-                            add_endpoint_entry(f"{tab_name} {v['ui_label']}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str)
+                            add_endpoint_entry(f"{v['ui_label']} {tab_name}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str, tab_group=screen_group)
+                            add_endpoint_entry(f"{tab_name} {v['ui_label']}", target_tbl, tab_cols, source_ctrl, default_filter=filter_str or None, base_query=base_query_str, required_joins=joins_str, tab_group=screen_group)
                             
                         # Default active tab (Pending / First tab) represents the default screen view
                         if tab_idx == 0 or 'pending' in tab_l or primary_pending_table is None:

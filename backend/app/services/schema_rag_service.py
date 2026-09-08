@@ -310,9 +310,21 @@ Write a valid SELECT query for the requested entity, or 'SELECT 1 WHERE 1=0' if 
             except Exception as fb_err:
                 print(f"Self-healing fallback error: {fb_err}")
             
+    # Determine clean UI displayed title (never db table name)
+    top_ui_label = None
+    if active_semantics:
+        top_ui_label = active_semantics[0].ui_label
+    elif semantics and target_table:
+        matching_sm = next((s for s in semantics if s.database_table == target_table), None)
+        if matching_sm:
+            top_ui_label = matching_sm.ui_label
+    if not top_ui_label and target_table:
+        top_ui_label = target_table.replace("_", " ").title()
+
     return {
         "generated_sql": sql_query,
         "records": records,
         "thought_process": thought_process,
-        "user_message": user_message
+        "user_message": user_message,
+        "display_title": top_ui_label
     }
