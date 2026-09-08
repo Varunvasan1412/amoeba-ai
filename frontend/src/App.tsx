@@ -37,7 +37,7 @@ export default function App() {
   const isAdmin = location.pathname.startsWith("/admin");
 
   return (
-    <div className={`font-sans antialiased min-h-screen ${isAdmin ? "bg-gray-50" : "bg-transparent"}`}>
+    <div className={`font-sans antialiased ${isAdmin ? "min-h-screen bg-gray-50" : "w-full h-full bg-transparent"}`}>
          <AuthProvider>
             <AdminProvider>
                 <ToastContainer position="bottom-right" autoClose={3000} hideProgressBar={false} newestOnTop pauseOnFocusLoss draggable pauseOnHover theme="colored" />
@@ -161,7 +161,7 @@ export default function App() {
                     <Route path="/ai" element={<AmoebaChat />} />
 
                     <Route path="/" element={
-                        <div className="pointer-events-auto">
+                        <div className="pointer-events-auto w-full h-full">
                             <ChatWidget />
                         </div>
                     } />

@@ -30,25 +30,27 @@
   iframe.src = WIDGET_URL;
   iframe.allow = "microphone";
   
-  // Style Iframe (Floating Buttom Right)
+  // Style Iframe (Floating Bottom Right)
   iframe.style.position = "fixed";
   iframe.style.bottom = "20px";
   iframe.style.right = "20px";
-  iframe.style.width = "120px"; // Safe size for bubble
-  iframe.style.height = "120px";
+  iframe.style.width = "85px"; // Clean size for floating bubble
+  iframe.style.height = "85px";
   iframe.style.border = "none";
-  iframe.style.borderRadius = "12px";
+  iframe.style.outline = "none";
+  iframe.style.background = "transparent";
+  iframe.style.borderRadius = "0px";
   iframe.style.boxShadow = "none";
   iframe.style.zIndex = "2147483647"; // Max Z-Index
-  iframe.style.transition = "all 0.3s ease";
-  iframe.style.overflow = "hidden";
+  iframe.style.transition = "width 0.25s cubic-bezier(0.4, 0, 0.2, 1), height 0.25s cubic-bezier(0.4, 0, 0.2, 1)";
+  iframe.style.overflow = "visible";
   iframe.setAttribute("scrolling", "no");
+  iframe.setAttribute("allowtransparency", "true");
   
   // Optional: Responsive on mobile
   if (window.innerWidth < 480) {
-    iframe.style.width = "90%";
-    iframe.style.right = "5%";
-    iframe.style.height = "80%";
+    iframe.style.width = "85px";
+    iframe.style.height = "85px";
   }
 
   document.body.appendChild(iframe);
@@ -75,18 +77,35 @@
             window.location.href = event.data.payload;
         }
     }
-    // 3. Dynamic Resizing (Fixes "Invisible Box" & "Crease" issues)
+    // 3. Dynamic Resizing (Zero ghost box, 100% transparent iframe container)
     if (event.data && event.data.type === 'AMOEBA_RESIZE') {
         if (event.data.state === 'EXPANDED') {
-            iframe.style.width = "420px";
-            iframe.style.height = "650px";
-            iframe.style.boxShadow = "0 4px 20px rgba(0,0,0,0.2)"; // Shadow only when open
-            iframe.style.borderRadius = "16px";
-        } else {
-            iframe.style.width = "120px"; // Just enough for bubble
-            iframe.style.height = "120px";
-            iframe.style.boxShadow = "none"; // No shadow when closed (removes crease)
+            if (window.innerWidth < 480) {
+                iframe.style.width = "100vw";
+                iframe.style.height = "100vh";
+                iframe.style.bottom = "0px";
+                iframe.style.right = "0px";
+            } else {
+                iframe.style.width = "410px";
+                iframe.style.height = "640px";
+                iframe.style.bottom = "20px";
+                iframe.style.right = "20px";
+            }
+            iframe.style.boxShadow = "none"; // Absolutely NO outer shadow on iframe
             iframe.style.borderRadius = "0px";
+            iframe.style.background = "transparent";
+            iframe.style.border = "none";
+            iframe.style.outline = "none";
+        } else {
+            iframe.style.width = "85px"; // Clean size for floating bubble
+            iframe.style.height = "85px";
+            iframe.style.bottom = "20px";
+            iframe.style.right = "20px";
+            iframe.style.boxShadow = "none";
+            iframe.style.borderRadius = "0px";
+            iframe.style.background = "transparent";
+            iframe.style.border = "none";
+            iframe.style.outline = "none";
         }
     }
   });

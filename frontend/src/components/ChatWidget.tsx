@@ -1200,9 +1200,9 @@ export default function ChatWidget() {
   };
 
   return (
-    <div className={`${isWidgetMode ? "relative w-full h-full flex flex-col items-end justify-end" : "fixed bottom-5 right-5 z-50 flex flex-col items-end"} font-sans transition-theme`}>
+    <div className={`${isWidgetMode ? "relative w-full h-full flex flex-col items-end justify-end p-2 sm:p-2.5 box-border bg-transparent" : "fixed bottom-5 right-5 z-50 flex flex-col items-end"} font-sans transition-theme`}>
       {isOpen && (
-        <div className={`w-96 h-[550px] shadow-2xl rounded-2xl border flex flex-col ${isWidgetMode ? "mb-0" : "mb-4"} overflow-hidden transition-all duration-300 ease-in-out transition-theme ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
+        <div className={`${isWidgetMode ? "w-full h-full sm:max-w-[390px] sm:max-h-[615px] mb-0" : "w-96 h-[550px] mb-4"} shadow-2xl rounded-2xl border flex flex-col overflow-hidden transition-all duration-300 ease-in-out transition-theme ${darkMode ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200'}`}>
           {/* Header */}
           <div className={`p-4 text-white flex flex-col gap-4 shadow-lg z-10 flex-shrink-0 transition-theme ${darkMode ? 'bg-gray-900' : 'bg-slate-900'}`}>
             <div className="flex justify-between items-center w-full min-h-[40px]">
