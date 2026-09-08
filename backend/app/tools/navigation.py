@@ -180,16 +180,19 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     #    Score = (Matched Label Tokens) + (Matched Parent Tokens)
     # ---------------------------------------------------------
     scored_candidates = []
+    stopwords = {"list", "page", "screen", "table", "view", "menu", "details", "the"}
+    core_query_tokens = query_tokens - stopwords
+    match_tokens = core_query_tokens if core_query_tokens else query_tokens
     
     for r in processed_routes:
         label_tokens = set(r["label"].lower().split())
         parent_tokens = set(p.lower() for p in r["parents"])
         
-        # We want to match ALL query tokens against the union of (Label + Parents)
+        # We want to match ALL core query tokens against the union of (Label + Parents)
         doc_tokens = label_tokens.union(parent_tokens)
         
-        # Check if ALL query tokens are present in the doc_tokens
-        if query_tokens.issubset(doc_tokens):
+        # Check if ALL core query tokens are present in the doc_tokens
+        if match_tokens.issubset(doc_tokens):
             label_overlap = len(query_tokens.intersection(label_tokens))
             score = 100 + label_overlap
             scored_candidates.append((score, r))
@@ -206,30 +209,49 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                 embedder = OpenAIEmbeddings(model="text-embedding-3-small")
                 query_vector = await embedder.aembed_query(query)
                 
-                # Fetch top 5 vector matches
+                # Fetch top 8 vector matches
                 stmt = select(NavigationItem).where(
                     NavigationItem.client_id == client_id,
                     NavigationItem.embedding != None
-                ).order_by(NavigationItem.embedding.cosine_distance(query_vector)).limit(5)
+                ).order_by(NavigationItem.embedding.cosine_distance(query_vector)).limit(8)
                 
                 vec_res = await session.execute(stmt)
                 vec_items = vec_res.scalars().all()
                 
                 if vec_items:
-                    # Convert to the expected ambiguous_list format and deduplicate
+                    # Convert to the expected ambiguous_list format and clean/deduplicate
                     unique_vec = []
                     seen_paths = set()
                     
                     for item in vec_items:
-                        if item.path not in seen_paths:
+                        raw_path = (item.path or "").strip()
+                        # Reject internal view template files
+                        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/']):
+                            continue
+                        norm_path = _normalize_route_path(raw_path)
+                        canonical_path = re.sub(r'/\d+$', '', norm_path)
+                        if not canonical_path.startswith('/'):
+                            canonical_path = '/' + canonical_path
+                            
+                        clean_label = item.label or ""
+                        clean_label = re.sub(r'^(?:newlook|varun_sterling|sterling_company)[\s\-:]+', '', clean_label, flags=re.IGNORECASE).strip()
+                        if not clean_label:
+                            clean_label = item.label
+                            
+                        module_val = item.module
+                        if not module_val or module_val.lower() in {'newlook', 'varun_sterling', 'sterling_company', 'app', 'default'}:
+                            url_parts = [p for p in canonical_path.split('/') if p]
+                            module_val = url_parts[0].capitalize() if url_parts else None
+
+                        if canonical_path not in seen_paths:
                             unique_vec.append({
-                                "label": item.label,
-                                "path": item.path,
-                                "module": item.module,
+                                "label": clean_label,
+                                "path": canonical_path,
+                                "module": module_val,
                                 "is_custom": not item.is_discovered,
-                                "parents": [item.module] if item.module else []
+                                "parents": _infer_parents_from_path(canonical_path, module_val)
                             })
-                            seen_paths.add(item.path)
+                            seen_paths.add(canonical_path)
                             
                     print(f"🎯 [FastPath Vector Search] Found {len(unique_vec)} unique semantic matches for '{query}'")
                     
