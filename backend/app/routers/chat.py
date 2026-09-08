@@ -592,9 +592,54 @@ async def websocket_endpoint(
                                         await websocket.send_json({"type": "done", "session_id": s_id})
                                         return
 
+                                if active_choice_state and active_choice_state.intent == "dual_action_disambiguation" and active_choice_state.current_step == "resolve_dual_action":
+                                    c_data = active_choice_state.collected_data or {}
+                                    dest_label = c_data.get("label", active_choice_state.entity_name or "this page")
+                                    dest_path = c_data.get("path")
+                                    orig_q = c_data.get("original_query", user_text)
+                                    user_trimmed = user_text.strip()
+                                    
+                                    is_table_choice = False
+                                    is_nav_choice = False
+                                    
+                                    if user_trimmed == "1":
+                                        is_table_choice = True
+                                    elif user_trimmed == "2":
+                                        is_nav_choice = True
+                                    elif any(k in user_trimmed.lower() for k in ["table", "view", "show table", "list table", "data", "records", "rows"]):
+                                        is_table_choice = True
+                                    elif any(k in user_trimmed.lower() for k in ["navigate", "open", "go to", "page", "screen"]):
+                                        is_nav_choice = True
+                                    elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        cancel_msg = "Selection cancelled."
+                                        ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
+                                    if is_nav_choice and dest_path:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        nav_text = f"Taking you to **{dest_label}** now..."
+                                        nav_actions = [{"type": "NAVIGATE", "payload": dest_path}]
+                                        ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": nav_text, "actions": nav_actions, "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+                                    elif is_table_choice:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        user_text = f"view {dest_label.lower()} table"
+
                                 # 1. FastPath Navigation (GLOBAL FOR ALL MODES)
                                 from app.services.fastpath_service import execute_fastpath
-                                fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id}, db_session=local_session)
+                                fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id, "mode": mode}, db_session=local_session)
                                 
                                 if fast_text:
                                     ai_msg = ChatMessage(role="ai", content=fast_text, actions=fast_actions, client_id=client_id, session_id=s_id)

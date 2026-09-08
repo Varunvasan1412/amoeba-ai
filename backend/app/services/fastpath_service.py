@@ -46,7 +46,35 @@ def is_export_intent(query: str) -> bool:
         query
     ))
 
+def has_explicit_data_intent(query: str) -> bool:
+    """
+    Returns True if the query explicitly indicates wanting a data table,
+    records, rows, or specific column values rather than page navigation.
+    """
+    q_low = query.strip().lower()
+    # Explicit table/data nouns
+    if re.search(r"\b(table|tables|column|columns|record|records|row|rows|field|fields|data)\b", q_low):
+        return True
+    # Explicit SQL-like clauses or column queries
+    if re.search(r"\b(with\s+(?:the\s+)?(?:only\s+)?column|select\s+\w+|where\s+\w+|group\s+by|order\s+by|sum\s+of|count\s+of|average\s+of)\b", q_low):
+        return True
+    return False
+
+def is_explicit_navigation_intent(query: str) -> bool:
+    """
+    Matches queries that explicitly command opening/going/navigating to a screen or page,
+    or direct button click strings (e.g. contains '→' or '->').
+    """
+    if "→" in query or "->" in query:
+        return True
+    q_low = query.strip().lower()
+    return bool(re.search(r"\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|open(?:\s+the)?|where\s+is)\b", q_low))
+
 def is_navigation_intent(query: str) -> bool:
+    # 0. If user explicitly asks for table/data, this is NEVER navigation!
+    if has_explicit_data_intent(query):
+        return False
+
     # 1. Preserve Report vs Data Disambiguation:
     # If the user says "show me the [X] report" without explicit navigation words (open/go to/navigate),
     # let it fall through to intent_service report disambiguation.
@@ -219,6 +247,58 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
         path, ambiguous_list = await fast_lookup_route(target_page, db_session, int(client_id_val))
 
         if path:
+            # 1. If user explicitly commanded navigation (e.g. "navigate to", "go to", "open", button arrow):
+            if is_explicit_navigation_intent(user_input):
+                return f"Navigating...", [{"type": "NAVIGATE", "payload": path}]
+
+            # 2. In Operations mode with conversational queries ("show me", "view", "list", bare names):
+            # Prompt the user to choose between viewing the table data here in chat or navigating to the page!
+            mode = context.get("mode", "operations")
+            if mode == "operations":
+                from app.tools.navigation import load_client_sitemap
+                from app.models.conversation_state import ConversationState
+                
+                all_client_routes = await load_client_sitemap(db_session, int(client_id_val))
+                matched_label = target_page.title()
+                for r in all_client_routes:
+                    if r["path"].strip().lower() == path.strip().lower():
+                        matched_label = r["label"]
+                        break
+
+                existing_states = await db_session.execute(
+                    select(ConversationState).where(
+                        ConversationState.client_id == int(client_id_val),
+                        ConversationState.session_id == session_id
+                    )
+                )
+                for old_s in existing_states.scalars().all():
+                    await db_session.delete(old_s)
+
+                dual_state = ConversationState(
+                    client_id=int(client_id_val),
+                    session_id=session_id,
+                    intent="dual_action_disambiguation",
+                    entity_name=matched_label,
+                    current_step="resolve_dual_action",
+                    collected_data={
+                        "label": matched_label,
+                        "path": path,
+                        "original_query": user_input
+                    }
+                )
+                db_session.add(dual_state)
+                await db_session.commit()
+
+                prompt_text = f"I found **{matched_label}**. Would you like to view the table data here in chat or navigate to the page?"
+                actions = [{
+                    "type": "CHOICE",
+                    "payload": [
+                        {"label": f"📊 View {matched_label} Table", "value": f"view {matched_label} table"},
+                        {"label": f"🚀 Navigate to {matched_label} Page", "value": f"navigate to {matched_label}"}
+                    ]
+                }]
+                return prompt_text, actions
+
             return f"Navigating...", [{"type": "NAVIGATE", "payload": path}]
             
         # If user used a conversational query ("show me", "view", "list") without explicit navigation verbs,

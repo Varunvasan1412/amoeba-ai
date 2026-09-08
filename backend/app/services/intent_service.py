@@ -117,10 +117,14 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             break
     
     # Also detect aggregation-style data queries as implicit "read"
-    aggregation_patterns = [r"\bhow\s+many\b", r"\btotal\b", r"\bcount\b", r"\bnumber\s+of\b", r"\bsum\s+of\b", r"\baverage\b"]
+    aggregation_patterns = [
+        r"\bhow\s+many\b", r"\btotal\b", r"\bcount\b", r"\bnumber\s+of\b", r"\bsum\s+of\b", r"\baverage\b",
+        r"\btable(s)?\b", r"\bcolumn(s)?\b", r"\brecord(s)?\b", r"\brow(s)?\b", r"\bdata\b"
+    ]
     is_data_query = any(re.search(p, query_lower) for p in aggregation_patterns)
-    if is_data_query and not detected_intent:
-        detected_intent = "read"
+    if is_data_query:
+        if not detected_intent or detected_intent == "navigate":
+            detected_intent = "read"
     
     # Priority 1: Pure inquiries — BUT only if no CRUD/data intent was detected
     if is_pure_inquiry and not detected_intent:
@@ -578,11 +582,14 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
 
         # Strategy 1: Table Names
         if not detected_entity:
-             for t in all_tables:
-                 if normalize_entity_name(t["name"]) == norm_query:
-                     detected_entity = t["name"]
-                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
-                     break
+            for t in all_tables:
+                t_raw = t["name"]
+                t_norm = normalize_entity_name(t_raw)
+                t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
+                if t_norm == norm_query or (t_base and t_base == norm_query):
+                    detected_entity = t_raw
+                    detected_module = await resolve_module_for_table(detected_entity, client_id, session)
+                    break
 
         # Strategy 2: Legacy Match Nav (Table-bound)
         if not detected_entity:
@@ -613,12 +620,14 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
 
         # Strategy 4: Fallback to Raw Tables (Partial)
         if not detected_entity:
-             for t in all_tables:
-                 t_norm = normalize_entity_name(t["name"])
-                 if t_norm and t_norm in norm_query:
-                     detected_entity = t["name"]
-                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
-                     break
+            for t in all_tables:
+                t_raw = t["name"]
+                t_norm = normalize_entity_name(t_raw)
+                t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
+                if (t_norm and t_norm in norm_query) or (t_base and len(t_base) >= 3 and re.search(rf"\b{re.escape(t_base)}\b", norm_query)):
+                    detected_entity = t_raw
+                    detected_module = await resolve_module_for_table(detected_entity, client_id, session)
+                    break
                      
         # Strategy 5: Fuzzy Matching (Typo Tolerance / Phrase search inside query)
         if not detected_entity and len(norm_query) >= 3:
