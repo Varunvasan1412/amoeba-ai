@@ -442,6 +442,111 @@ async def websocket_endpoint(
                                     return
 
                                 # E. Route to Service
+                                # 0.9 Multi-Turn Disambiguation Choice Resolution (Tab & Report choices)
+                                from app.services.conversation_service import get_active_conversation
+                                from app.models.conversation_state import ConversationState
+                                active_choice_state = await get_active_conversation(local_session, int(client_id), s_id)
+                                
+                                if active_choice_state and active_choice_state.current_step == "resolve_tab_choice":
+                                    saved_tabs = active_choice_state.collected_data.get("tabs", []) if active_choice_state.collected_data else []
+                                    user_trimmed = user_text.strip()
+                                    chosen_tab = None
+                                    if user_trimmed.isdigit():
+                                        idx = int(user_trimmed) - 1
+                                        if 0 <= idx < len(saved_tabs):
+                                            chosen_tab = saved_tabs[idx]
+                                    else:
+                                        for t in saved_tabs:
+                                            if t.lower() in user_trimmed.lower() or user_trimmed.lower() in t.lower():
+                                                chosen_tab = t
+                                                break
+                                    
+                                    if chosen_tab:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        user_text = f"Show me the {chosen_tab.lower()} list"
+                                    elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        cancel_msg = "Tab selection cancelled."
+                                        ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
+                                if active_choice_state and active_choice_state.intent == "report_disambiguation" and active_choice_state.current_step == "resolve_report_choice":
+                                    c_data = active_choice_state.collected_data or {}
+                                    saved_opts = c_data.get("options", [])
+                                    rep_entity = c_data.get("entity", "Total Sales Report")
+                                    rep_url = c_data.get("url")
+                                    rep_table = c_data.get("table")
+                                    user_trimmed = user_text.strip()
+                                    chosen_opt = None
+
+                                    if user_trimmed.isdigit():
+                                        idx = int(user_trimmed) - 1
+                                        if 0 <= idx < len(saved_opts):
+                                            chosen_opt = saved_opts[idx]
+                                    else:
+                                        for opt_lbl in saved_opts:
+                                            if opt_lbl.lower() in user_trimmed.lower() or user_trimmed.lower() in opt_lbl.lower():
+                                                chosen_opt = opt_lbl
+                                                break
+
+                                    if chosen_opt or any(k in user_trimmed.lower() for k in ["view", "table", "open", "page", "navigate", "download", "export"]):
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+
+                                        chosen_str = (chosen_opt or user_trimmed).lower()
+                                        if any(k in chosen_str for k in ["open", "page", "navigate"]):
+                                            nav_dest = rep_url or "https://newlook.ahattrickz.com/report/total_sale"
+                                            nav_text = f"Taking you to **{rep_entity}** now..."
+                                            nav_actions = [{"type": "NAVIGATE", "payload": nav_dest}]
+                                            ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
+                                            local_session.add(ai_msg)
+                                            await local_session.commit()
+                                            await websocket.send_json({"text": nav_text, "actions": nav_actions, "type": "chat_response"})
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
+                                        elif any(k in chosen_str for k in ["download", "export", "document"]):
+                                            from app.models.report_registry import ReportRegistry
+                                            reg_stmt = select(ReportRegistry).where(
+                                                ReportRegistry.client_id == int(client_id),
+                                                ReportRegistry.display_name.ilike(f"%{rep_entity}%")
+                                            )
+                                            matched_rep = (await local_session.execute(reg_stmt)).scalars().first()
+                                            if matched_rep:
+                                                from app.services.fastpath_service import export_sql_to_excel
+                                                from app.core.config import settings
+                                                file_path = export_sql_to_excel(matched_rep.sql_template)
+                                                file_url = f"{settings.PUBLIC_BASE_URL}/{file_path}" if "static" not in file_path else file_path
+                                                res_t = f"Here is your {matched_rep.display_name}: {file_url}"
+                                                res_a = [{"type": "TOOL_RESULT", "payload": file_url}]
+                                            else:
+                                                res_t = f"This export template hasn’t been configured in the Control Panel yet. You can view the data in chat and export directly from the data table."
+                                                res_a = []
+                                            ai_msg = ChatMessage(role="ai", content=res_t, actions=res_a, client_id=client_id, session_id=s_id)
+                                            local_session.add(ai_msg)
+                                            await local_session.commit()
+                                            await websocket.send_json({"text": res_t, "actions": res_a, "type": "chat_response"})
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
+                                        else:
+                                            # User chose to view the data table
+                                            user_text = f"view {rep_entity.lower()} table"
+                                    elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        cancel_msg = "Report selection cancelled."
+                                        ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
                                 # 1. FastPath Navigation (GLOBAL FOR ALL MODES)
                                 from app.services.fastpath_service import execute_fastpath
                                 fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id}, db_session=local_session)
@@ -456,111 +561,6 @@ async def websocket_endpoint(
 
                                 if mode == "operations":
                                     # Suppression: log_audit(client_id, "CHAT_MODE_OPERATIONS", ...)
-                                    
-                                    # 1.9 Tab Disambiguation Choice Resolution
-                                    from app.services.conversation_service import get_active_conversation
-                                    from app.models.conversation_state import ConversationState
-                                    tab_state = await get_active_conversation(local_session, int(client_id), s_id)
-                                    if tab_state and tab_state.current_step == "resolve_tab_choice":
-                                        saved_tabs = tab_state.collected_data.get("tabs", []) if tab_state.collected_data else []
-                                        user_trimmed = user_text.strip()
-                                        chosen_tab = None
-                                        if user_trimmed.isdigit():
-                                            idx = int(user_trimmed) - 1
-                                            if 0 <= idx < len(saved_tabs):
-                                                chosen_tab = saved_tabs[idx]
-                                        else:
-                                            for t in saved_tabs:
-                                                if t.lower() in user_trimmed.lower() or user_trimmed.lower() in t.lower():
-                                                    chosen_tab = t
-                                                    break
-                                        
-                                        if chosen_tab:
-                                            await local_session.delete(tab_state)
-                                            await local_session.commit()
-                                            user_text = f"Show me the {chosen_tab.lower()} list"
-                                        elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
-                                            await local_session.delete(tab_state)
-                                            await local_session.commit()
-                                            cancel_msg = "Tab selection cancelled."
-                                            ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
-                                            local_session.add(ai_msg)
-                                            await local_session.commit()
-                                            await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
-                                            await websocket.send_json({"type": "done", "session_id": s_id})
-                                            return
-
-                                    # 1.95 Report Disambiguation Choice Resolution
-                                    if tab_state and tab_state.intent == "report_disambiguation" and tab_state.current_step == "resolve_report_choice":
-                                        c_data = tab_state.collected_data or {}
-                                        saved_opts = c_data.get("options", [])
-                                        rep_entity = c_data.get("entity", "Total Sales Report")
-                                        rep_url = c_data.get("url")
-                                        rep_table = c_data.get("table")
-                                        user_trimmed = user_text.strip()
-                                        chosen_opt = None
-
-                                        if user_trimmed.isdigit():
-                                            idx = int(user_trimmed) - 1
-                                            if 0 <= idx < len(saved_opts):
-                                                chosen_opt = saved_opts[idx]
-                                        else:
-                                            for opt_lbl in saved_opts:
-                                                if opt_lbl.lower() in user_trimmed.lower() or user_trimmed.lower() in opt_lbl.lower():
-                                                    chosen_opt = opt_lbl
-                                                    break
-
-                                        if chosen_opt or any(k in user_trimmed.lower() for k in ["view", "table", "open", "page", "navigate", "download", "export"]):
-                                            await local_session.delete(tab_state)
-                                            await local_session.commit()
-
-                                            chosen_str = (chosen_opt or user_trimmed).lower()
-                                            if any(k in chosen_str for k in ["open", "page", "navigate"]):
-                                                nav_dest = rep_url or "https://newlook.ahattrickz.com/report/total_sale"
-                                                nav_text = f"Taking you to **{rep_entity}** now..."
-                                                nav_actions = [{"type": "NAVIGATE", "payload": nav_dest}]
-                                                ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
-                                                local_session.add(ai_msg)
-                                                await local_session.commit()
-                                                await websocket.send_json({"text": nav_text, "actions": nav_actions, "type": "chat_response"})
-                                                await websocket.send_json({"type": "done", "session_id": s_id})
-                                                return
-                                            elif any(k in chosen_str for k in ["download", "export", "document"]):
-                                                from app.models.report_registry import ReportRegistry
-                                                reg_stmt = select(ReportRegistry).where(
-                                                    ReportRegistry.client_id == int(client_id),
-                                                    ReportRegistry.display_name.ilike(f"%{rep_entity}%")
-                                                )
-                                                matched_rep = (await local_session.execute(reg_stmt)).scalars().first()
-                                                if matched_rep:
-                                                    from app.services.fastpath_service import export_sql_to_excel
-                                                    from app.core.config import settings
-                                                    file_path = export_sql_to_excel(matched_rep.sql_template)
-                                                    file_url = f"{settings.PUBLIC_BASE_URL}/{file_path}" if "static" not in file_path else file_path
-                                                    res_t = f"Here is your {matched_rep.display_name}: {file_url}"
-                                                    res_a = [{"type": "TOOL_RESULT", "payload": file_url}]
-                                                else:
-                                                    res_t = f"This report document hasn't been configured in the Control Panel yet. However, you can view the data table and use the Export Excel/PDF buttons at the top of the table!"
-                                                    res_a = []
-                                                ai_msg = ChatMessage(role="ai", content=res_t, actions=res_a, client_id=client_id, session_id=s_id)
-                                                local_session.add(ai_msg)
-                                                await local_session.commit()
-                                                await websocket.send_json({"text": res_t, "actions": res_a, "type": "chat_response"})
-                                                await websocket.send_json({"type": "done", "session_id": s_id})
-                                                return
-                                            else:
-                                                # User chose to view the data table
-                                                user_text = f"view {rep_entity.lower()} table"
-                                        elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
-                                            await local_session.delete(tab_state)
-                                            await local_session.commit()
-                                            cancel_msg = "Report selection cancelled."
-                                            ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
-                                            local_session.add(ai_msg)
-                                            await local_session.commit()
-                                            await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
-                                            await websocket.send_json({"type": "done", "session_id": s_id})
-                                            return
 
                                     # 2. CRUD Intent (CONTEXT AWARE)
                                     from app.services.intent_service import resolve_crud_intent
