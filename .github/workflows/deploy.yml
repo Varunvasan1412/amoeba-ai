@@ -18,8 +18,7 @@ jobs:
           password: ${{ secrets.VPS_PASSWORD }}
           script: |
             cd amoeba-ai
-            git checkout main
-            git stash
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
             # Restart only the containers that have changes, or build new ones if needed
             docker compose up -d --build
