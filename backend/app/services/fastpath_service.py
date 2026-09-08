@@ -22,9 +22,21 @@ from app.core.rate_limiter import limiter
 # 1. INTENT DETECTION
 # -----------------------------------------------------------------------------
 
+def is_explicit_export_intent(query: str) -> bool:
+    """
+    Matches queries that explicitly demand a downloadable file export.
+    """
+    return bool(re.search(
+        r"(?i)\b("
+        r"export|extract|download|convert|"
+        r"xlsx|excel|csv|spreadsheet"
+        r")\b",
+        query
+    ))
+
 def is_export_intent(query: str) -> bool:
     """
-    Liberal detection to avoid LLM fallthrough.
+    Detection for registry matching (includes 'report').
     """
     return bool(re.search(
         r"(?i)\b("
@@ -345,14 +357,15 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 log_audit(int(client_id), "report_failed", {"error": str(e)})
                 return "I couldn't generate that report due to a temporary system issue. Please try again later.", []
 
-    # B. Check Generic Export Intent (Hard Safety Guard)
-    # If user wants to export/report but it wasn't in registry -> TERMINATE
-    if is_export_intent(user_input):
-        print(f"[ROUTER] Generic Export Intent Detected (No Registry Match): {user_input}")
-    if is_export_intent(user_input):
-        print(f"[ROUTER] Generic Export Intent Detected (No Registry Match): {user_input}")
+    # B. Check Explicit Export Intent (Hard Safety Guard)
+    # Only terminate if user explicitly demanded a downloadable file export (e.g. export, download, xlsx, csv)
+    # and no registry match was found.
+    # If the user mentioned "report" without explicit file-download verbs (e.g., "Show me the total sales report"),
+    # DO NOT terminate here! Let it fall through so navigation and intent services can offer the interactive choice.
+    if is_explicit_export_intent(user_input):
+        print(f"[ROUTER] Explicit Export Intent Detected (No Registry Match): {user_input}")
         if context.get("client_id"):
              log_audit(int(context["client_id"]), "invalid_report_attempt", {"query": user_input})
-        return "This report hasn’t been configured yet. Please ask your admin to enable it in the Control Panel.", []
+        return "This export template hasn’t been configured in the Control Panel yet. You can view the data in chat and export directly from the data table.", []
 
     return None, []

@@ -490,6 +490,78 @@ async def websocket_endpoint(
                                             await websocket.send_json({"type": "done", "session_id": s_id})
                                             return
 
+                                    # 1.95 Report Disambiguation Choice Resolution
+                                    if tab_state and tab_state.intent == "report_disambiguation" and tab_state.current_step == "resolve_report_choice":
+                                        c_data = tab_state.collected_data or {}
+                                        saved_opts = c_data.get("options", [])
+                                        rep_entity = c_data.get("entity", "Total Sales Report")
+                                        rep_url = c_data.get("url")
+                                        rep_table = c_data.get("table")
+                                        user_trimmed = user_text.strip()
+                                        chosen_opt = None
+
+                                        if user_trimmed.isdigit():
+                                            idx = int(user_trimmed) - 1
+                                            if 0 <= idx < len(saved_opts):
+                                                chosen_opt = saved_opts[idx]
+                                        else:
+                                            for opt_lbl in saved_opts:
+                                                if opt_lbl.lower() in user_trimmed.lower() or user_trimmed.lower() in opt_lbl.lower():
+                                                    chosen_opt = opt_lbl
+                                                    break
+
+                                        if chosen_opt or any(k in user_trimmed.lower() for k in ["view", "table", "open", "page", "navigate", "download", "export"]):
+                                            await local_session.delete(tab_state)
+                                            await local_session.commit()
+
+                                            chosen_str = (chosen_opt or user_trimmed).lower()
+                                            if any(k in chosen_str for k in ["open", "page", "navigate"]):
+                                                nav_dest = rep_url or "https://newlook.ahattrickz.com/report/total_sale"
+                                                nav_text = f"Taking you to **{rep_entity}** now..."
+                                                nav_actions = [{"type": "NAVIGATE", "payload": nav_dest}]
+                                                ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
+                                                local_session.add(ai_msg)
+                                                await local_session.commit()
+                                                await websocket.send_json({"text": nav_text, "actions": nav_actions, "type": "chat_response"})
+                                                await websocket.send_json({"type": "done", "session_id": s_id})
+                                                return
+                                            elif any(k in chosen_str for k in ["download", "export", "document"]):
+                                                from app.models.report_registry import ReportRegistry
+                                                reg_stmt = select(ReportRegistry).where(
+                                                    ReportRegistry.client_id == int(client_id),
+                                                    ReportRegistry.display_name.ilike(f"%{rep_entity}%")
+                                                )
+                                                matched_rep = (await local_session.execute(reg_stmt)).scalars().first()
+                                                if matched_rep:
+                                                    from app.services.fastpath_service import export_sql_to_excel
+                                                    from app.core.config import settings
+                                                    file_path = export_sql_to_excel(matched_rep.sql_template)
+                                                    file_url = f"{settings.PUBLIC_BASE_URL}/{file_path}" if "static" not in file_path else file_path
+                                                    res_t = f"Here is your {matched_rep.display_name}: {file_url}"
+                                                    res_a = [{"type": "TOOL_RESULT", "payload": file_url}]
+                                                else:
+                                                    res_t = f"This report document hasn't been configured in the Control Panel yet. However, you can view the data table and use the Export Excel/PDF buttons at the top of the table!"
+                                                    res_a = []
+                                                ai_msg = ChatMessage(role="ai", content=res_t, actions=res_a, client_id=client_id, session_id=s_id)
+                                                local_session.add(ai_msg)
+                                                await local_session.commit()
+                                                await websocket.send_json({"text": res_t, "actions": res_a, "type": "chat_response"})
+                                                await websocket.send_json({"type": "done", "session_id": s_id})
+                                                return
+                                            else:
+                                                # User chose to view the data table
+                                                user_text = f"view {rep_entity.lower()} table"
+                                        elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                            await local_session.delete(tab_state)
+                                            await local_session.commit()
+                                            cancel_msg = "Report selection cancelled."
+                                            ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                            local_session.add(ai_msg)
+                                            await local_session.commit()
+                                            await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
+
                                     # 2. CRUD Intent (CONTEXT AWARE)
                                     from app.services.intent_service import resolve_crud_intent
                                     from app.services.conversation_service import process_conversation
@@ -523,6 +595,47 @@ async def websocket_endpoint(
                                             entity_name=screen_name,
                                             current_step="resolve_tab_choice",
                                             collected_data={"tabs": [t["label"] for t in tabs]}
+                                        )
+                                        local_session.add(ambig_state)
+
+                                        ai_msg = ChatMessage(role="ai", content=res_text, actions=res_actions, client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": res_text, "actions": res_actions, "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
+                                    # Handle Report vs Menu Disambiguation Intent directly
+                                    if crud_intent and crud_intent.get("intent") == "report_disambiguation":
+                                        rep_name = crud_intent.get("entity", "this report")
+                                        opts = crud_intent.get("options", [])
+                                        res_text = f"I found the **{rep_name}**. Which one are you referring to?"
+                                        res_actions = [{
+                                            "type": "CHOICE",
+                                            "payload": opts
+                                        }]
+
+                                        existing_states = await local_session.execute(
+                                            select(ConversationState).where(
+                                                ConversationState.client_id == int(client_id),
+                                                ConversationState.session_id == s_id
+                                            )
+                                        )
+                                        for old_s in existing_states.scalars().all():
+                                            await local_session.delete(old_s)
+
+                                        ambig_state = ConversationState(
+                                            client_id=int(client_id),
+                                            session_id=s_id,
+                                            intent="report_disambiguation",
+                                            entity_name=rep_name,
+                                            current_step="resolve_report_choice",
+                                            collected_data={
+                                                "options": [o["label"] for o in opts],
+                                                "entity": rep_name,
+                                                "url": crud_intent.get("url"),
+                                                "table": crud_intent.get("table")
+                                            }
                                         )
                                         local_session.add(ambig_state)
 

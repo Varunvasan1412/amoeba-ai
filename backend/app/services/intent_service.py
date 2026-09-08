@@ -361,6 +361,56 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                 print(f"🎯 [INTENT] Codebase Semantic Mapping Match (TOP PRIORITY): '{best_sm.ui_label}' -> {best_sm.database_table} (Score: {best_sm_score})")
 
+        # =========================================================================
+        # STRATEGY 0B: Report vs Menu / Data Disambiguation Check
+        # When user query contains "report" (e.g. "show me the total sales report"),
+        # check if it refers to a screen/menu that has both a data table and a page.
+        # Ask user whether they want to view the data table, open the page, or export.
+        # =========================================================================
+        has_report_kw = bool(re.search(r"\breport(s)?\b", query_lower))
+        is_explicit_view = bool(re.search(r"\b(view|table|grid|records)\b", query_lower)) or clean_q.startswith("view")
+        is_explicit_open = bool(re.search(r"\b(open|go\s+to|navigate|take\s+me)\b", query_lower))
+        is_explicit_download = bool(re.search(r"\b(download|export|xlsx|excel|csv)\b", query_lower))
+
+        if has_report_kw and not is_explicit_view and not is_explicit_open and not is_explicit_download:
+            target_ui_label = best_sm.ui_label if best_sm else None
+            target_table = best_sm.database_table if best_sm else None
+            
+            # Check navigation items for matching route/page
+            matching_nav = None
+            for nav in unique_navs:
+                nav_clean = nav.label.lower().strip()
+                if (target_ui_label and target_ui_label.lower() in nav_clean) or (nav_clean in clean_q or clean_q in nav_clean):
+                    matching_nav = nav
+                    break
+                elif "report" in nav_clean and any(w in nav_clean for w in q_toks if w not in NON_ENTITY_WORDS):
+                    matching_nav = nav
+                    break
+                    
+            if not target_ui_label and matching_nav:
+                target_ui_label = matching_nav.label
+                target_table = matching_nav.table_name or "invoice_detail"
+                
+            if target_ui_label:
+                disp_title = target_ui_label
+                if "report" not in disp_title.lower():
+                    disp_title = f"{disp_title} Report"
+                    
+                opts = [{"label": f"View {disp_title}"}]
+                nav_url = matching_nav.path if matching_nav else None
+                if nav_url:
+                    opts.append({"label": f"Open {disp_title} Page"})
+                opts.append({"label": "Download Report Document"})
+                
+                print(f"🔀 [INTENT] Report Disambiguation Triggered for '{disp_title}' (URL: {nav_url})")
+                return {
+                    "intent": "report_disambiguation",
+                    "entity": disp_title,
+                    "table": target_table,
+                    "url": nav_url,
+                    "options": opts
+                }
+
         # STRATEGY -1: Direct Navigation Label Match
         # This allows "Create Sales Enquiry" to match NavigationItem.label exactly
         if not detected_entity:
