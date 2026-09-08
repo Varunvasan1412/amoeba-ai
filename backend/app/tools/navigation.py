@@ -219,11 +219,13 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                 embedder = OpenAIEmbeddings(model="text-embedding-3-small")
                 query_vector = await embedder.aembed_query(query)
                 
-                # Fetch top 8 vector matches
+                # Fetch vector matches with strict confidence threshold (cosine_distance < 0.28)
+                dist_col = NavigationItem.embedding.cosine_distance(query_vector)
                 stmt = select(NavigationItem).where(
                     NavigationItem.client_id == client_id,
-                    NavigationItem.embedding != None
-                ).order_by(NavigationItem.embedding.cosine_distance(query_vector)).limit(8)
+                    NavigationItem.embedding != None,
+                    dist_col < 0.28
+                ).order_by(dist_col).limit(5)
                 
                 vec_res = await session.execute(stmt)
                 vec_items = vec_res.scalars().all()
