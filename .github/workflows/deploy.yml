@@ -19,6 +19,7 @@ jobs:
           script: |
             cd amoeba-ai
             git checkout main
-            git pull
+            git stash
+            git pull origin main
             # Restart only the containers that have changes, or build new ones if needed
             docker compose up -d --build
