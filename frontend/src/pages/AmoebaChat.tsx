@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, memo } from "react";
+import { useState, useEffect, useRef, useCallback, memo, useMemo } from "react";
 import { MessageCircle, Send, Loader2, Trash2, Plus, MessageSquare, Square, Pencil, Sun, Moon, PanelLeftOpen, PanelLeftClose, Paperclip, SlidersHorizontal, Building2, FileText, X, AlertCircle, Mic, Download, RefreshCw, BarChart3, Table2 } from "lucide-react";
 import { toast } from "react-toastify";
 import ReactMarkdown from "react-markdown";
@@ -45,7 +45,25 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
   const success = msg.actions?.find(a => a.type === "success");
   const switchModeAction = msg.actions?.find(a => a.type === "SWITCH_MODE");
   const sourcesAction = msg.actions?.find(a => a.type === "SOURCES");
-  const dataTable = msg.actions?.find(a => a.type === "data_table");
+  const rawDataTable = msg.actions?.find(a => a.type === "data_table" || a.type === "DISPLAY_TABLE");
+  const dataTable = useMemo(() => {
+    if (!rawDataTable || !rawDataTable.payload) return null;
+    const p = rawDataTable.payload;
+    if (Array.isArray(p.data) && (!p.rows || !Array.isArray(p.rows))) {
+      const headers = p.data.length > 0 && typeof p.data[0] === 'object' && p.data[0] !== null ? Object.keys(p.data[0]) : (p.headers || []);
+      return {
+        ...rawDataTable,
+        type: "data_table",
+        payload: {
+          title: p.title || "Data Table",
+          headers,
+          rows: p.data,
+          total: p.total || p.data.length
+        }
+      };
+    }
+    return rawDataTable;
+  }, [rawDataTable]);
   
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [searchTerm, setSearchTerm] = useState("");
@@ -181,7 +199,9 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                 )}
                 {/* Paginated Data Table */}
                 {dataTable && dataTable.payload && (() => {
-                    const { headers, rows, total } = dataTable.payload;
+                    const rows = dataTable.payload.rows || (Array.isArray(dataTable.payload.data) ? dataTable.payload.data : []);
+                    const headers = dataTable.payload.headers || (rows.length > 0 && typeof rows[0] === 'object' && rows[0] !== null ? Object.keys(rows[0]) : []);
+                    const total = dataTable.payload.total || rows.length;
                     const PAGE_SIZE = 10;
                     const totalPages = Math.ceil(rows.length / PAGE_SIZE);
                     const pageRows = rows.slice(tablePage * PAGE_SIZE, (tablePage + 1) * PAGE_SIZE);

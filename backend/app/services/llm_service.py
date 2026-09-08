@@ -633,11 +633,39 @@ EOE
                         pending_actions.append({"type": "NAVIGATE", "payload": args.get("url_path")})
                 elif tool_name == "tool_display_table":
                     try:
-                        title = args.get("title")
+                        title = args.get("title") or "Data Table"
                         data_str = args.get("data_json")
-                        data = data_str if isinstance(data_str, list) else json.loads(data_str)
-                        pending_actions.append({"type": "DISPLAY_TABLE", "payload": {"title": title, "data": data}})
-                        tool_result = "Table displayed on UI."
+                        data = data_str if isinstance(data_str, (list, dict)) else json.loads(data_str)
+                        
+                        # Normalize to standard data_table action format expected by frontend
+                        if isinstance(data, list):
+                            headers = list(data[0].keys()) if (len(data) > 0 and isinstance(data[0], dict)) else []
+                            rows = data
+                            total = len(data)
+                        elif isinstance(data, dict):
+                            records = data.get("records", data.get("grouped_results", [data]))
+                            headers = list(records[0].keys()) if (len(records) > 0 and isinstance(records[0], dict)) else []
+                            rows = records
+                            total = len(records)
+                        else:
+                            headers = []
+                            rows = []
+                            total = 0
+
+                        pending_actions.append({
+                            "type": "data_table",
+                            "payload": {
+                                "title": title,
+                                "headers": headers,
+                                "rows": rows,
+                                "total": total
+                            }
+                        })
+                        tool_result = f"Table '{title}' displayed on UI with {total} record(s)."
+                        if not short_circuit_return:
+                            short_circuit_return = f"I have displayed the **{title}** for you above with {total} record(s)."
+                        else:
+                            short_circuit_return += f"\n\nI have also displayed the **{title}** for you above with {total} record(s)."
                     except Exception as e:
                         tool_result = f"Error displaying table: {e}"
                 elif tool_name in ["tool_add_navigation", "tool_delete_navigation"]:

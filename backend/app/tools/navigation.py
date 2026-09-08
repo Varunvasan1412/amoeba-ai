@@ -28,6 +28,19 @@ def _normalize_route_path(path: str) -> str:
         p = "/" + p
     return p
 
+def _stem_token(token: str) -> str:
+    """Universal singularization for English nouns."""
+    t = token.lower().strip()
+    if len(t) <= 3:
+        return t
+    if t.endswith("ies") and len(t) > 4:
+        return t[:-3] + "y"
+    if t.endswith("ses") or t.endswith("xes") or t.endswith("shes") or t.endswith("ches"):
+        return t[:-2]
+    if t.endswith("s") and not t.endswith("ss"):
+        return t[:-1]
+    return t
+
 def _infer_parents_from_path(path: str, module: Optional[str] = None) -> List[str]:
     """
     Extracts explicit parents from URL path if 'parents' key is missing.
@@ -92,8 +105,8 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
     for item in sorted_items:
         raw_path = (item.path or "").strip()
         
-        # 1. Skip internal view template files (e.g. /app/Views/..., *.php files that are not URLs)
-        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/']):
+        # 1. Skip internal view template files, demos, and backup files
+        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/', '.html', '/bs5/', '/backup/', 'totalsalesjson', '/test/']):
             continue
 
         norm_path = _normalize_route_path(raw_path)
@@ -183,6 +196,8 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     stopwords = {"list", "page", "screen", "table", "view", "menu", "details", "the", "a", "an", "all", "of"}
     core_query_tokens = query_tokens - stopwords
     match_tokens = core_query_tokens if core_query_tokens else query_tokens
+    stemmed_match_tokens = {_stem_token(t) for t in match_tokens}
+    stemmed_query_tokens = {_stem_token(t) for t in query_tokens}
     
     for r in processed_routes:
         label_tokens = set(r["label"].lower().split())
@@ -190,19 +205,23 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         
         # We want to match ALL core query tokens against the union of (Label + Parents)
         doc_tokens = label_tokens.union(parent_tokens)
+        stemmed_doc_tokens = {_stem_token(t) for t in doc_tokens}
         
-        # Check if ALL core query tokens are present in the doc_tokens
-        if match_tokens.issubset(doc_tokens):
-            label_overlap = len(query_tokens.intersection(label_tokens))
+        # Check if ALL core query tokens are present in doc_tokens (exact or singularized)
+        if match_tokens.issubset(doc_tokens) or stemmed_match_tokens.issubset(stemmed_doc_tokens):
+            stemmed_label_tokens = {_stem_token(t) for t in label_tokens}
+            stemmed_core_label = stemmed_label_tokens - {_stem_token(s) for s in stopwords}
+            stemmed_core_query = stemmed_match_tokens
+
+            label_overlap = len(stemmed_query_tokens.intersection(stemmed_label_tokens))
             
             # Universal Specificity & Precision Scoring:
             # Penalize routes with extra discriminating label tokens that were NOT requested in the query
-            core_label_tokens = label_tokens - stopwords
-            unmatched_label_tokens = core_label_tokens - query_tokens
+            unmatched_label_tokens = stemmed_core_label - stemmed_query_tokens
             extra_token_penalty = len(unmatched_label_tokens) * 25
             
             # Exact core match bonus: if clean label tokens exactly match clean query tokens
-            exact_core_bonus = 50 if (core_label_tokens and core_label_tokens == core_query_tokens) else 0
+            exact_core_bonus = 50 if (stemmed_core_label and stemmed_core_label == stemmed_core_query) else 0
             
             score = 100 + (label_overlap * 10) + exact_core_bonus - extra_token_penalty
             scored_candidates.append((score, r))
@@ -237,8 +256,8 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                     
                     for item in vec_items:
                         raw_path = (item.path or "").strip()
-                        # Reject internal view template files
-                        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/']):
+                        # Reject internal view template files, demos, and backup files
+                        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/', '.html', '/bs5/', '/backup/', 'totalsalesjson', '/test/']):
                             continue
                         norm_path = _normalize_route_path(raw_path)
                         canonical_path = re.sub(r'/\d+$', '', norm_path)

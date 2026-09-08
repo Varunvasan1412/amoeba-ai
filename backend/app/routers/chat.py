@@ -918,7 +918,17 @@ async def websocket_endpoint(
                                                 elif isinstance(result, dict) and "grouped_results" in result:
                                                     # Grouped aggregation
                                                     response_text = f"**{clean_friendly_name}** — Grouped Results:{date_info}"
-                                                    actions_list.append({"type": "DISPLAY_TABLE", "payload": {"title": clean_friendly_name, "data": result["grouped_results"]}})
+                                                    grouped = result["grouped_results"]
+                                                    g_headers = list(grouped[0].keys()) if (isinstance(grouped, list) and grouped and isinstance(grouped[0], dict)) else []
+                                                    actions_list.append({
+                                                        "type": "data_table",
+                                                        "payload": {
+                                                            "title": clean_friendly_name,
+                                                            "headers": g_headers,
+                                                            "rows": grouped if isinstance(grouped, list) else [],
+                                                            "total": len(grouped) if isinstance(grouped, list) else 0
+                                                        }
+                                                    })
                                                 elif isinstance(result, dict) and "records" in result:
                                                     # Records with warnings
                                                     records = result["records"]
