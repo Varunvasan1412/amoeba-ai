@@ -93,8 +93,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         if last_ai_msg:
             last_ai_content = last_ai_msg[-1].get("content", "") if isinstance(last_ai_msg[-1], dict) else getattr(last_ai_msg[-1], "content", "")
             if "Which" in last_ai_content and "would you like" in last_ai_content:
-                print("🛡️ [INTENT] User is answering a disambiguation prompt. Forcing navigation intent.")
-                return {"intent": "navigate", "url": None, "entity": None}
+                if "tab" not in last_ai_content.lower() and any(kw in last_ai_content.lower() for kw in ["page", "route", "destination", "link"]):
+                    print("🛡️ [INTENT] User is answering a navigation disambiguation prompt. Forcing navigation intent.")
+                    return {"intent": "navigate", "url": None, "entity": None}
 
     # --- INQUIRY DETECTION ---
     # Patterns that are PURE inquiries (always guide, never act)
