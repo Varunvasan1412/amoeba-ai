@@ -287,10 +287,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 existing = views_map[view_key]
                                 if "list" in existing.lower() and "list" not in clean_lbl.lower():
                                     views_map[view_key] = clean_lbl
-                                elif len(clean_lbl) < len(existing) and "list" not in clean_lbl.lower():
-                                    views_map[view_key] = clean_lbl
 
                         unique_tabs = list(views_map.values())
+                        # Natural tab order: Pending/Draft first, Completed/Closed second
+                        unique_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new", "create"]) else (1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 2))
                         if len(unique_tabs) >= 2:
                             matched_group = grp
                             matched_tabs = unique_tabs
