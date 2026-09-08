@@ -9,6 +9,8 @@ AMOEBA_CHATGPT_DEBUG_REPORT.md
 AMOEBA_SYSTEM_REPORT_FOR_CHATGPT.md
 DEBUG_REPORT_LLM_LEAK.md
 architecture_v2.md
+tmp/
+test_500.py
 
 # ================================
 # OS-Specific
