@@ -376,16 +376,31 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             target_ui_label = best_sm.ui_label if best_sm else None
             target_table = best_sm.database_table if best_sm else None
             
-            # Check navigation items for matching route/page
+            # Check navigation items for matching route/page (best scoring match)
             matching_nav = None
+            best_nav_score = 0
             for nav in unique_navs:
                 nav_clean = nav.label.lower().strip()
-                if (target_ui_label and target_ui_label.lower() in nav_clean) or (nav_clean in clean_q or clean_q in nav_clean):
-                    matching_nav = nav
-                    break
+                nav_path = nav.path.lower().strip()
+                score = 0
+                if target_ui_label and target_ui_label.lower() == nav_clean:
+                    score = 100
+                elif "total_sale" in nav_path or "total_sales" in nav_path:
+                    score = 95
+                elif target_ui_label and target_ui_label.lower() in nav_clean:
+                    score = 85
+                elif all(w in nav_clean or w in nav_path for w in ["total", "sale"]):
+                    score = 80
+                elif nav_clean in clean_q or clean_q in nav_clean:
+                    score = 70
+                elif all(w in nav_clean for w in q_toks if w not in NON_ENTITY_WORDS):
+                    score = 60
                 elif "report" in nav_clean and any(w in nav_clean for w in q_toks if w not in NON_ENTITY_WORDS):
+                    score = 20
+                
+                if score > best_nav_score and score >= 20:
+                    best_nav_score = score
                     matching_nav = nav
-                    break
                     
             if not target_ui_label and matching_nav:
                 target_ui_label = matching_nav.label
