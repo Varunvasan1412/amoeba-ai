@@ -547,6 +547,51 @@ async def websocket_endpoint(
                                         await websocket.send_json({"type": "done", "session_id": s_id})
                                         return
 
+                                if active_choice_state and active_choice_state.intent == "screen_disambiguation" and active_choice_state.current_step == "resolve_screen_choice":
+                                    c_data = active_choice_state.collected_data or {}
+                                    saved_opts = c_data.get("options", [])
+                                    user_trimmed = user_text.strip()
+                                    chosen_opt = None
+
+                                    if user_trimmed.isdigit():
+                                        idx = int(user_trimmed) - 1
+                                        if 0 <= idx < len(saved_opts):
+                                            chosen_opt = saved_opts[idx]
+                                    else:
+                                        for opt in saved_opts:
+                                            opt_lbl = opt.get("label", "") if isinstance(opt, dict) else str(opt)
+                                            if opt_lbl.lower() in user_trimmed.lower() or user_trimmed.lower() in opt_lbl.lower():
+                                                chosen_opt = opt
+                                                break
+
+                                    if chosen_opt:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        opt_label = chosen_opt.get("label") if isinstance(chosen_opt, dict) else str(chosen_opt)
+                                        opt_path = chosen_opt.get("path") if isinstance(chosen_opt, dict) else None
+                                        
+                                        if opt_path:
+                                            nav_text = f"Taking you to **{opt_label}** now..."
+                                            nav_actions = [{"type": "NAVIGATE", "payload": opt_path}]
+                                            ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
+                                            local_session.add(ai_msg)
+                                            await local_session.commit()
+                                            await websocket.send_json({"text": nav_text, "actions": nav_actions, "type": "chat_response"})
+                                            await websocket.send_json({"type": "done", "session_id": s_id})
+                                            return
+                                        else:
+                                            user_text = f"Show me the {opt_label.lower()}"
+                                    elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        cancel_msg = "Selection cancelled."
+                                        ai_msg = ChatMessage(role="ai", content=cancel_msg, actions=[], client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
                                 # 1. FastPath Navigation (GLOBAL FOR ALL MODES)
                                 from app.services.fastpath_service import execute_fastpath
                                 fast_text, fast_actions = await execute_fastpath(user_text, {"client_id": client_context_id, "session_id": s_id}, db_session=local_session)
@@ -636,6 +681,45 @@ async def websocket_endpoint(
                                                 "url": crud_intent.get("url"),
                                                 "table": crud_intent.get("table")
                                             }
+                                        )
+                                        local_session.add(ambig_state)
+
+                                        ai_msg = ChatMessage(role="ai", content=res_text, actions=res_actions, client_id=client_id, session_id=s_id)
+                                        local_session.add(ai_msg)
+                                        await local_session.commit()
+                                        await websocket.send_json({"text": res_text, "actions": res_actions, "type": "chat_response"})
+                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                        return
+
+                                    # Handle Screen Disambiguation Intent directly
+                                    if crud_intent and crud_intent.get("intent") == "screen_disambiguation":
+                                        root_name = crud_intent.get("entity", "this screen")
+                                        mod_name = crud_intent.get("module")
+                                        opts = crud_intent.get("options", [])
+                                        
+                                        mod_suffix = f" in **{mod_name}**" if mod_name and mod_name != "the menu" else ""
+                                        res_text = f"I found multiple pages for **{root_name}**{mod_suffix}. Which one would you like to see?"
+                                        res_actions = [{
+                                            "type": "CHOICE",
+                                            "payload": opts
+                                        }]
+
+                                        existing_states = await local_session.execute(
+                                            select(ConversationState).where(
+                                                ConversationState.client_id == int(client_id),
+                                                ConversationState.session_id == s_id
+                                            )
+                                        )
+                                        for old_s in existing_states.scalars().all():
+                                            await local_session.delete(old_s)
+
+                                        ambig_state = ConversationState(
+                                            client_id=int(client_id),
+                                            session_id=s_id,
+                                            intent="screen_disambiguation",
+                                            entity_name=root_name,
+                                            current_step="resolve_screen_choice",
+                                            collected_data={"options": opts}
                                         )
                                         local_session.add(ambig_state)
 

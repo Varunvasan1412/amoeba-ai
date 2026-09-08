@@ -47,12 +47,21 @@ def is_export_intent(query: str) -> bool:
     ))
 
 def is_navigation_intent(query: str) -> bool:
-    # 1. Detect standard navigation verbs (can be anywhere in the sentence)
-    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open)\s+(.+)$"
+    # 1. Preserve Report vs Data Disambiguation:
+    # If the user says "show me the [X] report" without explicit navigation words (open/go to/navigate),
+    # let it fall through to intent_service report disambiguation.
+    q_low = query.strip().lower()
+    has_report = bool(re.search(r"\breport(s)?\b", q_low))
+    has_explicit_nav = bool(re.search(r"\b(navigate|go\s+to|open|take\s+me)\b", q_low))
+    if has_report and not has_explicit_nav:
+        return False
+
+    # 2. Detect standard navigation verbs (can be anywhere in the sentence)
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open|show\s+me(?:\s+the)?|view(?:\s+the)?)\s+(.+)$"
     if re.search(nav_pattern, query.strip()):
         return True
     
-    # 2. Detect explicit button clicks from ambiguity resolution
+    # 3. Detect explicit button clicks from ambiguity resolution
     if "→" in query or "->" in query:
         return True
         
@@ -67,15 +76,15 @@ def extract_nav_target(query: str) -> str:
         return query.split("->")[-1].strip()
         
     # 2. Clean standard navigation verbs
-    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open)\s+(.+)$"
+    nav_pattern = r"(?i)\b(navigate(?:\s+me)?(?:\s+to)?|go\s+to|take\s+me\s+to|where\s+is|open|show\s+me(?:\s+the)?|view(?:\s+the)?)\s+(.+)$"
     match = re.search(nav_pattern, query.strip())
     if match:
         target = match.group(2).strip()
         # Remove common trailing punctuation
         target = re.sub(r"[?.!]+$", "", target).strip()
-        # Remove common "the " or " page" wrapping if present
+        # Remove common "the " or " page" / " screen" / " route" wrapping if present
         target = re.sub(r"(?i)^(the\s+)", "", target).strip()
-        target = re.sub(r"(?i)(\s+page)$", "", target).strip()
+        target = re.sub(r"(?i)(\s+(?:page|screen|route|tab))$", "", target).strip()
         # Remove "located" if asking "where is X located"
         target = re.sub(r"(?i)(\s+located)$", "", target).strip()
         return target

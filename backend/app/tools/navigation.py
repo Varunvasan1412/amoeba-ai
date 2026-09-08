@@ -180,7 +180,7 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     #    Score = (Matched Label Tokens) + (Matched Parent Tokens)
     # ---------------------------------------------------------
     scored_candidates = []
-    stopwords = {"list", "page", "screen", "table", "view", "menu", "details", "the"}
+    stopwords = {"list", "page", "screen", "table", "view", "menu", "details", "the", "a", "an", "all", "of"}
     core_query_tokens = query_tokens - stopwords
     match_tokens = core_query_tokens if core_query_tokens else query_tokens
     
@@ -194,7 +194,17 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         # Check if ALL core query tokens are present in the doc_tokens
         if match_tokens.issubset(doc_tokens):
             label_overlap = len(query_tokens.intersection(label_tokens))
-            score = 100 + label_overlap
+            
+            # Universal Specificity & Precision Scoring:
+            # Penalize routes with extra discriminating label tokens that were NOT requested in the query
+            core_label_tokens = label_tokens - stopwords
+            unmatched_label_tokens = core_label_tokens - query_tokens
+            extra_token_penalty = len(unmatched_label_tokens) * 25
+            
+            # Exact core match bonus: if clean label tokens exactly match clean query tokens
+            exact_core_bonus = 50 if (core_label_tokens and core_label_tokens == core_query_tokens) else 0
+            
+            score = 100 + (label_overlap * 10) + exact_core_bonus - extra_token_penalty
             scored_candidates.append((score, r))
 
     # 3. SEMANTIC VECTOR MATCH (pgvector fallback for fastpath)

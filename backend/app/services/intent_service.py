@@ -272,19 +272,19 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         tab_groups.setdefault(grp, []).append(sm)
                 
                 matched_group = None
+                matched_group = None
                 matched_tabs = []
                 for grp, grp_sms in tab_groups.items():
-                    grp_lower = grp.lower()
-                    grp_toks = set(re.findall(r'[a-zA-Z0-9]+', grp_lower))
+                    grp_lower = grp.lower().strip()
+                    grp_core_toks = set(re.findall(r'[a-zA-Z0-9]+', grp_lower)) - NON_ENTITY_WORDS
                     
+                    # Universal Tab Group Match:
+                    # The user query MUST supply the distinguishing core tokens of the tab group!
+                    # For example, "grn list" will NOT match group "grn inspection" because "inspection" is missing.
                     is_group_match = False
-                    if grp_lower in clean_q or clean_q in grp_lower:
+                    if grp_lower in clean_q:
                         is_group_match = True
-                    elif clean_query and (clean_query in grp_lower or grp_lower in clean_query):
-                        is_group_match = True
-                    elif q_toks and q_toks.issubset(grp_toks):
-                        is_group_match = True
-                    elif len(q_toks.intersection(grp_toks)) >= 2:
+                    elif grp_core_toks and grp_core_toks.issubset(q_toks):
                         is_group_match = True
                         
                     if is_group_match:
@@ -314,8 +314,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     seen_labels = set()
                     for sm in sm_all:
                         lbl_clean = sm.ui_label.lower().strip()
-                        toks = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - {"list", "view", "details"}
-                        if q_toks.intersection(toks) or (clean_query and clean_query in lbl_clean):
+                        base_tokens = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - TAB_DISCRIMINATORS - NON_ENTITY_WORDS
+                        if base_tokens and base_tokens.issubset(q_toks):
                             if any(td in lbl_clean for td in TAB_DISCRIMINATORS):
                                 if sm.ui_label.strip() not in seen_labels:
                                     seen_labels.add(sm.ui_label.strip())
@@ -345,6 +345,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             for sm in sm_all:
                 sm_label_norm = normalize_entity_name(sm.ui_label.lower().strip())
                 sm_label_clean = sm.ui_label.lower().strip()
+                sm_core_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - NON_ENTITY_WORDS
                 
                 # Direct exact or substring match
                 if sm_label_norm == norm_query or sm_label_clean == clean_q:
@@ -352,9 +353,12 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 elif sm_label_clean in clean_q or clean_q in sm_label_clean:
                     score = 25 + len(sm_label_clean)
                 else:
-                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - {"list", "view", "details"}
-                    overlap = q_toks.intersection(sm_toks)
+                    overlap = q_toks.intersection(sm_core_toks)
                     score = len(overlap) * 8 if overlap else 0
+                
+                # Precision Penalty: Penalize extra distinguishing tokens not requested in query
+                unmatched_sm_tokens = sm_core_toks - q_toks
+                score -= len(unmatched_sm_tokens) * 10
                 
                 # Tab distinction bonus: if both query and label specify pending or completed, boost score
                 if ("pending" in clean_q and "pending" in sm_label_clean) or ("completed" in clean_q and "completed" in sm_label_clean):
@@ -436,6 +440,47 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     "url": nav_url,
                     "options": opts
                 }
+
+        # =========================================================================
+        # STRATEGY 0C: Dynamic Sibling Screen Disambiguation
+        # When a query asks for a general bare root concept (e.g. "show me the grn", "quotation", "salary")
+        # without specifying a qualifying sub-type/stage (like "list", "inspection", "completed", "approval"),
+        # and the ERP has multiple distinct screens sharing that root concept:
+        # Prompt the user to clarify which screen they want rather than guessing.
+        # =========================================================================
+        qualifiers = TAB_DISCRIMINATORS | {"list", "report", "create", "view", "edit", "add", "history", "approval", "inspection"}
+        has_qualifier = any(q in clean_q.split() for q in qualifiers)
+        
+        if not detected_entity and len(clean_words) == 1 and not has_qualifier:
+            root_term = clean_words[0].lower()
+            if len(root_term) >= 3 and root_term not in NON_ENTITY_WORDS:
+                sibling_screens = []
+                seen_screen_paths = set()
+                for nav in unique_navs:
+                    nav_clean = nav.label.lower().strip()
+                    nav_toks = set(re.findall(r'[a-zA-Z0-9]+', nav_clean)) - NON_ENTITY_WORDS
+                    if root_term in nav_toks or root_term in nav_clean:
+                        norm_p = nav.path.strip().lower() if nav.path else ""
+                        if norm_p not in seen_screen_paths:
+                            seen_screen_paths.add(norm_p)
+                            sibling_screens.append(nav)
+                
+                if len(sibling_screens) >= 2:
+                    module_name = sibling_screens[0].module or "the menu"
+                    disp_root = simple_title_case(root_term)
+                    print(f"🔀 [INTENT] Dynamic Screen Disambiguation for '{disp_root}' ({len(sibling_screens)} screens in {module_name})")
+                    return {
+                        "intent": "screen_disambiguation",
+                        "entity": disp_root,
+                        "module": module_name,
+                        "options": [
+                            {
+                                "label": s.label,
+                                "path": s.path
+                            }
+                            for s in sibling_screens
+                        ]
+                    }
 
         # STRATEGY -1: Direct Navigation Label Match
         # This allows "Create Sales Enquiry" to match NavigationItem.label exactly
