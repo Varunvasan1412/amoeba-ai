@@ -276,7 +276,18 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 for grp, grp_sms in tab_groups.items():
                     grp_lower = grp.lower()
                     grp_toks = set(re.findall(r'[a-zA-Z0-9]+', grp_lower))
-                    if grp_lower in clean_q or clean_q in grp_lower or len(q_toks.intersection(grp_toks)) >= 2:
+                    
+                    is_group_match = False
+                    if grp_lower in clean_q or clean_q in grp_lower:
+                        is_group_match = True
+                    elif clean_query and (clean_query in grp_lower or grp_lower in clean_query):
+                        is_group_match = True
+                    elif q_toks and q_toks.issubset(grp_toks):
+                        is_group_match = True
+                    elif len(q_toks.intersection(grp_toks)) >= 2:
+                        is_group_match = True
+                        
+                    if is_group_match:
                         # Deduplicate tabs by distinct view/table/filter to avoid showing aliases
                         views_map = {}
                         for s in grp_sms:
@@ -304,7 +315,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     for sm in sm_all:
                         lbl_clean = sm.ui_label.lower().strip()
                         toks = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - {"list", "view", "details"}
-                        if q_toks.intersection(toks):
+                        if q_toks.intersection(toks) or (clean_query and clean_query in lbl_clean):
                             if any(td in lbl_clean for td in TAB_DISCRIMINATORS):
                                 if sm.ui_label.strip() not in seen_labels:
                                     seen_labels.add(sm.ui_label.strip())

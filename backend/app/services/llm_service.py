@@ -347,8 +347,12 @@ async def get_brain(client_id: int = None, session: AsyncSession = None, model_o
                 )
         elif provider == "OPENAI" or provider == "GPT4":
             if settings.OPENAI_API_KEY:
+                # Map fictional, legacy, or default models to valid OpenAI models
+                valid_model = model_name or "gpt-4o-mini"
+                if valid_model in ["gpt-5.6-luna", "default", ""] or not valid_model.startswith("gpt-"):
+                    valid_model = "gpt-4o-mini"
                 llm = ChatOpenAI(
-                    model=model_name if "gpt" in model_name else "gpt-5.6-luna",
+                    model=valid_model,
                     api_key=settings.OPENAI_API_KEY,
                     temperature=temperature
                 )
@@ -545,10 +549,11 @@ EOE
                 return f"The {provider_desc} is taking too long to respond (timeout). This usually happens when the model is still loading from disk or the system is under heavy load. Please try again or wait a moment.", []
             except Exception as tool_err:
                 error_str = str(tool_err) if str(tool_err) else tool_err.__class__.__name__
-                if "does not support tools" in error_str or "400" in error_str:
+                if current_provider == "OLLAMA" and ("does not support tools" in error_str.lower() or "not support tool" in error_str.lower()):
                     model_info = f"(Model: {res_brain[1]})" if res_brain else ""
                     error_msg = f"Error: The configured local model {model_info} does not support tool calling. Please upgrade to a tool-capable model (like llama3.1, llama3.2, or mistral) or switch to **Assistant Mode** for basic chat."
                     return error_msg, []
+                print(f"💥 [LLM Tool Error] Provider: {current_provider}, Error: {tool_err}")
                 raise tool_err
                 
             messages.append(ai_msg)
