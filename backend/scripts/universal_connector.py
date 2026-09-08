@@ -899,9 +899,29 @@ if __name__ == "__main__":
         print(f"⚠️ Capping semantics to 3000 (found {len(semantics)})")
         semantics = semantics[:3000]
 
-    # 1. Sync Routes
+    # 1. Sync Routes (Normalize paths to clean root-relative ERP paths)
     if routes:
-        sync_with_amoeba(routes, amoeba_host, client_api_key)
+        cleaned_routes = []
+        seen_norm = set()
+        for r in routes:
+            p = r.get("path", "")
+            if "://" in p:
+                try:
+                    p = urllib.parse.urlparse(p).path
+                except:
+                    pass
+            p = re.sub(rf"^/(?:{re.escape(folder_name)}|newlook|varun_sterling|sterling_company)/", "/", p, flags=re.IGNORECASE)
+            if not p.startswith("/"):
+                p = "/" + p
+            
+            key = (r.get("label", "").strip().lower(), p.lower())
+            if key not in seen_norm:
+                seen_norm.add(key)
+                r_clean = r.copy()
+                r_clean["path"] = p
+                cleaned_routes.append(r_clean)
+                
+        sync_with_amoeba(cleaned_routes, amoeba_host, client_api_key)
     else:
         print("ℹ️ No navigation routes found.")
 

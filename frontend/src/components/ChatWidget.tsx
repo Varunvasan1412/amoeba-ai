@@ -677,22 +677,32 @@ export default function ChatWidget() {
 
   useEffect(() => {
       const handleMessage = async (event: MessageEvent) => {
-          if (event.data && event.data.type === "AMOEBA_DISCOVERED_ROUTES") {
+          if (event.data && event.data.type === "AMOEBA_DISCOVERED_ROUTES" && Array.isArray(event.data.routes) && event.data.routes.length > 0) {
+              const routeSyncKey = `amoeba_learned_routes_${currentApiKey}_${event.data.routes.length}`;
               try {
+                  if (sessionStorage.getItem(routeSyncKey)) {
+                      return; // Already synced in this session
+                  }
                   const res = await apiFetch(`${API_BASE}/routes/learn?api_key=${currentApiKey}`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify(event.data.routes)
                   });
-                  if(res.ok) { }
+                  if (res.ok) {
+                      sessionStorage.setItem(routeSyncKey, "1");
+                  }
               } catch (err) {
                   console.error("❌ Failed to save routes:", err);
               }
           }
 
-          if (event.data && event.data.type === "AMOEBA_DISCOVERED_FIELDS" && clientId) {
+          if (event.data && event.data.type === "AMOEBA_DISCOVERED_FIELDS" && clientId && Array.isArray(event.data.fields) && event.data.fields.length > 0) {
+              const fieldSyncKey = `amoeba_ui_${clientId}_${event.data.path}_${event.data.fields.length}`;
               try {
-                  await apiFetch(`${API_BASE}/ui-schema`, {
+                  if (sessionStorage.getItem(fieldSyncKey)) {
+                      return; // Already synced for this page in this session
+                  }
+                  const res = await apiFetch(`${API_BASE}/ui-schema`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
@@ -701,6 +711,9 @@ export default function ChatWidget() {
                           fields: event.data.fields
                       })
                   });
+                  if (res.ok) {
+                      sessionStorage.setItem(fieldSyncKey, "1");
+                  }
               } catch (err) {
                   console.error("❌ UI Learning failed:", err);
               }

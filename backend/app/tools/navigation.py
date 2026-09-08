@@ -1,5 +1,7 @@
 from __future__ import annotations
+import re
 from typing import List, Optional, Tuple, Any
+from urllib.parse import urlparse
 from app.models.navigation import NavigationItem
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,40 +9,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Global Cache (Optional, but let's stick to DB for strictly fresh multi-tenant data)
 # We can still keep a small cache for static system defaults if needed.
 
-async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dict]:
+def _normalize_route_path(path: str) -> str:
     """
-    Loads all discovered and mapped routes for a specific client from the DB.
+    Normalizes URLs to clean root-relative paths.
+    Strips hostnames and local development directory prefixes (e.g. /newlook/, /varun_sterling/, /htdocs/).
     """
-    statement = select(NavigationItem).where(NavigationItem.client_id == client_id)
-    result = await session.execute(statement)
-    items = result.scalars().all()
-    
-    return [
-        {
-            "label": item.label,
-            "path": item.path,
-            "module": item.module,
-            "is_custom": not item.is_discovered # Manual mappings are 'custom'
-        } for item in items
-    ]
+    if not path:
+        return "/"
+    p = path.replace("\\", "/").strip()
+    if "://" in p:
+        try:
+            p = urlparse(p).path
+        except:
+            pass
+    # Strip local development folder prefixes
+    p = re.sub(r"^/(?:newlook|varun_sterling|sterling_company|application|htdocs|www)/", "/", p, flags=re.IGNORECASE)
+    if not p.startswith("/"):
+        p = "/" + p
+    return p
 
-def _infer_parents_from_path(path: str) -> List[str]:
+def _infer_parents_from_path(path: str, module: Optional[str] = None) -> List[str]:
     """
     Extracts explicit parents from URL path if 'parents' key is missing.
     Example: .../transaction/invoice -> ['Transaction', 'Invoice']
     Example: .../transaction/invoice_completed -> ['Transaction', 'Invoice', 'Completed']
     """
-    # Normalize path separators
-    path = path.replace("\\", "/")
-    parts = path.split('/')
+    norm_path = _normalize_route_path(path)
+    parts = norm_path.split('/')
     
     # Filter out common prefixes or empty strings
-    ignored = {'localhost', 'http:', 'https:', 'varun_sterling', 'sterling_company', 'application', 'controllers'}
+    ignored = {
+        'localhost', 'http:', 'https:', 'varun_sterling', 'sterling_company', 
+        'application', 'controllers', 'newlook', 'ahattrickz', 'htdocs', 'www'
+    }
     
     parents = []
+    if module and module.strip():
+        parents.append(module.strip().capitalize())
+        
     for p in parts:
         clean = p.strip()
         if not clean or clean.lower() in ignored or clean.isdigit():
+            continue
+        if module and clean.lower() == module.lower():
             continue
             
         # HANDLE UNDERSCORES IN FILENAMES (CRITICAL FIX)
@@ -48,18 +59,52 @@ def _infer_parents_from_path(path: str) -> List[str]:
         if "_" in clean:
             sub_parts = clean.split("_")
             for sp in sub_parts:
-                if sp and not sp.isdigit():
+                if sp and not sp.isdigit() and sp.lower() not in ignored:
                     parents.append(sp.capitalize())
         else:
             parents.append(clean.capitalize())
+            
+    # Deduplicate while preserving order
+    deduped = []
+    for p in parents:
+        if p not in deduped:
+            deduped.append(p)
+    return deduped
+
+async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dict]:
+    """
+    Loads all discovered and mapped routes for a specific client from the DB.
+    Deduplicates phantom folder duplicates and prioritizes official ERP menu items.
+    """
+    statement = select(NavigationItem).where(NavigationItem.client_id == client_id)
+    result = await session.execute(statement)
+    items = result.scalars().all()
     
-    # The last element is usually the file/page itself, but in the context of "parents", 
-    # we usually want the hierarchy leading UP to it. 
-    # However, for display logic "Transaction -> Invoice -> Completed", including the file name as a parent 
-    # helps if the label is generic like "Completed".
-    # For now, let's keep all segments as potential context.
+    # Sort items so that custom routes and routes with an official module come first
+    sorted_items = sorted(
+        items,
+        key=lambda it: (not it.is_discovered, bool(it.module), len(it.path or "")),
+        reverse=True
+    )
     
-    return parents
+    routes = []
+    seen_keys = set()
+    for item in sorted_items:
+        norm_path = _normalize_route_path(item.path)
+        key = (item.label.lower().strip(), norm_path.lower())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        
+        routes.append({
+            "label": item.label,
+            "path": norm_path,
+            "module": item.module,
+            "is_custom": not item.is_discovered,
+            "parents": _infer_parents_from_path(norm_path, item.module)
+        })
+        
+    return routes
 
 async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -> Tuple[Optional[str], Optional[List[dict]]]:
     """
@@ -68,12 +113,7 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     routes = await load_client_sitemap(session, client_id)
     query_tokens = set(query.lower().strip().split())
     
-    processed_routes = []
-    for r in routes:
-        r_mod = r.copy()
-        if "parents" not in r_mod:
-            r_mod["parents"] = _infer_parents_from_path(r_mod["path"])
-        processed_routes.append(r_mod)
+    processed_routes = routes
 
     # ---------------------------------------------------------
     # 1. EXACT LABEL MATCH (Highest Priority)
@@ -98,10 +138,11 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         # Deduplicate identical paths (e.g. same menu item in different nav trees)
         unique_matches = []
         seen_paths = set()
-        for m in sorted(exact_matches, key=lambda x: x.get("is_custom", False), reverse=True):
-            if m["path"] not in seen_paths:
+        for m in sorted(exact_matches, key=lambda x: (x.get("is_custom", False), bool(x.get("module"))), reverse=True):
+            norm_p = _normalize_route_path(m["path"])
+            if norm_p not in seen_paths:
                 unique_matches.append(m)
-                seen_paths.add(m["path"])
+                seen_paths.add(norm_p)
                 
         if len(unique_matches) == 1:
              return unique_matches[0]["path"], None
@@ -182,19 +223,20 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         best_score = scored_candidates[0][0]
         best_matches = [item[1] for item in scored_candidates if item[0] == best_score]
         
-        if len(best_matches) == 1:
-            return best_matches[0]["path"], None
-        else:
-            unique_best = []
-            seen_paths = set()
-            for m in best_matches:
-                if m["path"] not in seen_paths:
-                    unique_best.append(m)
-                    seen_paths.add(m["path"])
-            
-            if len(unique_best) == 1:
-                return unique_best[0]["path"], None
-            return None, unique_best
+        # Prefer custom mappings, then routes with official module, then longer clean path
+        best_matches.sort(key=lambda x: (x.get("is_custom", False), bool(x.get("module"))), reverse=True)
+        
+        unique_best = []
+        seen_paths = set()
+        for m in best_matches:
+            norm_p = _normalize_route_path(m["path"])
+            if norm_p not in seen_paths:
+                unique_best.append(m)
+                seen_paths.add(norm_p)
+        
+        if len(unique_best) == 1:
+            return unique_best[0]["path"], None
+        return None, unique_best
 
     # 4. SUBSTRING/FUZZY FALLBACK
     substring_matches = []
@@ -202,15 +244,17 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         if query.lower() in r["label"].lower():
             substring_matches.append(r)
             
+    substring_matches.sort(key=lambda x: (x.get("is_custom", False), bool(x.get("module"))), reverse=True)
     if len(substring_matches) == 1:
         return substring_matches[0]["path"], None
     if len(substring_matches) > 1:
         unique_sub = []
         seen_paths = set()
         for m in substring_matches:
-            if m["path"] not in seen_paths:
+            norm_p = _normalize_route_path(m["path"])
+            if norm_p not in seen_paths:
                 unique_sub.append(m)
-                seen_paths.add(m["path"])
+                seen_paths.add(norm_p)
         
         if len(unique_sub) == 1:
              return unique_sub[0]["path"], None
@@ -226,11 +270,12 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         fuzzy_matches = []
         seen_paths = set()
         for fuzzy_label in fuzzy_results:
-            for r in processed_routes:
+            for r in sorted(processed_routes, key=lambda x: (x.get("is_custom", False), bool(x.get("module"))), reverse=True):
                 if r["label"].lower() == fuzzy_label:
-                    if r["path"] not in seen_paths:
+                    norm_p = _normalize_route_path(r["path"])
+                    if norm_p not in seen_paths:
                         fuzzy_matches.append(r)
-                        seen_paths.add(r["path"])
+                        seen_paths.add(norm_p)
         
         if len(fuzzy_matches) == 1:
             return fuzzy_matches[0]["path"], None

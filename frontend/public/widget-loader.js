@@ -217,14 +217,22 @@
 
       // Start recursive scan from main document
       deepScan(document);
-      
-      console.log(`🔬 [Amoeba UI] Result: Discovered ${discoveredFields.length} fields on page: ${window.location.pathname}`);
+
+      // Debounce and deduplicate discovery
+      var currentPath = window.location.pathname;
+      var signature = currentPath + ":" + discoveredFields.length + ":" + discoveredRoutes.length;
+      if (signature === window.__AMOEBA_LAST_SIGNATURE__) {
+          return; // No new fields or routes discovered since last scan
+      }
+      window.__AMOEBA_LAST_SIGNATURE__ = signature;
+
+      console.log(`🔬 [Amoeba UI] Discovered ${discoveredFields.length} fields on page: ${currentPath}`);
 
       if (discoveredFields.length > 0 || discoveredRoutes.length > 0) {
           const payload = {
               type: "AMOEBA_DISCOVERED_FIELDS",
               fields: discoveredFields,
-              path: window.location.pathname
+              path: currentPath
           };
           iframe.contentWindow.postMessage(payload, "*");
           
@@ -234,19 +242,27 @@
       }
   }
 
-  // --- CONTROL TIMERS ---
-  // We run a scan on load, after a delay, and periodically (every 10s)
-  window.addEventListener("load", function() {
-      setTimeout(scanAndLearn, 1500); // Initial 1.5s delay
-  });
-
-  // Fallback in case load event already fired
-  if (document.readyState === "complete") {
-      setTimeout(scanAndLearn, 1500);
-  } else {
-      setTimeout(scanAndLearn, 3000); // Late fallback to ensure dynamic forms render
+  // --- SMART CONTROL TIMERS ---
+  // Run scan once after page settles, without redundant competing timers or aggressive 10s intervals
+  var scanTimer = null;
+  function scheduleScan(delay) {
+      if (scanTimer) clearTimeout(scanTimer);
+      scanTimer = setTimeout(function() {
+          scanTimer = null;
+          scanAndLearn();
+      }, delay || 1200);
   }
 
-  setInterval(scanAndLearn, 10000); // Periodic reinforcement
+  if (document.readyState === "complete") {
+      scheduleScan(1000);
+  } else {
+      window.addEventListener("load", function() {
+          scheduleScan(1200);
+      }, { once: true });
+  }
+
+  // Observe SPA navigation (hash and history changes)
+  window.addEventListener("popstate", function() { scheduleScan(1200); });
+  window.addEventListener("hashchange", function() { scheduleScan(1200); });
 
 })(); 

@@ -198,6 +198,17 @@ async def init_db():
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE navigationitem ADD COLUMN embedding vector(1536)"))
                 print("  ✅ Added 'embedding' vector column to navigationitem")
+
+            # Clean up legacy project folder prefixes (e.g. /newlook/) and deduplicate
+            await conn.execute(text(
+                "UPDATE navigationitem SET path = REGEXP_REPLACE(path, '^/(newlook|varun_sterling|sterling_company)/', '/') WHERE path ~ '^/(newlook|varun_sterling|sterling_company)/'"
+            ))
+            await conn.execute(text("""
+                DELETE FROM navigationitem a USING navigationitem b
+                WHERE a.id < b.id 
+                  AND a.client_id = b.client_id 
+                  AND a.path = b.path
+            """))
         except Exception as e:
             print(f"NavigationItem migration notice: {e}")
 
