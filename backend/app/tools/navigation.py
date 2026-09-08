@@ -90,18 +90,43 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
     routes = []
     seen_keys = set()
     for item in sorted_items:
-        norm_path = _normalize_route_path(item.path)
-        key = (item.label.lower().strip(), norm_path.lower())
+        raw_path = (item.path or "").strip()
+        
+        # 1. Skip internal view template files (e.g. /app/Views/..., *.php files that are not URLs)
+        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/']):
+            continue
+
+        norm_path = _normalize_route_path(raw_path)
+        
+        # 2. Strip trailing numeric ID segments (e.g. /inventory/grn_complete/1 -> /inventory/grn_complete)
+        # to collapse duplicate parameterized tab links into their canonical parent route
+        canonical_path = re.sub(r'/\d+$', '', norm_path)
+        if not canonical_path.startswith('/'):
+            canonical_path = '/' + canonical_path
+            
+        # 3. Clean up label if it starts with client/company name
+        clean_label = item.label or ""
+        clean_label = re.sub(r'^(?:newlook|varun_sterling|sterling_company)[\s\-:]+', '', clean_label, flags=re.IGNORECASE).strip()
+        if not clean_label:
+            clean_label = item.label
+            
+        # 4. Infer clean module if module was set to client name or is empty
+        module_val = item.module
+        if not module_val or module_val.lower() in {'newlook', 'varun_sterling', 'sterling_company', 'app', 'default'}:
+            url_parts = [p for p in canonical_path.split('/') if p]
+            module_val = url_parts[0].capitalize() if url_parts else None
+
+        key = (clean_label.lower().strip(), canonical_path.lower())
         if key in seen_keys:
             continue
         seen_keys.add(key)
         
         routes.append({
-            "label": item.label,
-            "path": norm_path,
-            "module": item.module,
+            "label": clean_label,
+            "path": canonical_path,
+            "module": module_val,
             "is_custom": not item.is_discovered,
-            "parents": _infer_parents_from_path(norm_path, item.module)
+            "parents": _infer_parents_from_path(canonical_path, module_val)
         })
         
     return routes
