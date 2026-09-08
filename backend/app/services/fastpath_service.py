@@ -221,6 +221,12 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
         if path:
             return f"Navigating...", [{"type": "NAVIGATE", "payload": path}]
             
+        # If user used a conversational query ("show me", "view", "list") without explicit navigation verbs,
+        # do NOT show fuzzy navigation choices—allow it to fall through to Operations/data queries!
+        is_soft_query = bool(re.search(r"(?i)^(show\s+me|view|list|get|display)\b", user_input.strip()))
+        if is_soft_query:
+            return None, []
+
         if ambiguous_list:
             options = []
             text_lines = [f"I found multiple pages named \"{ambiguous_list[0]['label']}\":", ""]
