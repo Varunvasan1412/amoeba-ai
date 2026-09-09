@@ -206,6 +206,10 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
           * If the user asks for 'Completed' or 'Approved' records: match the status value indicating completion (e.g. status=2 or approval_status=1).
           * If the user asks for 'Draft' records: match status=0 or draft status.
           * If the user asks for 'Cancelled' or 'Inactive' records: match status=0 or cancelled status.
+    16. **STAGE-BASED WORKFLOWS VS COMPLETED TRANSACTION TABLES**:
+        - In manufacturing/pipeline ERPs, pending stages (such as Pending Invoices, Pending Jobcards, Pending Delivery) exist in the driving pipeline header (`enquiry_header`, `order_header`) with stage IDs (`eh.enquiry_status_id = 9`). They do NOT yet exist in the downstream final table (`invoice_header`).
+        - If the query specifies 'Pending' or matches a stage filter, you MUST query the driving pipeline header table. You MUST NEVER switch to the completed transaction table (`invoice_header`)!
+        - Only query tables that actually exist in the schema. NEVER invent joins to non-existent columns (e.g. do not join customer to menu_master).
 
     {semantic_context}
 

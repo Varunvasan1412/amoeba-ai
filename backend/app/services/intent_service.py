@@ -26,9 +26,22 @@ NON_ENTITY_WORDS = {
     # SQL aggregations & metrics (NEVER match these to table names like master_country!)
     "total", "count", "sum", "average", "avg", "min", "max", "number", "qty", "quantity", 
     "amount", "value", "rate", "cost", "price", "figure", "figures", "how", "many", "much",
-    # Generic entity placeholders
-    "table", "tables", "record", "records", "data", "row", "rows", "entries", "entry", "item", "items"
+    # Generic entity placeholders & noise words
+    "table", "tables", "record", "records", "data", "row", "rows", "entries", "entry", "item", "items",
+    "list", "lists", "page", "pages", "screen", "screens", "view", "views", "menu", "menus", "tab", "tabs"
 }
+
+def _stem_token(token: str) -> str:
+    """Standard English noun singularization for robust entity/tab matching."""
+    t = token.lower().strip()
+    if t.endswith("ies") and len(t) > 4:
+        return t[:-3] + "y"
+    if t.endswith("es") and len(t) > 3:
+        return t[:-2]
+    if t.endswith("s") and not t.endswith("ss") and len(t) > 2:
+        return t[:-1]
+    return t
+
 
 def normalize_entity_name(name: Optional[str]) -> str:
     """Removes common prefixes/suffixes and singularizes basic plurals."""
@@ -256,10 +269,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             
             clean_q = norm_query.replace("_", " ").lower()
             q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - NON_ENTITY_WORDS
+            stemmed_q_toks = {_stem_token(t) for t in q_toks}
             
             # --- TAB DISAMBIGUATION CHECK ---
             # If the user asks for a general entity or screen that has multiple tabs/stages
-            # (e.g. "grn inspection", "quotations", "invoices") and did NOT specify a discriminating tab:
+            # (e.g. "grn inspection", "quotations", "invoices", "delivery challan") and did NOT specify a discriminating tab:
             # We do not guess arbitrarily. We ask the user which tab they want to view!
             TAB_DISCRIMINATORS = {
                 "pending", "completed", "complete", "active", "inactive", "converted", 
@@ -276,19 +290,17 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         tab_groups.setdefault(grp, []).append(sm)
                 
                 matched_group = None
-                matched_group = None
                 matched_tabs = []
                 for grp, grp_sms in tab_groups.items():
                     grp_lower = grp.lower().strip()
                     grp_core_toks = set(re.findall(r'[a-zA-Z0-9]+', grp_lower)) - NON_ENTITY_WORDS
+                    stemmed_grp_toks = {_stem_token(t) for t in grp_core_toks}
                     
-                    # Universal Tab Group Match:
-                    # The user query MUST supply the distinguishing core tokens of the tab group!
-                    # For example, "grn list" will NOT match group "grn inspection" because "inspection" is missing.
+                    # Universal Tab Group Match with Stemming (e.g. "invoice" matches group "Invoices")
                     is_group_match = False
-                    if grp_lower in clean_q:
+                    if grp_lower in clean_q or _stem_token(grp_lower) in clean_q:
                         is_group_match = True
-                    elif grp_core_toks and grp_core_toks.issubset(q_toks):
+                    elif stemmed_grp_toks and (stemmed_grp_toks.issubset(stemmed_q_toks) or stemmed_q_toks.issubset(stemmed_grp_toks)):
                         is_group_match = True
                         
                     if is_group_match:
@@ -319,7 +331,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     for sm in sm_all:
                         lbl_clean = sm.ui_label.lower().strip()
                         base_tokens = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - TAB_DISCRIMINATORS - NON_ENTITY_WORDS
-                        if base_tokens and base_tokens.issubset(q_toks):
+                        stemmed_base = {_stem_token(t) for t in base_tokens}
+                        if stemmed_base and (stemmed_base.issubset(stemmed_q_toks) or stemmed_q_toks.issubset(stemmed_base)):
                             if any(td in lbl_clean for td in TAB_DISCRIMINATORS):
                                 if sm.ui_label.strip() not in seen_labels:
                                     seen_labels.add(sm.ui_label.strip())

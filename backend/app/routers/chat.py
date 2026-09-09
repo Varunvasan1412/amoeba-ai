@@ -464,7 +464,7 @@ async def websocket_endpoint(
                                     if chosen_tab:
                                         await local_session.delete(active_choice_state)
                                         await local_session.commit()
-                                        user_text = f"Show me the {chosen_tab.lower()} list"
+                                        user_text = f"Show me the {chosen_tab.lower()}" if "list" in chosen_tab.lower() else f"Show me the {chosen_tab.lower()} list"
                                     elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
                                         await local_session.delete(active_choice_state)
                                         await local_session.commit()
@@ -816,6 +816,69 @@ async def websocket_endpoint(
                                             
                                             print(f"🔧 [DETERMINISTIC READ] Processing table: {table_name}")
                                             
+                                            # --- FAST CONTROLLER BASE QUERY CHECK ---
+                                            # If this read request matches a verified semantic mapping with an exact base_query,
+                                            # execute it directly for maximum speed and 100% ERP screen parity.
+                                            try:
+                                                from app.models.semantic_mapping import SemanticMapping
+                                                from app.tools.database import execute_sql_query
+                                                
+                                                sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == int(client_id))
+                                                all_sms = (await local_session.execute(sm_stmt)).scalars().all()
+                                                
+                                                matched_sm = None
+                                                user_q_low = user_text.lower().strip()
+                                                fn_low = friendly_name.lower().strip()
+                                                
+                                                for sm in all_sms:
+                                                    if not sm.base_query:
+                                                        continue
+                                                    sm_lbl = sm.ui_label.lower().strip()
+                                                    if sm_lbl == fn_low or sm_lbl == user_q_low:
+                                                        matched_sm = sm
+                                                        break
+                                                    if ("pending" in user_q_low and "pending" in sm_lbl and any(k in sm_lbl for k in user_q_low.split() if k not in ["list", "the", "show", "me", "i", "want", "to", "table"])):
+                                                        matched_sm = sm
+                                                        break
+                                                    if ("completed" in user_q_low and "completed" in sm_lbl and any(k in sm_lbl for k in user_q_low.split() if k not in ["list", "the", "show", "me", "i", "want", "to", "table"])):
+                                                        matched_sm = sm
+                                                        break
+                                                    if sm_lbl in user_q_low and len(sm_lbl) > 5:
+                                                        matched_sm = sm
+                                                        break
+
+                                                if matched_sm and matched_sm.base_query:
+                                                    print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{matched_sm.ui_label}'", flush=True)
+                                                    raw_records = execute_sql_query(matched_sm.base_query)
+                                                    result = sanitize_for_json(raw_records)
+                                                    display_title = matched_sm.ui_label
+                                                    actions_list = []
+                                                    if isinstance(result, (list, tuple)) and result:
+                                                        headers = list(result[0].keys())
+                                                        actions_list.append({
+                                                            "type": "data_table",
+                                                            "payload": {
+                                                                "title": display_title,
+                                                                "headers": headers,
+                                                                "rows": list(result),
+                                                                "total": len(result)
+                                                            }
+                                                        })
+                                                        response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
+                                                    elif isinstance(result, (list, tuple)):
+                                                        response_text = f"No records found for **{display_title}**."
+                                                    else:
+                                                        response_text = f"Records retrieved for **{display_title}**."
+                                                    
+                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+                                                    local_session.add(ai_msg)
+                                                    await local_session.commit()
+                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+                                                    await websocket.send_json({"type": "done", "session_id": s_id})
+                                                    return
+                                            except Exception as fast_err:
+                                                print(f"⚠️ Fast base_query execution skipped/failed ({fast_err}), falling back", flush=True)
+
                                             try:
                                                 from app.models.client_config import ClientConfig
                                                 client_config = await local_session.get(ClientConfig, int(client_id))
