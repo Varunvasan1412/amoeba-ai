@@ -293,6 +293,26 @@ def scan_fullstack_semantics(root_path):
                             j_type = (j_m.group(3) or 'left').strip().upper()
                             raw_joins.append(f"{j_type} JOIN {j_table} ON {j_cond}")
                         
+                        raw_group_by = []
+                        for g_m in re.finditer(r'->group_by\s*\(\s*[\'"]([^\'"]+)[\'"]', fn_body, re.IGNORECASE):
+                            raw_group_by.append(g_m.group(1).strip())
+                        for g_m in re.finditer(r'\bGROUP\s+BY\s+([^;\r\n"\']+)', fn_body, re.IGNORECASE):
+                            raw_group_by.append(g_m.group(1).strip())
+
+                        raw_order_by = []
+                        for o_m in re.finditer(r'->order_by\s*\(\s*[\'"]([^\'"]+)[\'"](?:\s*,\s*[\'"]([a-zA-Z]+)[\'"])?', fn_body, re.IGNORECASE):
+                            col = o_m.group(1).strip()
+                            direction = (o_m.group(2) or '').strip().upper()
+                            raw_order_by.append(f"{col} {direction}".strip())
+                        for o_m in re.finditer(r'\bORDER\s+BY\s+([^;\r\n"\']+)', fn_body, re.IGNORECASE):
+                            raw_order_by.append(o_m.group(1).strip())
+
+                        raw_queries = []
+                        for q_m in re.finditer(r'(?:->query\s*\(\s*[\'"]|\$sql\s*=\s*[\'"]|\$query\s*=\s*[\'"])\s*(SELECT\b[\s\S]*?\bFROM\b[\s\S]*?)(?:[\'"]\s*\)|[\'"];)', fn_body, re.IGNORECASE):
+                            raw_q = re.sub(r'\s+', ' ', q_m.group(1)).strip()
+                            if len(raw_q) > 20 and not any(bad in raw_q.lower() for bad in ['$', 'password', 'token', 'session']):
+                                raw_queries.append(raw_q)
+
                         loaded_views = [v.replace('\\', '/').lower() for v in view_regex.findall(fn_body)]
                         subcalls = [s.lower() for s in subcall_regex.findall(fn_body)]
                         filters = extract_sql_filters(fn_body)
@@ -301,6 +321,9 @@ def scan_fullstack_semantics(root_path):
                             "tables": clean_tables,
                             "from_tables": clean_from,
                             "joins": raw_joins,
+                            "group_by": raw_group_by,
+                            "order_by": raw_order_by,
+                            "queries": raw_queries,
                             "views": loaded_views,
                             "subcalls": subcalls,
                             "filters": filters,
@@ -339,6 +362,21 @@ def scan_fullstack_semantics(root_path):
                             data["joins"] = []
                         if j not in data["joins"]:
                             data["joins"].append(j)
+                    for g in target_data.get("group_by", []):
+                        if "group_by" not in data:
+                            data["group_by"] = []
+                        if g not in data["group_by"]:
+                            data["group_by"].append(g)
+                    for o in target_data.get("order_by", []):
+                        if "order_by" not in data:
+                            data["order_by"] = []
+                        if o not in data["order_by"]:
+                            data["order_by"].append(o)
+                    for q in target_data.get("queries", []):
+                        if "queries" not in data:
+                            data["queries"] = []
+                        if q not in data["queries"]:
+                            data["queries"].append(q)
 
     print(f"📊 Indexed {len(controller_files)} backend controllers/models ({len(controller_methods)} methods).")
 
@@ -586,7 +624,15 @@ def scan_fullstack_semantics(root_path):
                         
                         joins_list = best_m_data.get("joins", [])
                         joins_str = " ".join(joins_list) if joins_list else None
-                        base_query_str = f"SELECT * FROM {target_tbl} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {target_tbl} WHERE {filter_str}".strip() if filter_str else None)
+                        if best_m_data.get("queries"):
+                            base_query_str = best_m_data["queries"][0]
+                        else:
+                            parts = [f"SELECT * FROM {target_tbl}"]
+                            if joins_str: parts.append(joins_str)
+                            if filter_str: parts.append(f"WHERE {filter_str}")
+                            if best_m_data.get("group_by"): parts.append(f"GROUP BY {', '.join(dict.fromkeys(best_m_data['group_by']))}")
+                            if best_m_data.get("order_by"): parts.append(f"ORDER BY {', '.join(dict.fromkeys(best_m_data['order_by']))}")
+                            base_query_str = " ".join(parts).strip() if (joins_str or filter_str or best_m_data.get("group_by") or best_m_data.get("order_by")) else None
                         
                         source_ctrl = f"{best_m_data['file']}::{c_name}/{best_m_name}" if c_name else f"{best_m_data['file']}::{best_m_name}"
                         screen_group = v['ui_label']
@@ -629,7 +675,15 @@ def scan_fullstack_semantics(root_path):
                     
                     joins_list = c_data.get("joins", [])
                     joins_str = " ".join(joins_list) if joins_list else None
-                    base_query_str = f"SELECT * FROM {primary_table} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {primary_table} WHERE {filter_str}".strip() if filter_str else None)
+                    if c_data.get("queries"):
+                        base_query_str = c_data["queries"][0]
+                    else:
+                        parts = [f"SELECT * FROM {primary_table}"]
+                        if joins_str: parts.append(joins_str)
+                        if filter_str: parts.append(f"WHERE {filter_str}")
+                        if c_data.get("group_by"): parts.append(f"GROUP BY {', '.join(dict.fromkeys(c_data['group_by']))}")
+                        if c_data.get("order_by"): parts.append(f"ORDER BY {', '.join(dict.fromkeys(c_data['order_by']))}")
+                        base_query_str = " ".join(parts).strip() if (joins_str or filter_str or c_data.get("group_by") or c_data.get("order_by")) else None
                     
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
@@ -716,7 +770,10 @@ def scan_fullstack_semantics(root_path):
                 headers_str = ", ".join(v["headers"]) if v["headers"] else ""
                 filter_str = " AND ".join(list(set(extracted_filters))) if extracted_filters else ""
                 joins_str = " ".join(list(set(extracted_joins))) if extracted_joins else ""
-                base_query_str = f"SELECT * FROM {primary_table} {joins_str} WHERE {filter_str}".strip() if filter_str and joins_str else (f"SELECT * FROM {primary_table} WHERE {filter_str}".strip() if filter_str else None)
+                parts = [f"SELECT * FROM {primary_table}"]
+                if joins_str: parts.append(joins_str)
+                if filter_str: parts.append(f"WHERE {filter_str}")
+                base_query_str = " ".join(parts).strip() if (joins_str or filter_str) else None
                 ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                 
                 def add_semantic_entry(label_text):
