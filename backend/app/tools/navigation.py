@@ -151,7 +151,20 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     routes = await load_client_sitemap(session, client_id)
     query_tokens = set(query.lower().strip().split())
     
+    is_export_requested = bool(re.search(r"\b(print|pdf|export|download|xlsx|excel|csv)\b", query.lower()))
+    
     processed_routes = routes
+    if not is_export_requested:
+        filtered_routes = []
+        for r in routes:
+            r_path = r["path"].lower()
+            r_label = r["label"].lower()
+            # Ignore print/pdf document sub-actions for general page navigation commands
+            if any(bad in r_path or bad in r_label for bad in ["/print", "print_", "_pdf", "pdf_", "/pdf"]):
+                continue
+            filtered_routes.append(r)
+        if filtered_routes:
+            processed_routes = filtered_routes
 
     # ---------------------------------------------------------
     # 1. EXACT LABEL MATCH (Highest Priority)
