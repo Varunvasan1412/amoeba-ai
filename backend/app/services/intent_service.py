@@ -383,6 +383,16 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 elif ("pending" in clean_q and "completed" in sm_label_clean) or ("completed" in clean_q and "pending" in sm_label_clean):
                     score -= 30 # Penalize opposite tab
                     
+                # Report vs History/Logs/Attendance discriminator
+                if "report" in clean_q and "report" in sm_label_clean:
+                    score += 25
+                elif "report" in clean_q and any(k in sm_label_clean for k in ["history", "log", "attendance", "loglist", "logs"]):
+                    score -= 35
+                elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and any(k in sm_label_clean for k in ["history", "log", "attendance", "logs"]):
+                    score += 25
+                elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and "report" in sm_label_clean:
+                    score -= 35
+
                 if score > best_sm_score and score >= 8:
                     best_sm_score = score
                     best_sm = sm
@@ -398,9 +408,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         # When user query contains "report" (e.g. "show me the total sales report"),
         # check if it refers to a screen/menu that has both a data table and a page.
         # Ask user whether they want to view the data table, open the page, or export.
+        # IF the user explicitly said "list", "show", "get", "view", etc., do NOT interrupt
+        # with disambiguation—proceed directly to retrieve the report table data!
         # =========================================================================
         has_report_kw = bool(re.search(r"\breport(s)?\b", query_lower))
-        is_explicit_view = bool(re.search(r"\b(view|table|grid|records)\b", query_lower)) or clean_q.startswith("view")
+        is_explicit_view = bool(re.search(r"\b(view|table|grid|records|list|show|fetch|get|display|rows|data)\b", query_lower)) or any(clean_q.startswith(v) for v in ["view", "list", "show", "get", "fetch", "display"])
         is_explicit_open = bool(re.search(r"\b(open|go\s+to|navigate|take\s+me)\b", query_lower))
         is_explicit_download = bool(re.search(r"\b(download|export|xlsx|excel|csv)\b", query_lower))
 
@@ -417,18 +429,16 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 score = 0
                 if target_ui_label and target_ui_label.lower() == nav_clean:
                     score = 100
-                elif "total_sale" in nav_path or "total_sales" in nav_path:
-                    score = 95
                 elif target_ui_label and target_ui_label.lower() in nav_clean:
                     score = 85
-                elif all(w in nav_clean or w in nav_path for w in ["total", "sale"]):
-                    score = 80
                 elif nav_clean in clean_q or clean_q in nav_clean:
                     score = 70
                 elif all(w in nav_clean for w in q_toks if w not in NON_ENTITY_WORDS):
                     score = 60
                 elif "report" in nav_clean and any(w in nav_clean for w in q_toks if w not in NON_ENTITY_WORDS):
-                    score = 20
+                    score = 40
+                elif any(w in nav_path for w in q_toks if w not in NON_ENTITY_WORDS):
+                    score = 30
                 
                 if score > best_nav_score and score >= 20:
                     best_nav_score = score
@@ -436,7 +446,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     
             if not target_ui_label and matching_nav:
                 target_ui_label = matching_nav.label
-                target_table = matching_nav.table_name or "invoice_detail"
+                target_table = matching_nav.table_name or (best_sm.database_table if best_sm else None)
                 
             if target_ui_label:
                 disp_title = target_ui_label

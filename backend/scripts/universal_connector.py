@@ -5,7 +5,13 @@ import sys
 import urllib.request
 import urllib.parse
 from urllib.error import URLError
-from collections import Counter
+try:
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 # =========================================================================
 # 🧠 AMOEBA FULLSTACK MVC & SPA CONNECTOR AGENT v3.0
@@ -137,16 +143,33 @@ def scan_php_mvc_routes(root_path, base_url):
                         content = f.read()
                     controller_name = os.path.splitext(file)[0].lower()
                     methods = re.findall(r'public\s+function\s+([a-zA-Z0-9_]+)\s*\(', content)
+                    c_lbl = simple_title_case(controller_name)
                     for m in methods:
                         if m.startswith('_') or m in ['construct', '__construct', 'get_instance']: continue
                         route_rel = f"{controller_name}/{m}"
                         full_url = urllib.parse.urljoin(base_url, route_rel)
                         if full_url not in seen_paths:
-                            label = simple_title_case(m)
+                            m_lbl = simple_title_case(m)
+                            if m.lower() == 'index':
+                                clean_lbl = c_lbl
+                                # Also register base controller URL without /index
+                                base_ctrl_url = urllib.parse.urljoin(base_url, controller_name)
+                                if base_ctrl_url not in seen_paths:
+                                    routes.append({
+                                        "label": c_lbl,
+                                        "path": base_ctrl_url,
+                                        "keywords": [controller_name, c_lbl.lower()]
+                                    })
+                                    seen_paths.add(base_ctrl_url)
+                            elif m.lower() in ['report', 'list', 'history', 'summary', 'details']:
+                                clean_lbl = f"{c_lbl} {m_lbl}"
+                            else:
+                                clean_lbl = f"{c_lbl} {m_lbl}"
+
                             routes.append({
-                                "label": f"{simple_title_case(controller_name)} - {label}",
+                                "label": clean_lbl,
                                 "path": full_url,
-                                "keywords": label.lower().split() + [controller_name]
+                                "keywords": m_lbl.lower().split() + [controller_name, c_lbl.lower(), clean_lbl.lower()]
                             })
                             seen_paths.add(full_url)
                 except Exception: pass
@@ -799,6 +822,104 @@ def scan_fullstack_semantics(root_path):
                 if file_label.lower() not in [v["ui_label"].lower(), base_label.lower()]:
                     add_semantic_entry(file_label)
 
+    # --- PHASE 3B: Controller Action-Driven Semantic Profiler ---
+    # Many modern MVC apps (CodeIgniter, Laravel, Django, Rails) route actions directly to methods,
+    # and each method executes a specific query (reports, lists, summaries, stages) and loads a view.
+    # We correlate EVERY controller public action method to ensure no report or list is lost!
+    for cn, c_info in controller_files.items():
+        ctrl_file = c_info.get("file", "")
+        methods = c_info.get("methods", {})
+        
+        for m_name, m_data in methods.items():
+            if m_name.startswith('_') or m_name in ['construct', '__construct', 'get_instance']:
+                continue
+            
+            action_tables = m_data.get("tables", [])
+            action_from = m_data.get("from_tables", [])
+            if not action_tables and c_info.get("default_tables"):
+                action_tables = list(c_info["default_tables"])
+                
+            if not action_tables:
+                continue
+                
+            method_views = m_data.get("views", [])
+            matched_view = None
+            for v in views:
+                for mv in method_views:
+                    if mv in v["view_key"] or v["view_base"] in mv or mv.replace('/', '_') in v["view_base"]:
+                        matched_view = v
+                        break
+                if matched_view:
+                    break
+                    
+            if not matched_view:
+                for v in views:
+                    if v["view_base"] == m_name or v["view_base"] == f"{cn}_{m_name}" or v["view_base"] == f"{cn}/{m_name}":
+                        matched_view = v
+                        break
+                        
+            v_headers = matched_view.get("headers", []) if matched_view else []
+            v_title = matched_view.get("ui_label") if matched_view else None
+            
+            target_tbl = choose_primary_table(action_tables, headers=v_headers, from_tables=action_from)
+            if not target_tbl:
+                continue
+                
+            headers_str = ", ".join(v_headers) if v_headers else ""
+            filters_list = m_data.get("filters", [])
+            filter_str = " AND ".join(dict.fromkeys(filters_list)) if filters_list else ""
+            ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
+            
+            joins_list = m_data.get("joins", [])
+            joins_str = " ".join(dict.fromkeys(joins_list)) if joins_list else ""
+            group_by_list = m_data.get("group_by", [])
+            order_by_list = m_data.get("order_by", [])
+            
+            if m_data.get("queries"):
+                base_query_str = m_data["queries"][0]
+            else:
+                parts = [f"SELECT * FROM {target_tbl}"]
+                if joins_str: parts.append(joins_str)
+                if filter_str: parts.append(f"WHERE {filter_str}")
+                if group_by_list: parts.append(f"GROUP BY {', '.join(dict.fromkeys(group_by_list))}")
+                if order_by_list: parts.append(f"ORDER BY {', '.join(dict.fromkeys(order_by_list))}")
+                base_query_str = " ".join(parts).strip() if (joins_str or filter_str or group_by_list or order_by_list) else None
+                
+            ctrl_label = simple_title_case(cn)
+            m_label = simple_title_case(m_name)
+            source_spec = f"{ctrl_file}::{cn}/{m_name}"
+            
+            action_labels = []
+            if v_title and len(v_title) > 2 and v_title.lower() not in ['home', 'index', 'view']:
+                action_labels.append(v_title)
+                
+            combined_label = f"{ctrl_label} {m_label}".strip()
+            action_labels.append(combined_label)
+            if m_label.lower() not in ['index', 'list', 'main', 'view', 'data']:
+                action_labels.append(m_label)
+                if not any(m_label.lower().endswith(sfx) for sfx in ['list', 'report', 'details', 'log', 'logs', 'history']):
+                    action_labels.append(f"{m_label} List")
+                    action_labels.append(f"{combined_label} List")
+            elif m_label.lower() in ['index', 'list']:
+                action_labels.append(f"{ctrl_label} List")
+                
+            tab_group_name = ctrl_label
+            
+            for al in action_labels:
+                key = (al.lower(), target_tbl)
+                if key not in seen and len(al) >= 3:
+                    semantics.append({
+                        "ui_label": al,
+                        "database_table": target_tbl,
+                        "source_file": source_spec,
+                        "ui_columns": ui_cols_str,
+                        "default_filter": filter_str or None,
+                        "base_query": base_query_str or None,
+                        "required_joins": joins_str or None,
+                        "tab_group": tab_group_name
+                    })
+                    seen.add(key)
+
     print(f"🧠 Correlated {len(semantics)} Fullstack UI-to-Database Semantic Mappings!")
     return semantics
 
@@ -903,7 +1024,184 @@ def sync_enums_with_amoeba(enums, base_api_url, api_key):
         print(f"❌ Enum sync failed: {e}")
 
 # =========================================================================
-# 5. ENTRY POINT
+# 5. DYNAMIC LIVE WEB APPLICATION CRAWLER
+# =========================================================================
+
+def scan_live_web_application(base_url):
+    """
+    Crawls a live web application URL dynamically to discover routes, views,
+    table columns, tabs, forms, and enums when source code files are remote or unavailable.
+    Works for ANY web application (PHP, Python, Node, Java, Ruby, .NET).
+    """
+    import urllib.request
+    import ssl
+    from urllib.parse import urljoin, urlparse
+    
+    print(f"🌐 Initiating Dynamic Live Web Crawler for: {base_url}")
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    
+    parsed_base = urlparse(base_url)
+    domain = parsed_base.netloc
+    
+    routes = []
+    semantics = []
+    enums = {}
+    
+    visited_urls = set()
+    to_visit = [base_url]
+    seen_paths = set()
+    seen_sem_keys = set()
+    
+    th_regex = re.compile(r'<th[^>]*>(.*?)</th>', re.IGNORECASE | re.DOTALL)
+    title_regex = re.compile(r'<(?:h[1-4]|title)[^>]*>(.*?)</(?:h[1-4]|title)>|<div[^>]*class=["\'][^"\']*(?:card-title|box-title|page-title|page-header)[^"\']*["\'][^>]*>(.*?)</div>', re.IGNORECASE | re.DOTALL)
+    link_regex = re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+    tab_regex = re.compile(r'<(?:a|button|li)[^>]+(?:data-toggle=["\']tab["\']|role=["\']tab["\']|href=["\']#[^"\']+["\'])[^>]*>(.*?)</(?:a|button|li)>', re.IGNORECASE | re.DOTALL)
+    select_regex = re.compile(r'<select[^>]*name=["\']([^"\']+)["\'][^>]*>(.*?)</select>', re.IGNORECASE | re.DOTALL)
+    option_regex = re.compile(r'<option[^>]*value=["\']([^"\']*)["\'][^>]*>(.*?)</option>', re.IGNORECASE)
+    ajax_regex = re.compile(r'(?:url|sAjaxSource)\s*:\s*["\']([^"\']+)["\']', re.IGNORECASE)
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AmoebaConnector/3.5'
+    }
+    
+    max_pages = 100
+    while to_visit and len(visited_urls) < max_pages:
+        current_url = to_visit.pop(0)
+        norm_current = current_url.split('#')[0].rstrip('/')
+        if norm_current in visited_urls:
+            continue
+        visited_urls.add(norm_current)
+        
+        try:
+            req = urllib.request.Request(current_url, headers=headers)
+            with urllib.request.urlopen(req, context=ctx, timeout=8) as response:
+                content_type = response.headers.get('Content-Type', '')
+                if 'text/html' not in content_type:
+                    continue
+                html = response.read().decode('utf-8', errors='ignore')
+        except Exception:
+            continue
+            
+        # Parse Page Title and Headings
+        titles = []
+        for match in title_regex.findall(html):
+            t = match[0] or match[1]
+            ct = clean_ui_text(t)
+            if ct and len(ct) > 2 and len(ct) < 70 and not ct.startswith('$'):
+                titles.append(ct)
+                
+        page_title = titles[0] if titles else ""
+        clean_title = re.sub(r'^(?:newlook|company|admin|app|dashboard)[\s\-:]+', '', page_title, flags=re.IGNORECASE).strip()
+        if not clean_title:
+            clean_title = page_title
+            
+        path_only = urlparse(current_url).path
+        if not path_only: path_only = "/"
+        
+        # Add Route
+        if clean_title and path_only not in seen_paths:
+            seen_paths.add(path_only)
+            routes.append({
+                "label": clean_title,
+                "path": path_only,
+                "keywords": clean_title.lower().split() + [p for p in path_only.split('/') if p]
+            })
+            
+        # Extract Table Headers
+        raw_ths = th_regex.findall(html)
+        page_headers = []
+        for th in raw_ths:
+            cth = clean_ui_text(th)
+            if cth and len(cth) > 1 and cth.lower() not in ['s.no', 'sno', 'sl.no', 'slno', 'action', 'actions', '#', 'edit', 'delete']:
+                page_headers.append(cth)
+                
+        # Extract Tabs
+        page_tabs = []
+        for t in tab_regex.findall(html):
+            ct = clean_ui_text(t)
+            if ct and len(ct) > 2 and len(ct) < 50:
+                page_tabs.append(ct)
+                
+        # Extract AJAX endpoints
+        ajax_eps = ajax_regex.findall(html)
+        
+        # Extract Enums from selects
+        for select_name, select_inner in select_regex.findall(html):
+            col_name = select_name.replace('[]', '').strip()
+            if col_name.lower() in ['status', 'type', 'category', 'role', 'state', 'gender', 'urgency', 'priority', 'employee_id']:
+                options = option_regex.findall(select_inner)
+                mapping = {}
+                for val, text in options:
+                    val = clean_ui_text(val)
+                    text = clean_ui_text(text)
+                    if val and text and len(val) < 20 and not val.startswith('<'):
+                        mapping[val] = text
+                if mapping:
+                    tbl_guess = path_only.strip('/').split('/')[0] if path_only.strip('/') else "general"
+                    if tbl_guess not in enums: enums[tbl_guess] = {}
+                    enums[tbl_guess][col_name] = mapping
+                    
+        # Synthesize Semantic Mapping if page has a table or headers
+        if page_headers or ajax_eps or page_tabs:
+            path_parts = [p for p in path_only.strip('/').split('/') if p]
+            inferred_table = path_parts[-1] if path_parts else "dashboard"
+            inferred_table = re.sub(r'(_list|_report|_view|_index)$', '', inferred_table)
+            inferred_module = path_parts[0] if path_parts else "General"
+            
+            headers_str = ", ".join(page_headers[:15]) if page_headers else None
+            
+            if clean_title:
+                sem_key = (clean_title.lower(), inferred_table.lower())
+                if sem_key not in seen_sem_keys:
+                    seen_sem_keys.add(sem_key)
+                    semantics.append({
+                        "ui_label": clean_title,
+                        "database_table": inferred_table,
+                        "source_file": f"HTTP {path_only}",
+                        "ui_columns": headers_str,
+                        "default_filter": None,
+                        "base_query": None,
+                        "required_joins": None,
+                        "tab_group": simple_title_case(inferred_module)
+                    })
+                
+                # Tab-specific semantics
+                for tab in page_tabs:
+                    tab_lbl = f"{clean_title} {tab}" if tab.lower() not in clean_title.lower() else tab
+                    tab_sem_key = (tab_lbl.lower(), inferred_table.lower())
+                    if tab_sem_key not in seen_sem_keys:
+                        seen_sem_keys.add(tab_sem_key)
+                        semantics.append({
+                            "ui_label": tab_lbl,
+                            "database_table": inferred_table,
+                            "source_file": f"HTTP {path_only}#{tab}",
+                            "ui_columns": headers_str,
+                            "default_filter": None,
+                            "base_query": None,
+                            "required_joins": None,
+                            "tab_group": clean_title
+                        })
+                    
+        # Discover new links on this page
+        for href, link_text in link_regex.findall(html):
+            href = href.strip()
+            if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+                continue
+            if any(bad in href.lower() for bad in ['logout', 'signout', 'delete', 'remove', 'destroy']):
+                continue
+            full_link = urljoin(current_url, href)
+            parsed_link = urlparse(full_link)
+            if parsed_link.netloc == domain and full_link not in visited_urls and full_link not in to_visit:
+                if not any(parsed_link.path.lower().endswith(ext) for ext in ['.jpg', '.png', '.gif', '.css', '.js', '.pdf', '.svg', '.zip']):
+                    to_visit.append(full_link)
+                    
+    print(f"✅ Live Web Crawl Finished: {len(routes)} routes, {len(semantics)} semantic views, {len(enums)} enum sets.")
+    return routes, semantics, enums
+
+# =========================================================================
+# 6. ENTRY POINT
 # =========================================================================
 
 def scan_project(target_dir, base_url):
@@ -926,10 +1224,11 @@ def scan_project(target_dir, base_url):
 if __name__ == "__main__":
     if len(sys.argv) < 3:
         print("=" * 65)
-        print("🧠 AMOEBA UNIVERSAL CONNECTOR v3.0")
+        print("🧠 AMOEBA UNIVERSAL CONNECTOR v3.5")
         print("=" * 65)
-        print("Usage: python universal_connector.py \"<PROJECT_PATH>\" \"<API_KEY>\" [AMOEBA_HOST]")
-        print("Example: python universal_connector.py \"D:\\xampp\\htdocs\\my_erp\" \"my_key\" \"http://localhost:8000\"")
+        print("Usage: python universal_connector.py \"<PROJECT_PATH_OR_URL>\" \"<API_KEY>\" [AMOEBA_HOST]")
+        print("Example 1 (Local Codebase): python universal_connector.py \"D:\\xampp\\htdocs\\my_erp\" \"my_key\"")
+        print("Example 2 (Live Web App):  python universal_connector.py \"https://my-erp.com\" \"my_key\"")
         print("=" * 65)
         sys.exit(1)
         
@@ -938,14 +1237,17 @@ if __name__ == "__main__":
     amoeba_host = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_AMOEBA_HOST
     amoeba_host = amoeba_host.rstrip('/')
 
-    if not os.path.exists(target_path):
-        print(f"❌ Error: Directory not found: {target_path}")
-        sys.exit(1)
+    if target_path.startswith(('http://', 'https://')):
+        routes, semantics, enums = scan_live_web_application(target_path)
+        folder_name = ""
+    else:
+        if not os.path.exists(target_path):
+            print(f"❌ Error: Directory not found: {target_path}")
+            sys.exit(1)
 
-    folder_name = os.path.basename(os.path.abspath(target_path))
-    web_base_url = f"http://localhost/{folder_name}/"
-
-    routes, semantics, enums = scan_project(target_path, web_base_url)
+        folder_name = os.path.basename(os.path.abspath(target_path))
+        web_base_url = f"http://localhost/{folder_name}/"
+        routes, semantics, enums = scan_project(target_path, web_base_url)
 
     # Prevent massive payload caps if an entire drive was provided
     if len(routes) > 2000:

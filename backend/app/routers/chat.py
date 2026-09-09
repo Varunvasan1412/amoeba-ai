@@ -501,7 +501,17 @@ async def websocket_endpoint(
 
                                         chosen_str = (chosen_opt or user_trimmed).lower()
                                         if any(k in chosen_str for k in ["open", "page", "navigate"]):
-                                            nav_dest = rep_url or "https://newlook.ahattrickz.com/report/total_sale"
+                                            nav_dest = rep_url
+                                            if not nav_dest:
+                                                from app.tools.navigation import load_client_sitemap
+                                                all_client_routes = await load_client_sitemap(local_session, int(client_id))
+                                                for r in all_client_routes:
+                                                    r_lbl = r.get("label", "").lower()
+                                                    if rep_entity.lower() in r_lbl or r_lbl in rep_entity.lower():
+                                                        nav_dest = r["path"]
+                                                        break
+                                            if not nav_dest:
+                                                nav_dest = f"/{rep_entity.lower().replace(' ', '/')}"
                                             nav_text = f"Taking you to **{rep_entity}** now..."
                                             nav_actions = [{"type": "NAVIGATE", "payload": nav_dest}]
                                             ai_msg = ChatMessage(role="ai", content=nav_text, actions=nav_actions, client_id=client_id, session_id=s_id)
@@ -866,6 +876,16 @@ async def websocket_endpoint(
                                                             score += 30
                                                         elif td in user_q_low and td not in sm_lbl and any(other_td in sm_lbl for other_td in ["pending", "completed", "active", "inactive"]):
                                                             score -= 40
+                                                            
+                                                    # Report vs History/Attendance/Log discriminator bonus/penalty
+                                                    if "report" in user_q_low and "report" in sm_lbl:
+                                                        score += 35
+                                                    elif "report" in user_q_low and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
+                                                        score -= 45
+                                                    elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
+                                                        score += 35
+                                                    elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and "report" in sm_lbl:
+                                                        score -= 45
                                                             
                                                     if score > best_score and score >= 20:
                                                         best_score = score

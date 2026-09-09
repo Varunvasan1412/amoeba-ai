@@ -87,6 +87,16 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             elif ("pending" in query_lower and "completed" in label_lower) or ("completed" in query_lower and "pending" in label_lower):
                 score -= 30
                 
+            # Report vs History/Attendance/Log discriminator
+            if "report" in query_lower and "report" in label_lower:
+                score += 25
+            elif "report" in query_lower and any(k in label_lower for k in ["history", "log", "attendance", "logs"]):
+                score -= 35
+            elif any(k in query_lower for k in ["history", "log", "attendance", "logs"]) and any(k in label_lower for k in ["history", "log", "attendance", "logs"]):
+                score += 25
+            elif any(k in query_lower for k in ["history", "log", "attendance", "logs"]) and "report" in label_lower:
+                score -= 35
+                
             if score > 0:
                 scored_semantics.append((score, s))
                 
