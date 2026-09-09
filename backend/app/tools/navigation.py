@@ -112,9 +112,9 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
 
         # Skip internal backend AJAX/controller helper endpoints that are not UI navigation pages
         last_segment = path_lower.split('/')[-1]
-        if (last_segment.startswith(('get', 'search', 'save', 'delete', 'update', 'fetch', 'ajax', 'geocode', 'reverse')) or
-            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map', 'print', 'pdf')) or
-            any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice'])):
+        if (last_segment.startswith(('get', 'search', 'save', 'delete', 'update', 'fetch', 'ajax', 'geocode', 'reverse', 'create', 'add')) or
+            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map', 'print', 'pdf', 'action', 'stage')) or
+            any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice', 'deliveryaction', 'jobcard_stage', 'pending_delivery_stage'])):
             if not last_segment.endswith(('list', 'page', 'screen', 'index', 'view')):
                 continue
 
@@ -218,8 +218,15 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
     stopwords = {"list", "page", "screen", "table", "view", "menu", "details", "the", "a", "an", "all", "of"}
     core_query_tokens = query_tokens - stopwords
     match_tokens = core_query_tokens if core_query_tokens else query_tokens
-    stemmed_match_tokens = {_stem_token(t) for t in match_tokens}
-    stemmed_query_tokens = {_stem_token(t) for t in query_tokens}
+    
+    ALIAS_MAP = {
+        "challan": "delivery",
+        "dc": "delivery",
+        "po": "purchase",
+        "grn": "inventory"
+    }
+    stemmed_match_tokens = {_stem_token(ALIAS_MAP.get(t, t)) for t in match_tokens}
+    stemmed_query_tokens = {_stem_token(ALIAS_MAP.get(t, t)) for t in query_tokens}
     
     for r in processed_routes:
         label_tokens = set(r["label"].lower().split())

@@ -318,7 +318,8 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
 
         if ambiguous_list:
             options = []
-            text_lines = [f"I found multiple pages named \"{ambiguous_list[0]['label']}\":", ""]
+            clean_target = target_page.title()
+            text_lines = [f"I found multiple pages for \"{clean_target}\":", ""]
             
             for idx, cand in enumerate(ambiguous_list[:5]):
                 parents = " → ".join(cand.get("parents", []))
@@ -341,6 +342,13 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 clean_label = " ".join(word.capitalize() for word in clean_label.split())
                 if not clean_label:
                     clean_label = label # fallback
+                
+                # Domain Parity: If user asked for Delivery Challan and label is Pending/Completed Delivery, append Challan List
+                if any(k in target_page.lower() for k in ["delivery", "challan", "dc"]):
+                    if "challan" not in clean_label.lower():
+                        clean_label = re.sub(r'(?i)\bdelivery\b', 'Delivery Challan', clean_label)
+                    if "list" not in clean_label.lower():
+                        clean_label = f"{clean_label} List"
                 
                 # Add a clear visual clue for custom routes
                 display = f"{parents} → {clean_label}" if parents else clean_label
