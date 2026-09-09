@@ -283,14 +283,35 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 "report", "reports", "history", "log", "logs", "attendance", "summary",
                 "details", "detail"
             }
+            # Internal controller actions that should never appear as user-facing tab choices
+            INTERNAL_ACTION_WORDS = {
+                "save", "delete", "remove", "update", "insert", "create", "add", "edit",
+                "json", "ajax", "data", "fetch", "get", "search", "export", "import",
+                "upload", "download", "print", "pdf", "excel", "csv", "entry",
+                "salary", "stage", "action", "process", "submit", "approve", "reject",
+                "convert", "generate", "calculate", "compute", "validate", "check",
+                "byid", "bybrand", "bydate", "byname", "bypass"
+            }
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
+            
+            def _is_ui_facing_label(label: str) -> bool:
+                """Filter out internal controller action labels from tab disambiguation."""
+                lbl_lower = label.lower().strip()
+                lbl_words = set(re.findall(r'[a-zA-Z0-9]+', lbl_lower))
+                # If the label contains internal action words and NO tab discriminator, it's internal
+                has_internal = bool(lbl_words.intersection(INTERNAL_ACTION_WORDS))
+                has_discriminator = bool(lbl_words.intersection(TAB_DISCRIMINATORS))
+                # Labels like "Pending Invoice" are UI-facing; "Payroll Save" is internal
+                if has_internal and not has_discriminator:
+                    return False
+                return True
             
             if not has_tab_discriminator and sm_all:
                 # Group mappings by explicit tab_group
                 tab_groups: Dict[str, List[SemanticMapping]] = {}
                 for sm in sm_all:
                     grp = getattr(sm, "tab_group", None)
-                    if grp:
+                    if grp and _is_ui_facing_label(sm.ui_label):
                         tab_groups.setdefault(grp, []).append(sm)
                 
                 matched_group = None
@@ -308,7 +329,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         is_group_match = True
                         
                     if is_group_match:
-                        # Deduplicate tabs by distinct view/table/filter to avoid showing aliases
+                        # Deduplicate tabs: prefer labels with tab discriminators, collapse aliases
                         views_map = {}
                         for s in grp_sms:
                             view_key = (s.database_table, s.default_filter or "")
@@ -317,7 +338,12 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 views_map[view_key] = clean_lbl
                             else:
                                 existing = views_map[view_key]
-                                if "list" in existing.lower() and "list" not in clean_lbl.lower():
+                                # Prefer labels WITH a tab discriminator over generic ones
+                                existing_has_disc = any(td in existing.lower() for td in TAB_DISCRIMINATORS)
+                                new_has_disc = any(td in clean_lbl.lower() for td in TAB_DISCRIMINATORS)
+                                if new_has_disc and not existing_has_disc:
+                                    views_map[view_key] = clean_lbl
+                                elif "list" in existing.lower() and "list" not in clean_lbl.lower():
                                     views_map[view_key] = clean_lbl
 
                         unique_tabs = list(views_map.values())
@@ -344,6 +370,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     candidate_tabs = []
                     seen_labels = set()
                     for sm in sm_all:
+                        if not _is_ui_facing_label(sm.ui_label):
+                            continue
                         lbl_clean = sm.ui_label.lower().strip()
                         base_tokens = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - TAB_DISCRIMINATORS - NON_ENTITY_WORDS
                         stemmed_base = {_stem_token(t) for t in base_tokens}
