@@ -329,11 +329,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             # do NOT trigger tab disambiguation—resolve directly to that tab!
                             is_tab_specified = False
                             for tab_lbl in unique_tabs:
-                                tab_lbl_clean = tab_lbl.lower().strip()
-                                if tab_lbl_clean in clean_q:
-                                    is_tab_specified = True
-                                    break
-                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl_clean)) - NON_ENTITY_WORDS
+                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl.lower().strip())) - NON_ENTITY_WORDS
                                 stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens} - stemmed_grp_toks
                                 if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
                                     is_tab_specified = True
@@ -358,20 +354,20 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                     candidate_tabs.append(sm.ui_label.strip())
                     
                     if len(candidate_tabs) >= 2:
-                        is_cand_specified = False
-                        for cand_lbl in candidate_tabs:
-                            cand_clean = cand_lbl.lower().strip()
-                            if cand_clean in clean_q:
-                                is_cand_specified = True
-                                break
-                            cand_tokens = set(re.findall(r'[a-zA-Z0-9]+', cand_clean)) - NON_ENTITY_WORDS
-                            stemmed_cand = {_stem_token(t) for t in cand_tokens}
-                            if stemmed_cand and len(stemmed_cand.intersection(stemmed_q_toks)) >= 2:
-                                is_cand_specified = True
-                                break
-                        if not is_cand_specified:
+                        # Deduplicate candidates to keep only distinct semantic tabs
+                        filtered_cand = []
+                        seen_cand_keys = set()
+                        for c in candidate_tabs:
+                            c_words = [w for w in c.lower().split() if w in TAB_DISCRIMINATORS]
+                            c_key = tuple(sorted(c_words)) if c_words else c.lower()
+                            if c_key not in seen_cand_keys:
+                                seen_cand_keys.add(c_key)
+                                filtered_cand.append(c)
+                                
+                        is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
+                        if not is_cand_specified and len(filtered_cand) >= 2:
                             matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
-                            matched_tabs = candidate_tabs
+                            matched_tabs = filtered_cand
                 
                 if matched_group and matched_tabs:
                     print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
