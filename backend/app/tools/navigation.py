@@ -105,9 +105,18 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
     for item in sorted_items:
         raw_path = (item.path or "").strip()
         
-        # 1. Skip internal view template files, demos, and backup files
-        if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/', '.html', '/bs5/', '/backup/', 'totalsalesjson', '/test/']):
+        # 1. Skip internal view template files, demos, AJAX endpoints, and backup files
+        path_lower = raw_path.lower()
+        if any(bad in path_lower for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/', '.html', '/bs5/', '/backup/', 'totalsalesjson', '/test/']):
             continue
+
+        # Skip internal backend AJAX/controller helper endpoints that are not UI navigation pages
+        last_segment = path_lower.split('/')[-1]
+        if (last_segment.startswith(('get', 'search', 'save', 'delete', 'update', 'fetch', 'ajax', 'geocode', 'reverse')) or
+            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map')) or
+            any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice'])):
+            if not last_segment.endswith(('list', 'page', 'screen', 'index', 'view')):
+                continue
 
         norm_path = _normalize_route_path(raw_path)
         
@@ -236,7 +245,12 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
             # Exact core match bonus: if clean label tokens exactly match clean query tokens
             exact_core_bonus = 50 if (stemmed_core_label and stemmed_core_label == stemmed_core_query) else 0
             
-            score = 100 + (label_overlap * 10) + exact_core_bonus - extra_token_penalty
+            # Primary List Route Bonus: give strong priority to canonical main list pages (e.g. /quotation/quotationlist, /sales/sales_list)
+            r_path_low = r["path"].lower()
+            r_lbl_low = r["label"].lower()
+            primary_list_bonus = 100 if (r_path_low.endswith("list") or r_lbl_low.endswith("list") or r_path_low.endswith("_list")) else 0
+
+            score = 100 + (label_overlap * 10) + exact_core_bonus + primary_list_bonus - extra_token_penalty
             scored_candidates.append((score, r))
 
     # 3. SEMANTIC VECTOR MATCH (pgvector fallback for fastpath)
