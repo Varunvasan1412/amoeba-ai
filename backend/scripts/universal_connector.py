@@ -2,9 +2,12 @@ import os
 import re
 import json
 import sys
+import ssl
 import urllib.request
 import urllib.parse
+from urllib.parse import urljoin, urlparse
 from urllib.error import URLError
+from collections import Counter, defaultdict
 try:
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -555,7 +558,9 @@ def scan_fullstack_semantics(root_path):
             if best_tbl and best_score > 0:
                 return best_tbl
                 
-        return Counter(candidate_pool).most_common(1)[0][0]
+        if candidate_pool:
+            return Counter(candidate_pool).most_common(1)[0][0]
+        return table_list[0] if table_list else None
 
     for v in views:
         # Resolve companion controller for this view
