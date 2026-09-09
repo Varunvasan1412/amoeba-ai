@@ -113,7 +113,7 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
         # Skip internal backend AJAX/controller helper endpoints that are not UI navigation pages
         last_segment = path_lower.split('/')[-1]
         if (last_segment.startswith(('get', 'search', 'save', 'delete', 'update', 'fetch', 'ajax', 'geocode', 'reverse')) or
-            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map')) or
+            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map', 'print', 'pdf')) or
             any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice'])):
             if not last_segment.endswith(('list', 'page', 'screen', 'index', 'view')):
                 continue
@@ -169,7 +169,7 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
             r_path = r["path"].lower()
             r_label = r["label"].lower()
             # Ignore print/pdf document sub-actions for general page navigation commands
-            if any(bad in r_path or bad in r_label for bad in ["/print", "print_", "_pdf", "pdf_", "/pdf"]):
+            if any(bad in r_path or bad in r_label for bad in ["/print", "print_", "_print", "print", "_pdf", "pdf_", "/pdf"]):
                 continue
             filtered_routes.append(r)
         if filtered_routes:
