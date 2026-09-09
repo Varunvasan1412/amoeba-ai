@@ -821,37 +821,61 @@ async def websocket_endpoint(
                                             # execute it directly for maximum speed and 100% ERP screen parity.
                                             try:
                                                 from app.models.semantic_mapping import SemanticMapping
+                                                from app.models.client_config import ClientConfig
                                                 from app.tools.database import execute_sql_query
+                                                from app.core.context import current_db_url
+                                                from app.services.intent_service import NON_ENTITY_WORDS
                                                 
+                                                client_config = await local_session.get(ClientConfig, int(client_id))
+                                                if client_config and client_config.db_connection_url:
+                                                    current_db_url.set(client_config.db_connection_url)
+
                                                 sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == int(client_id))
                                                 all_sms = (await local_session.execute(sm_stmt)).scalars().all()
                                                 
-                                                matched_sm = None
                                                 user_q_low = user_text.lower().strip()
                                                 fn_low = friendly_name.lower().strip()
+                                                query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
+                                                
+                                                best_sm = None
+                                                best_score = -999
                                                 
                                                 for sm in all_sms:
                                                     if not sm.base_query:
                                                         continue
                                                     sm_lbl = sm.ui_label.lower().strip()
+                                                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+                                                    
+                                                    score = 0
                                                     if sm_lbl == fn_low or sm_lbl == user_q_low:
-                                                        matched_sm = sm
-                                                        break
-                                                    if ("pending" in user_q_low and "pending" in sm_lbl and any(k in sm_lbl for k in user_q_low.split() if k not in ["list", "the", "show", "me", "i", "want", "to", "table"])):
-                                                        matched_sm = sm
-                                                        break
-                                                    if ("completed" in user_q_low and "completed" in sm_lbl and any(k in sm_lbl for k in user_q_low.split() if k not in ["list", "the", "show", "me", "i", "want", "to", "table"])):
-                                                        matched_sm = sm
-                                                        break
-                                                    if sm_lbl in user_q_low and len(sm_lbl) > 5:
-                                                        matched_sm = sm
-                                                        break
+                                                        score += 100
+                                                    elif sm_lbl in user_q_low or user_q_low in sm_lbl:
+                                                        score += 50
+                                                    
+                                                    # Core token overlap
+                                                    overlap = query_tokens.intersection(sm_toks)
+                                                    score += len(overlap) * 20
+                                                    
+                                                    # Penalize extra non-matching tokens
+                                                    diff = sm_toks - query_tokens
+                                                    score -= len(diff) * 5
+                                                    
+                                                    # Tab discriminator bonus/penalty
+                                                    for td in ["pending", "completed", "active", "inactive"]:
+                                                        if td in user_q_low and td in sm_lbl:
+                                                            score += 30
+                                                        elif td in user_q_low and td not in sm_lbl and any(other_td in sm_lbl for other_td in ["pending", "completed", "active", "inactive"]):
+                                                            score -= 40
+                                                            
+                                                    if score > best_score and score >= 20:
+                                                        best_score = score
+                                                        best_sm = sm
 
-                                                if matched_sm and matched_sm.base_query:
-                                                    print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{matched_sm.ui_label}'", flush=True)
-                                                    raw_records = execute_sql_query(matched_sm.base_query)
+                                                if best_sm and best_sm.base_query:
+                                                    print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{best_sm.ui_label}' (Score: {best_score})", flush=True)
+                                                    raw_records = await execute_sql_query(best_sm.base_query)
                                                     result = sanitize_for_json(raw_records)
-                                                    display_title = matched_sm.ui_label
+                                                    display_title = best_sm.ui_label
                                                     actions_list = []
                                                     if isinstance(result, (list, tuple)) and result:
                                                         headers = list(result[0].keys())
