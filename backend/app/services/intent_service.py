@@ -32,13 +32,15 @@ NON_ENTITY_WORDS = {
 }
 
 def _stem_token(token: str) -> str:
-    """Standard English noun singularization for robust entity/tab matching."""
+    """Universal singularization for English nouns."""
     t = token.lower().strip()
+    if len(t) <= 3:
+        return t
     if t.endswith("ies") and len(t) > 4:
         return t[:-3] + "y"
-    if t.endswith("es") and len(t) > 3:
+    if t.endswith("ses") or t.endswith("xes") or t.endswith("shes") or t.endswith("ches"):
         return t[:-2]
-    if t.endswith("s") and not t.endswith("ss") and len(t) > 2:
+    if t.endswith("s") and not t.endswith("ss"):
         return t[:-1]
     return t
 
@@ -328,11 +330,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             is_tab_specified = False
                             for tab_lbl in unique_tabs:
                                 tab_lbl_clean = tab_lbl.lower().strip()
-                                if tab_lbl_clean in clean_q or clean_q in tab_lbl_clean:
+                                if tab_lbl_clean in clean_q:
                                     is_tab_specified = True
                                     break
-                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl_clean)) - NON_ENTITY_WORDS - grp_core_toks
-                                stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens}
+                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl_clean)) - NON_ENTITY_WORDS
+                                stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens} - stemmed_grp_toks
                                 if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
                                     is_tab_specified = True
                                     break
