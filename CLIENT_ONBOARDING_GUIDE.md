@@ -41,19 +41,33 @@ docker exec amoeba-ai-backend-1 python scripts/schema_extractor.py srv1556.hstgr
 
 ---
 
-## Step 3: Map Business Logic & Terminology (Universal Connector)
+## Step 3: Map Business Logic & Terminology (Universal Connector v3.5)
 
-*The AI knows the tables exist, but it doesn't know that humans call `enquiry_header` a "Quotation". We scan the client's codebase to automatically build these Semantic Mappings.*
+*The AI knows the tables exist, but it doesn't know custom business terminology (e.g. `enquiry_header` is a "Quotation", `attendance_header` is "Payroll History", `employee` is "Payroll Report"). We scan the client's codebase or live web application to automatically build these Semantic Mappings and routes.*
 
-Run the **Universal Connector** on the machine hosting the client's source code:
+Run the **Universal Connector** (standalone script requiring only Python):
 
+**Option A (Direct Codebase Scan on Server/Local Machine):**
 ```bash
-docker exec amoeba-ai-backend-1 python scripts/universal_connector.py "/path/to/client/codebase" "<API_KEY>"
+python universal_connector.py "/path/to/client/codebase" "<API_KEY>"
 ```
 
-*(Note: The Universal Connector analyzes `.php`, `.py`, and `.ts` files to find SQL queries and variables, mapping them directly to the database tables discovered in Step 2).*
+**Option B (Dynamic Live Web Crawler — no codebase access needed):**
+```bash
+python universal_connector.py "https://client-erp-domain.com" "<API_KEY>"
+```
 
-*Expected Output:* `✅ Semantic Sync Success! Amoeba responded: {"status":"success","mappings_learned":...}`
+*(Note: The Universal Connector analyzes `.php`, `.py`, `.js`, `.ts` files, controllers, companion models, and view templates to extract exact SQL queries, join conditions, WHERE filters, tab groups, and UI columns).*
+
+*Expected Output:*
+```text
+🧠 Correlated Fullstack UI-to-Database Semantic Mappings!
+🚀 Syncing routes with Amoeba...
+✅ Route Sync Success: {"status":"success", ...}
+🚀 Syncing fullstack semantic mappings with Amoeba...
+✅ Semantic Sync Success: {"status":"success", ...}
+🎉 Universal Connector completed successfully!
+```
 
 ---
 
