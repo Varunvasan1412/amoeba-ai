@@ -279,7 +279,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 "pending", "completed", "complete", "active", "inactive", "converted", 
                 "open", "closed", "approved", "rejected", "cancelled", "draft", "tax",
                 "report", "reports", "history", "log", "logs", "attendance", "summary",
-                "details", "detail", "list"
+                "details", "detail"
             }
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
             
