@@ -164,10 +164,10 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
     # ----------------------------
     # 2. RESOLVE EXISTING PENDING STATE
     # ----------------------------
-    if state and not is_new_nav:
+    if state:
         
         # A. Resolving Report Follow-up (Date Range)
-        if state.intent == "fastpath_report":
+        if state.intent == "fastpath_report" and not is_new_nav:
             report_id = state.collected_data.get("report_id")
             
             if not report_id:
@@ -216,7 +216,17 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 selection_idx = int(idx_match.group(1))
             else:
                 for i, cand in enumerate(candidates):
-                    if cand['label'].lower() == clean_input:
+                    cand_lbl = cand.get('label', '').lower().strip()
+                    orig_lbl = cand.get('original_label', '').lower().strip()
+                    cand_path = cand.get('path', '').lower().strip()
+                    parents_list = cand.get("parents", [])
+                    parents_str = " → ".join(p for p in parents_list).lower().strip()
+                    full_label = f"{parents_str} → {cand_lbl}" if parents_str else cand_lbl
+                    
+                    if (clean_input in [cand_lbl, orig_lbl, cand_path, full_label] or
+                        clean_input.endswith(cand_lbl) or
+                        clean_input.endswith(full_label) or
+                        full_label in clean_input):
                         selection_idx = i + 1
                         break
 
@@ -228,9 +238,8 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 await db_session.delete(state); await db_session.commit()
                 return f"Navigating to {full_label}...", [{"type": "NAVIGATE", "payload": best_match['path']}]
             
-            # If not a valid selection, fall through to allow NEW intent detection
-            # (Inquiry or other commands will then clear this state)
-            return None, []
+            # If user input did not match any ambiguity option, delete old state so new intent can take over
+            await db_session.delete(state); await db_session.commit()
 
     # ----------------------------
     # 3. NAVIGATION FAST-PATH (NEW)
