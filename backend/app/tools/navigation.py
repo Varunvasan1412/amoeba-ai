@@ -151,6 +151,35 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
             "parents": _infer_parents_from_path(canonical_path, module_val)
         })
         
+    # 5. Enrich with Codebase Semantic Mappings
+    try:
+        from app.models.semantic_mapping import SemanticMapping
+        sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == client_id)
+        sm_result = await session.execute(sm_stmt)
+        for sm in sm_result.scalars().all():
+            if not sm.ui_label or not sm.source_file:
+                continue
+            m = re.search(r'([a-zA-Z0-9_]+)\.php::(?:([a-zA-Z0-9_]+)/)?([a-zA-Z0-9_]+)', sm.source_file)
+            if m:
+                ctrl_p = m.group(1).lower()
+                act_p = (m.group(3) or m.group(2) or "").lower()
+                if act_p in ['construct', '__construct', 'get_instance']:
+                    continue
+                r_path = f"/{ctrl_p}/{act_p}" if act_p not in ['index', 'main'] else f"/{ctrl_p}"
+                clean_lbl = sm.ui_label.strip()
+                k = (clean_lbl.lower(), r_path.lower())
+                if k not in seen_keys:
+                    seen_keys.add(k)
+                    routes.append({
+                        "label": clean_lbl,
+                        "path": r_path,
+                        "module": ctrl_p.capitalize(),
+                        "is_custom": True,
+                        "parents": _infer_parents_from_path(r_path, ctrl_p.capitalize())
+                    })
+    except Exception as e:
+        print(f"⚠️ [Navigation] Error enriching routes from SemanticMapping: {e}")
+        
     return routes
 
 async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -> Tuple[Optional[str], Optional[List[dict]]]:
@@ -223,7 +252,16 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
         "challan": "delivery",
         "dc": "delivery",
         "po": "purchase",
-        "grn": "inventory"
+        "grn": "inventory",
+        "history": "list",
+        "log": "list",
+        "logs": "list",
+        "record": "list",
+        "records": "list",
+        "entries": "list",
+        "quote": "quotation",
+        "bill": "invoice",
+        "bills": "invoice"
     }
     stemmed_match_tokens = {_stem_token(ALIAS_MAP.get(t, t)) for t in match_tokens}
     stemmed_query_tokens = {_stem_token(ALIAS_MAP.get(t, t)) for t in query_tokens}
@@ -274,21 +312,21 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                 
                 # Fetch vector matches with strict confidence threshold (cosine_distance < 0.28)
                 dist_col = NavigationItem.embedding.cosine_distance(query_vector)
-                stmt = select(NavigationItem).where(
+                stmt = select(NavigationItem, dist_col).where(
                     NavigationItem.client_id == client_id,
                     NavigationItem.embedding != None,
                     dist_col < 0.28
                 ).order_by(dist_col).limit(5)
                 
                 vec_res = await session.execute(stmt)
-                vec_items = vec_res.scalars().all()
+                vec_rows = vec_res.all()
                 
-                if vec_items:
+                if vec_rows:
                     # Convert to the expected ambiguous_list format and clean/deduplicate
                     unique_vec = []
                     seen_paths = set()
                     
-                    for item in vec_items:
+                    for item, dist_val in vec_rows:
                         raw_path = (item.path or "").strip()
                         # Reject internal view template files, demos, and backup files
                         if any(bad in raw_path.lower() for bad in ['/views/', '/templates/', '.php', '.blade', '.twig', '/app/views/', '.html', '/bs5/', '/backup/', 'totalsalesjson', '/test/']):
@@ -308,13 +346,21 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                             url_parts = [p for p in canonical_path.split('/') if p]
                             module_val = url_parts[0].capitalize() if url_parts else None
 
+                        # Discard candidates that share ZERO tokens with query tokens unless distance is ultra-close (< 0.16)
+                        lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', clean_label.lower())) - stopwords
+                        path_tokens = set(re.findall(r'[a-zA-Z0-9]+', canonical_path.lower())) - stopwords
+                        has_overlap = bool(lbl_tokens.intersection(stemmed_query_tokens) or path_tokens.intersection(stemmed_query_tokens))
+                        if not has_overlap and dist_val > 0.16:
+                            continue
+
                         if canonical_path not in seen_paths:
                             unique_vec.append({
                                 "label": clean_label,
                                 "path": canonical_path,
                                 "module": module_val,
                                 "is_custom": not item.is_discovered,
-                                "parents": _infer_parents_from_path(canonical_path, module_val)
+                                "parents": _infer_parents_from_path(canonical_path, module_val),
+                                "dist": dist_val
                             })
                             seen_paths.add(canonical_path)
                             
@@ -323,6 +369,9 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                     if len(unique_vec) == 1:
                         return unique_vec[0]["path"], None
                     elif len(unique_vec) > 1:
+                        # If top candidate is significantly closer than candidate 2, pick clear winner
+                        if unique_vec[0]["dist"] < 0.18 and (unique_vec[1]["dist"] - unique_vec[0]["dist"]) >= 0.04:
+                            return unique_vec[0]["path"], None
                         return None, unique_vec
         except Exception as e:
             print(f"⚠️ [FastPath Vector Search] Failed: {e}")
@@ -569,10 +618,17 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
             except:
                 pass
             
-        # Check if this path already exists for this client
+        # Check if this path + label already exists for this client
+        better_label = label.strip() if label and len(label.strip()) >= 4 and not any(c in label for c in ['/', '\\', '.php', '.html']) else None
+        if not better_label:
+            module = infer_module_from_path(path)
+            entity = infer_entity_keyword(path, label)
+            better_label = generate_friendly_label(module, entity)
+
         statement = select(NavigationItem).where(
             NavigationItem.client_id == client_id,
-            NavigationItem.path == path
+            NavigationItem.path == path,
+            NavigationItem.label == better_label
         )
         result = await session.execute(statement)
         existing = result.scalars().first()
@@ -582,7 +638,6 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
             module = infer_module_from_path(path)
             entity = infer_entity_keyword(path, label)
             matched_table = match_entity_to_table(entity, db_tables)
-            better_label = generate_friendly_label(module, entity)
             
             # Generate Vector Embedding for Semantic Search
             embedding_vector = None
@@ -600,7 +655,6 @@ async def batch_learn_routes(new_routes: List[dict], session: AsyncSession, clie
                 if existing.module is None: existing.module = module
                 if existing.table_name is None: existing.table_name = matched_table
                 if existing.embedding is None and embedding_vector: existing.embedding = embedding_vector
-                # Update label if it's too short or contains technical chars
                 if len(existing.label) < 5 or "_" in existing.label:
                     existing.label = better_label
             else:

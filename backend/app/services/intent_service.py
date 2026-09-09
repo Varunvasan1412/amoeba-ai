@@ -277,7 +277,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             # We do not guess arbitrarily. We ask the user which tab they want to view!
             TAB_DISCRIMINATORS = {
                 "pending", "completed", "complete", "active", "inactive", "converted", 
-                "open", "closed", "approved", "rejected", "cancelled", "draft", "tax"
+                "open", "closed", "approved", "rejected", "cancelled", "draft", "tax",
+                "report", "reports", "history", "log", "logs", "attendance", "summary",
+                "details", "detail", "list"
             }
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
             
@@ -320,9 +322,24 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         # Natural tab order: Pending/Draft first, Completed/Closed second
                         unique_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new", "create"]) else (1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 2))
                         if len(unique_tabs) >= 2:
-                            matched_group = grp
-                            matched_tabs = unique_tabs
-                            break
+                            # CRITICAL: If the query already specifically requests one of these tabs
+                            # (e.g. "report" in "list the payroll report", or "history" in "payroll history"),
+                            # do NOT trigger tab disambiguation—resolve directly to that tab!
+                            is_tab_specified = False
+                            for tab_lbl in unique_tabs:
+                                tab_lbl_clean = tab_lbl.lower().strip()
+                                if tab_lbl_clean in clean_q or clean_q in tab_lbl_clean:
+                                    is_tab_specified = True
+                                    break
+                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl_clean)) - NON_ENTITY_WORDS - grp_core_toks
+                                stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens}
+                                if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
+                                    is_tab_specified = True
+                                    break
+                            if not is_tab_specified:
+                                matched_group = grp
+                                matched_tabs = unique_tabs
+                                break
                             
                 # Fallback: Auto-detect tab groups if tab_group wasn't explicitly populated
                 if not matched_group:
@@ -339,8 +356,20 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                     candidate_tabs.append(sm.ui_label.strip())
                     
                     if len(candidate_tabs) >= 2:
-                        matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
-                        matched_tabs = candidate_tabs
+                        is_cand_specified = False
+                        for cand_lbl in candidate_tabs:
+                            cand_clean = cand_lbl.lower().strip()
+                            if cand_clean in clean_q:
+                                is_cand_specified = True
+                                break
+                            cand_tokens = set(re.findall(r'[a-zA-Z0-9]+', cand_clean)) - NON_ENTITY_WORDS
+                            stemmed_cand = {_stem_token(t) for t in cand_tokens}
+                            if stemmed_cand and len(stemmed_cand.intersection(stemmed_q_toks)) >= 2:
+                                is_cand_specified = True
+                                break
+                        if not is_cand_specified:
+                            matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
+                            matched_tabs = candidate_tabs
                 
                 if matched_group and matched_tabs:
                     print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
