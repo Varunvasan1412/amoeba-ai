@@ -379,6 +379,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 # Fallback: Auto-detect tab groups if tab_group wasn't explicitly populated
                 if not matched_group:
                     print(f"🔍 [TAB_DEBUG] No tab_group match found, trying fallback auto-detection...")
+                    
+                    # Strategy A: Find labels with discriminator words in them
                     candidate_tabs = []
                     seen_labels = set()
                     for sm in sm_all:
@@ -393,10 +395,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                     seen_labels.add(sm.ui_label.strip())
                                     candidate_tabs.append(sm.ui_label.strip())
                     
-                    print(f"🔍 [TAB_DEBUG] Fallback candidate_tabs: {candidate_tabs}")
+                    print(f"🔍 [TAB_DEBUG] Fallback Strategy A candidate_tabs: {candidate_tabs}")
                     
                     if len(candidate_tabs) >= 2:
-                        # Deduplicate candidates to keep only distinct semantic tabs
                         filtered_cand = []
                         seen_cand_keys = set()
                         for c in candidate_tabs:
@@ -410,6 +411,46 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         if not is_cand_specified and len(filtered_cand) >= 2:
                             matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
                             matched_tabs = filtered_cand
+                    
+                    # Strategy B: If Strategy A didn't find enough candidates, look for
+                    # distinct views of the same entity by grouping by (table, filter)
+                    if not matched_group:
+                        print(f"🔍 [TAB_DEBUG] Trying fallback Strategy B (distinct view detection)...")
+                        entity_views = {}  # key=(table, filter) -> best label
+                        for sm in sm_all:
+                            if not _is_ui_facing_label(sm.ui_label):
+                                continue
+                            lbl_clean = sm.ui_label.lower().strip()
+                            lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - NON_ENTITY_WORDS
+                            stemmed_lbl = {_stem_token(t) for t in lbl_tokens}
+                            # Check if this label is related to the user's query entity
+                            if not stemmed_q_toks or not stemmed_lbl:
+                                continue
+                            if not (stemmed_q_toks.issubset(stemmed_lbl)):
+                                continue
+                            
+                            view_key = (sm.database_table, sm.default_filter or "")
+                            clean_lbl = sm.ui_label.strip()
+                            if view_key not in entity_views:
+                                entity_views[view_key] = clean_lbl
+                            else:
+                                existing = entity_views[view_key]
+                                # Prefer shorter, cleaner labels
+                                if len(clean_lbl) < len(existing):
+                                    entity_views[view_key] = clean_lbl
+                        
+                        print(f"🔍 [TAB_DEBUG] Strategy B found {len(entity_views)} distinct views: {list(entity_views.values())[:10]}")
+                        
+                        if len(entity_views) >= 2:
+                            # We have multiple distinct views — present them as tab choices
+                            distinct_tabs = list(entity_views.values())
+                            # Sort: Pending first, Completed second, others last
+                            distinct_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new"]) else (1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 2))
+                            
+                            is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
+                            if not is_cand_specified:
+                                matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
+                                matched_tabs = distinct_tabs[:6]  # Cap at 6 choices
                 
                 if matched_group and matched_tabs:
                     print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
