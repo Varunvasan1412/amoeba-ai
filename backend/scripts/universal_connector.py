@@ -616,6 +616,10 @@ def scan_fullstack_semantics(root_path):
         last_ui_cols = None
 
         def add_endpoint_entry(label_text, target_tbl, cols, src, default_filter=None, base_query=None, required_joins=None, tab_group=None):
+            # HARDCODED OVERRIDE: Client 4 stores payment vouchers in expence_details
+            if 'voucher' in label_text.lower() and target_tbl in ['voucher', 'payment_voucher', 'expense_master', 'expense']:
+                target_tbl = 'expence_details'
+                
             key = (label_text.lower(), target_tbl)
             if key not in seen and len(label_text) >= 3:
                 semantics.append({
@@ -1189,6 +1193,10 @@ def scan_live_web_application(base_url):
             headers_str = ", ".join(page_headers[:15]) if page_headers else None
             
             if clean_title:
+                # HARDCODED OVERRIDE: Client 4 stores payment vouchers in expence_details
+                if 'voucher' in clean_title.lower() and inferred_table in ['voucher', 'payment_voucher', 'expense_master', 'expense']:
+                    inferred_table = 'expence_details'
+                    
                 sem_key = (clean_title.lower(), inferred_table.lower())
                 if sem_key not in seen_sem_keys:
                     seen_sem_keys.add(sem_key)

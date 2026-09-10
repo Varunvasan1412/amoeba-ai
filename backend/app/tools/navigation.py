@@ -716,6 +716,11 @@ def match_entity_to_table(entity: str, db_tables: List[str]) -> Optional[str]:
     
     entity = entity.lower().strip()
     
+    # HARDCODED OVERRIDE: Map 'voucher' to 'expence_details'
+    if entity in ['voucher', 'payment_voucher', 'payment voucher', 'bank_payment_voucher']:
+        if 'expence_details' in db_tables:
+            return 'expence_details'
+            
     # 1. Exact match
     if entity in db_tables:
         return entity
