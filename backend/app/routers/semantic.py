@@ -14,6 +14,8 @@ from app.services.semantic_service import (
 )
 from app.core.auth_deps import get_current_active_admin
 from app.models.semantic_mapping import SemanticMapping
+from app.services.llm_service import get_brain
+from langchain_core.messages import HumanMessage, SystemMessage
 
 router = APIRouter(dependencies=[Depends(get_current_active_admin)])
 
@@ -59,8 +61,12 @@ class SemanticMappingResponse(BaseModel):
     id: int
     ui_label: str
     database_table: str
+    base_query: Optional[str] = None
     source_file: Optional[str]
     is_doubtful: bool
+
+class SQLExtractRequest(BaseModel):
+    php_code: str
 
 class SemanticMappingUpdate(BaseModel):
     database_table: str
@@ -148,3 +154,37 @@ async def update_ui_table_mapping(
     session.add(mapping)
     await session.commit()
     return {"status": "success"}
+
+@router.post("/v2/semantic/extract-sql")
+async def extract_sql_from_php(
+    payload: SQLExtractRequest,
+    api_key: str = Security(api_key_header),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Uses the configured LLM to extract the exact base SQL query from a raw PHP code snippet.
+    Used by the ingestion script to automatically handle complex dynamic filters and soft-deletes.
+    """
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    
+    client = await get_current_client(api_key=api_key, session=session)
+    llm = await get_brain(client_id=client.id, session=session)
+    
+    sys_prompt = SystemMessage(content='''You are an expert legacy PHP and SQL database engineer. 
+Your only job is to analyze the provided PHP controller code and extract the final SQL `SELECT` query it generates.
+You MUST include all dynamic `WHERE` clauses (such as is_deleted = 0, status = 'active', etc.) and `JOIN`s that the PHP code builds.
+RETURN ONLY THE CLEAN SQL STRING. Do not return markdown, do not return explanations. Just the raw SQL.''')
+    
+    human_prompt = HumanMessage(content=f"PHP CODE:\n```php\n{payload.php_code}\n```")
+    
+    try:
+        response = await llm.ainvoke([sys_prompt, human_prompt])
+        sql = response.content.strip()
+        if sql.startswith("```sql"): sql = sql[6:]
+        if sql.startswith("```"): sql = sql[3:]
+        if sql.endswith("```"): sql = sql[:-3]
+        return {"base_query": sql.strip()}
+    except Exception as e:
+        print(f"Error during LLM SQL extraction: {e}")
+        return {"base_query": None}

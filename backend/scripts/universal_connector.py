@@ -194,6 +194,23 @@ def scan_php_mvc_routes(root_path, base_url):
 # 2. FULLSTACK MVC & SPA CROSS-CORRELATION SCANNER
 # =========================================================================
 
+
+def extract_base_query_with_ai(php_code, base_api_url, api_key):
+    try:
+        url = f"{base_api_url}/v2/semantic/extract-sql"
+        data = json.dumps({"php_code": php_code}).encode('utf-8')
+        req = urllib.request.Request(url, data=data, headers={
+            'Content-Type': 'application/json',
+            'X-API-Key': api_key,
+            'User-Agent': 'AmoebaConnector/3.5'
+        })
+        with urllib.request.urlopen(req) as response:
+            res = json.loads(response.read().decode('utf-8'))
+            return res.get("base_query")
+    except Exception as e:
+        print(f"⚠️ AI SQL Extraction failed: {e}")
+        return None
+
 def extract_sql_filters(code_snippet):
     """
     Extracts default query WHERE filters (e.g. status = 1, is_deleted = 0)
@@ -347,6 +364,7 @@ def scan_fullstack_semantics(root_path):
                         filters = extract_sql_filters(fn_body)
                         
                         methods_in_file[fn_name] = {
+                            "raw_code": fn_body,
                             "tables": clean_tables,
                             "from_tables": clean_from,
                             "joins": raw_joins,
@@ -697,6 +715,12 @@ def scan_fullstack_semantics(root_path):
                             if best_m_data.get("group_by"): parts.append(f"GROUP BY {', '.join(dict.fromkeys(best_m_data['group_by']))}")
                             if best_m_data.get("order_by"): parts.append(f"ORDER BY {', '.join(dict.fromkeys(best_m_data['order_by']))}")
                             base_query_str = " ".join(parts).strip() if (joins_str or filter_str or best_m_data.get("group_by") or best_m_data.get("order_by")) else None
+                            
+                            if use_ai and best_m_data.get("raw_code"):
+                                print(f"🧠 Using AI to extract SQL for {best_m_name}...")
+                                ai_query = extract_base_query_with_ai(best_m_data["raw_code"], amoeba_host, api_key)
+                                if ai_query: base_query_str = ai_query
+
                         
                         source_ctrl = f"{best_m_data['file']}::{c_name}/{best_m_name}" if c_name else f"{best_m_data['file']}::{best_m_name}"
                         screen_group = v['ui_label']
@@ -748,6 +772,12 @@ def scan_fullstack_semantics(root_path):
                         if c_data.get("group_by"): parts.append(f"GROUP BY {', '.join(dict.fromkeys(c_data['group_by']))}")
                         if c_data.get("order_by"): parts.append(f"ORDER BY {', '.join(dict.fromkeys(c_data['order_by']))}")
                         base_query_str = " ".join(parts).strip() if (joins_str or filter_str or c_data.get("group_by") or c_data.get("order_by")) else None
+                        
+                        if use_ai and c_data.get("raw_code"):
+                            print(f"🧠 Using AI to extract SQL for {m_only}...")
+                            ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, api_key)
+                            if ai_query: base_query_str = ai_query
+
                     
                     source_ctrl = f"{c_data['file']}::{ep}"
                     
@@ -838,6 +868,11 @@ def scan_fullstack_semantics(root_path):
                 if joins_str: parts.append(joins_str)
                 if filter_str: parts.append(f"WHERE {filter_str}")
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str) else None
+                if use_ai and c_data.get("raw_code"):
+                    print(f"🧠 Using AI to extract SQL for {fn}...")
+                    ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, api_key)
+                    if ai_query: base_query_str = ai_query
+
                 ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
                 
                 def add_semantic_entry(label_text):
@@ -925,6 +960,11 @@ def scan_fullstack_semantics(root_path):
                 if group_by_list: parts.append(f"GROUP BY {', '.join(dict.fromkeys(group_by_list))}")
                 if order_by_list: parts.append(f"ORDER BY {', '.join(dict.fromkeys(order_by_list))}")
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str or group_by_list or order_by_list) else None
+                if use_ai and m_data.get("raw_code"):
+                    print(f"🧠 Using AI to extract SQL for Node route...")
+                    ai_query = extract_base_query_with_ai(m_data["raw_code"], amoeba_host, api_key)
+                    if ai_query: base_query_str = ai_query
+
                 
             ctrl_label = simple_title_case(cn)
             m_label = simple_title_case(m_name)
@@ -1278,7 +1318,7 @@ if __name__ == "__main__":
         print("=" * 65)
         print("🧠 AMOEBA UNIVERSAL CONNECTOR v3.5")
         print("=" * 65)
-        print("Usage: python universal_connector.py \"<PROJECT_PATH_OR_URL>\" \"<API_KEY>\" [AMOEBA_HOST]")
+        print("Usage: python universal_connector.py \"<PROJECT_PATH_OR_URL>\" \"<API_KEY>\" [AMOEBA_HOST] [--use-ai]")
         print("Example 1 (Local Codebase): python universal_connector.py \"D:\\xampp\\htdocs\\my_erp\" \"my_key\"")
         print("Example 2 (Live Web App):  python universal_connector.py \"https://my-erp.com\" \"my_key\"")
         print("=" * 65)
@@ -1288,6 +1328,7 @@ if __name__ == "__main__":
     client_api_key = sys.argv[2]
     amoeba_host = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_AMOEBA_HOST
     amoeba_host = amoeba_host.rstrip('/')
+    use_ai = '--use-ai' in sys.argv
 
     if target_path.startswith(('http://', 'https://')):
         routes, semantics, enums = scan_live_web_application(target_path)
