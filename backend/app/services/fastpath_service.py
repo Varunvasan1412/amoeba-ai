@@ -271,7 +271,8 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 matched_label = target_page.title()
                 for r in all_client_routes:
                     if r["path"].strip().lower() == path.strip().lower():
-                        matched_label = r["label"]
+                        raw_lbl = " ".join(r["label"].split())
+                        matched_label = re.sub(r'\s+\d+$', '', raw_lbl).strip()
                         break
 
                 existing_states = await db_session.execute(
