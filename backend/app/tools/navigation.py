@@ -287,6 +287,19 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
             unmatched_label_tokens = stemmed_core_label - stemmed_query_tokens
             extra_token_penalty = len(unmatched_label_tokens) * 25
             
+            # Penalize unmatched parent tokens to avoid matching deeper sub-pages
+            stemmed_parent_tokens = {_stem_token(t) for t in parent_tokens}
+            stemmed_core_parents = stemmed_parent_tokens - {_stem_token(s) for s in stopwords}
+            unmatched_parent_tokens = stemmed_core_parents - stemmed_query_tokens
+            extra_parent_penalty = len(unmatched_parent_tokens) * 15
+            
+            # Heavily penalize internal action endpoints unless explicitly requested
+            INTERNAL_ACTION_WORDS = {"save", "delete", "remove", "update", "insert", "create", "add", "edit", "json", "ajax", "data", "fetch", "get", "search", "export", "import", "upload", "download", "print", "pdf", "excel", "csv", "entry", "salary", "stage", "action", "process", "submit", "approve", "reject", "convert", "generate", "calculate", "compute", "validate", "check", "byid", "bybrand", "bydate", "byname", "bypass", "detail", "details"}
+            internal_action_penalty = 0
+            for t in doc_tokens:
+                if t in INTERNAL_ACTION_WORDS and t not in query_tokens:
+                    internal_action_penalty += 200
+            
             # Exact core match bonus: if clean label tokens exactly match clean query tokens
             exact_core_bonus = 50 if (stemmed_core_label and stemmed_core_label == stemmed_core_query) else 0
             
@@ -295,7 +308,7 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
             r_lbl_low = r["label"].lower()
             primary_list_bonus = 100 if (r_path_low.endswith("list") or r_lbl_low.endswith("list") or r_path_low.endswith("_list")) else 0
 
-            score = 100 + (label_overlap * 10) + exact_core_bonus + primary_list_bonus - extra_token_penalty
+            score = 100 + (label_overlap * 10) + exact_core_bonus + primary_list_bonus - extra_token_penalty - extra_parent_penalty - internal_action_penalty
             scored_candidates.append((score, r))
 
     # 3. SEMANTIC VECTOR MATCH (pgvector fallback for fastpath)
