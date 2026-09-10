@@ -154,8 +154,9 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         semantic_context += "\nENUM MAPPINGS (USE THESE TO CONVERT INTEGERS TO STRINGS VIA 'CASE WHEN' OR 'IF'):\n"
         for em in enum_metadata:
             # em.enum_mappings is a dict like {"1": "Active", "0": "Inactive"}
-            map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
-            semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
+            if em.enum_mappings:
+                map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
+                semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
