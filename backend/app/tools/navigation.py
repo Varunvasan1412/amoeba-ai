@@ -367,6 +367,12 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                             continue
 
                         if canonical_path not in seen_paths:
+                            # Apply distance penalty to endpoints with internal actions (e.g. save, edit) if not requested
+                            HTTP_ACTIONS = {"save", "delete", "remove", "update", "insert", "create", "add", "edit", "json", "ajax", "submit", "approve", "reject", "validate", "byid"}
+                            path_lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', canonical_path.lower())).union(set(re.findall(r'[a-zA-Z0-9]+', clean_label.lower())))
+                            if any(t in HTTP_ACTIONS for t in path_lbl_tokens) and not any(t in HTTP_ACTIONS for t in query_tokens):
+                                dist_val += 0.15
+                                
                             unique_vec.append({
                                 "label": clean_label,
                                 "path": canonical_path,
@@ -376,6 +382,9 @@ async def fast_lookup_route(query: str, session: AsyncSession, client_id: int) -
                                 "dist": dist_val
                             })
                             seen_paths.add(canonical_path)
+                            
+                    # Re-sort unique_vec by the adjusted distance
+                    unique_vec.sort(key=lambda x: x["dist"])
                             
                     print(f"🎯 [FastPath Vector Search] Found {len(unique_vec)} unique semantic matches for '{query}'")
                     
