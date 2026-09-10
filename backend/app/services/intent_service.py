@@ -298,11 +298,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 """Filter out internal controller action labels from tab disambiguation."""
                 lbl_lower = label.lower().strip()
                 lbl_words = set(re.findall(r'[a-zA-Z0-9]+', lbl_lower))
-                # If the label contains internal action words and NO tab discriminator, it's internal
-                has_internal = bool(lbl_words.intersection(INTERNAL_ACTION_WORDS))
-                has_discriminator = bool(lbl_words.intersection(TAB_DISCRIMINATORS))
-                # Labels like "Pending Invoice" are UI-facing; "Payroll Save" is internal
-                if has_internal and not has_discriminator:
+                # Any label containing internal action words is not user-facing
+                if lbl_words.intersection(INTERNAL_ACTION_WORDS):
                     return False
                 return True
             
@@ -313,6 +310,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     grp = getattr(sm, "tab_group", None)
                     if grp and _is_ui_facing_label(sm.ui_label):
                         tab_groups.setdefault(grp, []).append(sm)
+                
+                # DEBUG: Log tab groups that contain tokens related to the query
+                print(f"🔍 [TAB_DEBUG] clean_q='{clean_q}', stemmed_q_toks={stemmed_q_toks}")
+                print(f"🔍 [TAB_DEBUG] Total tab_groups: {len(tab_groups)}, keys (first 10): {list(tab_groups.keys())[:10]}")
                 
                 matched_group = None
                 matched_tabs = []
@@ -327,6 +328,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         is_group_match = True
                     elif stemmed_grp_toks and (stemmed_grp_toks.issubset(stemmed_q_toks) or stemmed_q_toks.issubset(stemmed_grp_toks)):
                         is_group_match = True
+                    
+                    # DEBUG: Log any group that has "invoice" in its tokens
+                    if any("invoic" in t for t in stemmed_grp_toks) or any("invoic" in t for t in stemmed_q_toks):
+                        print(f"🔍 [TAB_DEBUG] Checking group '{grp}': stemmed_grp_toks={stemmed_grp_toks}, is_match={is_group_match}, members={[s.ui_label for s in grp_sms]}")
                         
                     if is_group_match:
                         # Deduplicate tabs: prefer labels with tab discriminators, collapse aliases
@@ -349,6 +354,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         unique_tabs = list(views_map.values())
                         # Natural tab order: Pending/Draft first, Completed/Closed second
                         unique_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new", "create"]) else (1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 2))
+                        
+                        print(f"🔍 [TAB_DEBUG] Group '{grp}' matched! views_map keys={list(views_map.keys())}, unique_tabs={unique_tabs}")
+                        
                         if len(unique_tabs) >= 2:
                             # CRITICAL: If the query already specifically requests one of these tabs
                             # (e.g. "report" in "list the payroll report", or "history" in "payroll history"),
@@ -359,14 +367,18 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens} - stemmed_grp_toks
                                 if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
                                     is_tab_specified = True
+                                    print(f"🔍 [TAB_DEBUG] Tab '{tab_lbl}' specified by user query (tokens={stemmed_tab_tokens}, overlap={stemmed_tab_tokens.intersection(stemmed_q_toks)})")
                                     break
                             if not is_tab_specified:
                                 matched_group = grp
                                 matched_tabs = unique_tabs
                                 break
+                        else:
+                            print(f"🔍 [TAB_DEBUG] Group '{grp}': only {len(unique_tabs)} unique tab(s), need >= 2")
                             
                 # Fallback: Auto-detect tab groups if tab_group wasn't explicitly populated
                 if not matched_group:
+                    print(f"🔍 [TAB_DEBUG] No tab_group match found, trying fallback auto-detection...")
                     candidate_tabs = []
                     seen_labels = set()
                     for sm in sm_all:
@@ -380,6 +392,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 if sm.ui_label.strip() not in seen_labels:
                                     seen_labels.add(sm.ui_label.strip())
                                     candidate_tabs.append(sm.ui_label.strip())
+                    
+                    print(f"🔍 [TAB_DEBUG] Fallback candidate_tabs: {candidate_tabs}")
                     
                     if len(candidate_tabs) >= 2:
                         # Deduplicate candidates to keep only distinct semantic tabs

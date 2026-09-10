@@ -113,8 +113,8 @@ async def load_client_sitemap(session: AsyncSession, client_id: int) -> List[dic
         # Skip internal backend AJAX/controller helper endpoints that are not UI navigation pages
         last_segment = path_lower.split('/')[-1]
         if (last_segment.startswith(('get', 'search', 'save', 'delete', 'update', 'fetch', 'ajax', 'geocode', 'reverse', 'create', 'add')) or
-            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map', 'print', 'pdf', 'action', 'stage')) or
-            any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice', 'deliveryaction', 'jobcard_stage', 'pending_delivery_stage'])):
+            last_segment.endswith(('save', 'delete', 'update', 'byid', 'bybrand', 'details', 'detail', 'map', 'print', 'pdf', 'action', 'stage', 'json', '_json', '_ajax', '_data')) or
+            any(k in last_segment for k in ['convertsave', 'productrate', 'glassprice', 'deliveryaction', 'jobcard_stage', 'pending_delivery_stage', '_json', '_ajax'])):
             if not last_segment.endswith(('list', 'page', 'screen', 'index', 'view')):
                 continue
 
