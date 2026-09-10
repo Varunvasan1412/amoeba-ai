@@ -577,7 +577,13 @@ async def websocket_endpoint(
                                     if chosen_tab:
                                         await local_session.delete(active_choice_state)
                                         await local_session.commit()
-                                        user_text = f"Show me the {chosen_tab.lower()}" if "list" in chosen_tab.lower() else f"Show me the {chosen_tab.lower()} list"
+                                        c_data = active_choice_state.collected_data or {}
+                                        orig_q = c_data.get("original_query", "").lower()
+                                        has_nav_verb = any(w in orig_q for w in ["navigate", "go to", "open", "take me"])
+                                        if has_nav_verb:
+                                            user_text = f"navigate to {chosen_tab.lower()}"
+                                        else:
+                                            user_text = f"view {chosen_tab.lower()} table"
                                     elif user_trimmed.lower() in ["cancel", "stop", "exit", "quit", "nevermind"]:
                                         await local_session.delete(active_choice_state)
                                         await local_session.commit()
@@ -758,7 +764,23 @@ async def websocket_endpoint(
                                     elif is_table_choice:
                                         await local_session.delete(active_choice_state)
                                         await local_session.commit()
-                                        user_text = f"view {dest_label.lower()} table"
+                                        from app.models.semantic_mapping import SemanticMapping
+                                        from sqlalchemy import or_, func
+                                        clean_dest = re.sub(r'(?i)\b(list|page|screen|view|table)\b', '', dest_label).strip()
+                                        sm_stmt = select(SemanticMapping).where(
+                                            SemanticMapping.client_id == int(client_id),
+                                            or_(
+                                                SemanticMapping.route_path == dest_path,
+                                                func.lower(SemanticMapping.ui_label) == dest_label.lower(),
+                                                func.lower(SemanticMapping.ui_label) == clean_dest.lower(),
+                                                SemanticMapping.ui_label.ilike(f"%{clean_dest}%")
+                                            )
+                                        )
+                                        found_sm = (await local_session.execute(sm_stmt)).scalars().first()
+                                        if found_sm:
+                                            user_text = f"view {found_sm.ui_label.lower()} table"
+                                        else:
+                                            user_text = f"view {dest_label.lower()} table"
 
                                 # 1. FastPath Navigation (GLOBAL FOR ALL MODES)
                                 from app.services.fastpath_service import execute_fastpath
@@ -807,7 +829,10 @@ async def websocket_endpoint(
                                             intent="tab_disambiguation",
                                             entity_name=screen_name,
                                             current_step="resolve_tab_choice",
-                                            collected_data={"tabs": [t["label"] for t in tabs]}
+                                            collected_data={
+                                                "tabs": [t["label"] for t in tabs],
+                                                "original_query": user_text
+                                            }
                                         )
                                         local_session.add(ambig_state)
 
