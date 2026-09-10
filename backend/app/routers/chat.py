@@ -150,6 +150,51 @@ async def sync_semantic_endpoint(
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"Database error during insert: {str(e)}")
 
+@router.get("/semantic/debug")
+async def debug_semantic_endpoint(
+    api_key: str = Query(...),
+    search: str = Query("invoice"),
+    session: AsyncSession = Depends(get_session)
+):
+    """Temporary diagnostic endpoint to inspect semantic mappings."""
+    from app.models.semantic_mapping import SemanticMapping
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    
+    sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == client.id)
+    sm_res = await session.execute(sm_stmt)
+    sm_all = sm_res.scalars().all()
+    
+    search_lower = search.lower()
+    matches = []
+    for sm in sm_all:
+        if search_lower in (sm.ui_label or "").lower() or search_lower in (sm.tab_group or "").lower():
+            matches.append({
+                "id": sm.id,
+                "ui_label": sm.ui_label,
+                "tab_group": sm.tab_group,
+                "database_table": sm.database_table,
+                "default_filter": sm.default_filter,
+                "source_file": sm.source_file[:80] if sm.source_file else None,
+            })
+    
+    # Group by tab_group
+    groups = {}
+    for m in matches:
+        g = m["tab_group"] or "NULL"
+        groups.setdefault(g, []).append(m["ui_label"])
+    
+    return {
+        "client_id": client.id,
+        "search": search,
+        "total_mappings": len(sm_all),
+        "matching_count": len(matches),
+        "by_tab_group": groups,
+        "matches": matches[:30]
+    }
+
 @router.post("/enums/learn")
 async def learn_enums_endpoint(
     enums: Dict[str, Dict[str, Dict[str, str]]], # table_name -> column_name -> mapping (e.g. {"unit": {"status": {"1": "Active"}}})
