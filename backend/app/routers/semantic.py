@@ -107,14 +107,14 @@ async def get_table_metadata(
 
 @router.get("/v2/semantic/mappings", response_model=List[SemanticMappingResponse])
 async def get_ui_table_mappings(
-    client: ClientConfig = Depends(get_current_client),
+    client_id: int,
     session: AsyncSession = Depends(get_session)
 ):
     """
     Get all UI-to-Table Semantic Mappings.
     Flags rows as doubtful if they lack a base_query.
     """
-    statement = select(SemanticMapping).where(SemanticMapping.client_id == client.id)
+    statement = select(SemanticMapping).where(SemanticMapping.client_id == client_id)
     result = await session.execute(statement)
     mappings = result.scalars().all()
     
@@ -133,15 +133,15 @@ async def get_ui_table_mappings(
 @router.put("/v2/semantic/mappings/{mapping_id}")
 async def update_ui_table_mapping(
     mapping_id: int,
+    client_id: int,
     payload: SemanticMappingUpdate,
-    client: ClientConfig = Depends(get_current_client),
     session: AsyncSession = Depends(get_session)
 ):
     """
     Update the database_table for a specific Semantic Mapping.
     """
     mapping = await session.get(SemanticMapping, mapping_id)
-    if not mapping or mapping.client_id != client.id:
+    if not mapping or mapping.client_id != client_id:
         raise HTTPException(status_code=404, detail="Mapping not found")
         
     mapping.database_table = payload.database_table
