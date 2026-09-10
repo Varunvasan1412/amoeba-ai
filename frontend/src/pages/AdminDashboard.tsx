@@ -94,6 +94,15 @@ export default function AdminDashboard() {
       featureKey: "feature_routing_enabled"
     },
     {
+      title: "Data Flow Overrides",
+      description: "Map UI screens to their correct primary database table. Fix AI table guesses.",
+      icon: Database,
+      to: "/admin/semantic-mappings",
+      color: "blue",
+      permission: "configure_system",
+      featureKey: "feature_semantic_enabled"
+    },
+    {
       title: "AI Infrastructure",
       description: "Switch between LLM providers (Gemini, OpenAI, Ollama) and configure model settings.",
       icon: Cpu,

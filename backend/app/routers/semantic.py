@@ -13,6 +13,7 @@ from app.services.semantic_service import (
     get_table_semantics
 )
 from app.core.auth_deps import get_current_active_admin
+from app.models.semantic_mapping import SemanticMapping
 
 router = APIRouter(dependencies=[Depends(get_current_active_admin)])
 
@@ -54,6 +55,16 @@ class SemanticColumnPayload(BaseModel):
 class BulkSemanticRequest(BaseModel):
     mappings: List[SemanticColumnPayload]
 
+class SemanticMappingResponse(BaseModel):
+    id: int
+    ui_label: str
+    database_table: str
+    source_file: Optional[str]
+    is_doubtful: bool
+
+class SemanticMappingUpdate(BaseModel):
+    database_table: str
+
 # --- Endpoints ---
 
 @router.post("/v2/semantic/columns")
@@ -93,3 +104,47 @@ async def get_table_metadata(
     Get semantic metadata for a specific table.
     """
     return await get_table_semantics(session, client.id, table_name)
+
+@router.get("/v2/semantic/mappings", response_model=List[SemanticMappingResponse])
+async def get_ui_table_mappings(
+    client: ClientConfig = Depends(get_current_client),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Get all UI-to-Table Semantic Mappings.
+    Flags rows as doubtful if they lack a base_query.
+    """
+    statement = select(SemanticMapping).where(SemanticMapping.client_id == client.id)
+    result = await session.execute(statement)
+    mappings = result.scalars().all()
+    
+    response = []
+    for m in mappings:
+        if not m.id: continue
+        response.append(SemanticMappingResponse(
+            id=m.id,
+            ui_label=m.ui_label,
+            database_table=m.database_table,
+            source_file=m.source_file,
+            is_doubtful=True if not m.base_query else False
+        ))
+    return response
+
+@router.put("/v2/semantic/mappings/{mapping_id}")
+async def update_ui_table_mapping(
+    mapping_id: int,
+    payload: SemanticMappingUpdate,
+    client: ClientConfig = Depends(get_current_client),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Update the database_table for a specific Semantic Mapping.
+    """
+    mapping = await session.get(SemanticMapping, mapping_id)
+    if not mapping or mapping.client_id != client.id:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+        
+    mapping.database_table = payload.database_table
+    session.add(mapping)
+    await session.commit()
+    return {"status": "success"}

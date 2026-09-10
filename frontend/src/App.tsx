@@ -9,6 +9,7 @@ import SavedReports from "./pages/SavedReports";
 import RelationshipGovernance from "./pages/RelationshipGovernance";
 import OnboardingWizard from "./pages/admin/OnboardingWizard";
 import RouteMap from "./pages/admin/RouteMap";
+import SemanticMappingsPage from "./pages/admin/SemanticMappingsPage";
 import LegacyOnboarding from "./pages/LegacyOnboarding";
 import Login from "./pages/Login";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -87,6 +88,11 @@ export default function App() {
                         <Route path="routes" element={
                             <RoleGuard permission="configure_system">
                                 <RouteMap />
+                            </RoleGuard>
+                        } />
+                        <Route path="semantic-mappings" element={
+                            <RoleGuard permission="configure_system">
+                                <SemanticMappingsPage />
                             </RoleGuard>
                         } />
                         <Route path="ai-settings" element={
