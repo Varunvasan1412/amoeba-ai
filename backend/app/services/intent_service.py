@@ -1,12 +1,50 @@
+import os
 import re
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from app.models.semantic_metadata import SemanticMetadata
+from app.models.semantic_mapping import SemanticMapping
 from app.services.onboarding import discover_tables
 from app.models.client_config import ClientConfig
 from app.services.module_resolver import resolve_module_for_table
 from app.tools.dates import strip_date_phrases
+
+def simple_title_case(s: str) -> str:
+    """Converts 'user-profile' or 'user_profile' to 'User Profile'"""
+    if not s:
+        return ""
+    s = os.path.splitext(s)[0]
+    s = s.replace("_", " ").replace("-", " ")
+    s = re.sub(r'\[.*?\]', 'Detail', s)
+    return s.title().strip()
+
+TAB_DISCRIMINATORS = {
+    "pending", "completed", "complete", "active", "inactive", "converted", 
+    "open", "closed", "approved", "rejected", "cancelled", "draft", "tax",
+    "report", "reports", "history", "log", "logs", "attendance", "summary"
+}
+
+# Internal controller actions that should never appear as user-facing tab choices
+INTERNAL_ACTION_WORDS = {
+    "save", "delete", "remove", "update", "insert", "create", "add", "edit",
+    "json", "ajax", "data", "fetch", "get", "search", "export", "import",
+    "upload", "download", "print", "pdf", "excel", "csv", "entry",
+    "salary", "stage", "action", "process", "submit", "approve", "reject",
+    "convert", "generate", "calculate", "compute", "validate", "check",
+    "byid", "bybrand", "bydate", "byname", "bypass", "detail", "details"
+}
+
+def _is_ui_facing_label(label: str) -> bool:
+    """Filter out internal controller action labels from tab disambiguation."""
+    if not label:
+        return False
+    lbl_lower = label.lower().strip()
+    lbl_words = set(re.findall(r'[a-zA-Z0-9]+', lbl_lower))
+    # Any label containing internal action words is not user-facing
+    if lbl_words.intersection(INTERNAL_ACTION_WORDS):
+        return False
+    return True
 
 # Intent keywords - REORDERED: Update/Delete/Create before Read to avoid collisions with words like "list"
 INTENT_MAP = {
@@ -277,35 +315,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             # If the user asks for a general entity or screen that has multiple tabs/stages
             # (e.g. "grn inspection", "quotations", "invoices", "delivery challan") and did NOT specify a discriminating tab:
             # We do not guess arbitrarily. We ask the user which tab they want to view!
-            TAB_DISCRIMINATORS = {
-                "pending", "completed", "complete", "active", "inactive", "converted", 
-                "open", "closed", "approved", "rejected", "cancelled", "draft", "tax",
-                "report", "reports", "history", "log", "logs", "attendance", "summary",
-                "details", "detail"
-            }
-            # Internal controller actions that should never appear as user-facing tab choices
-            INTERNAL_ACTION_WORDS = {
-                "save", "delete", "remove", "update", "insert", "create", "add", "edit",
-                "json", "ajax", "data", "fetch", "get", "search", "export", "import",
-                "upload", "download", "print", "pdf", "excel", "csv", "entry",
-                "salary", "stage", "action", "process", "submit", "approve", "reject",
-                "convert", "generate", "calculate", "compute", "validate", "check",
-                "byid", "bybrand", "bydate", "byname", "bypass"
-            }
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
-            
-            def _is_ui_facing_label(label: str) -> bool:
-                """Filter out internal controller action labels from tab disambiguation."""
-                lbl_lower = label.lower().strip()
-                lbl_words = set(re.findall(r'[a-zA-Z0-9]+', lbl_lower))
-                # Any label containing internal action words is not user-facing
-                if lbl_words.intersection(INTERNAL_ACTION_WORDS):
-                    return False
-                return True
             
             if not has_tab_discriminator and sm_all:
                 # Group mappings by explicit tab_group
-                tab_groups: Dict[str, List[SemanticMapping]] = {}
+                tab_groups: Dict[str, List[Any]] = {}
                 for sm in sm_all:
                     grp = getattr(sm, "tab_group", None)
                     if grp and _is_ui_facing_label(sm.ui_label):
@@ -395,6 +409,24 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                     seen_labels.add(sm.ui_label.strip())
                                     candidate_tabs.append(sm.ui_label.strip())
                     
+                    # If we found 1 discriminator tab (e.g. "Completed Invoice List"), also look for its base/pending counterpart
+                    if len(candidate_tabs) == 1:
+                        for sm in sm_all:
+                            if not _is_ui_facing_label(sm.ui_label):
+                                continue
+                            lbl_clean = sm.ui_label.lower().strip()
+                            base_tokens = set(re.findall(r'[a-zA-Z0-9]+', lbl_clean)) - NON_ENTITY_WORDS
+                            stemmed_base = {_stem_token(t) for t in base_tokens}
+                            if stemmed_base and (stemmed_base == stemmed_q_toks):
+                                if not any(td in lbl_clean for td in TAB_DISCRIMINATORS):
+                                    clean_lbl = sm.ui_label.strip()
+                                    if clean_lbl not in seen_labels:
+                                        # Prefer "Invoice List" over bare "Invoice"
+                                        if "list" in clean_lbl.lower() or not any("list" in c.lower() for c in candidate_tabs):
+                                            seen_labels.add(clean_lbl)
+                                            candidate_tabs.append(clean_lbl)
+                                            break
+
                     print(f"🔍 [TAB_DEBUG] Fallback Strategy A candidate_tabs: {candidate_tabs}")
                     
                     if len(candidate_tabs) >= 2:
@@ -409,6 +441,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 
                         is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
                         if not is_cand_specified and len(filtered_cand) >= 2:
+                            filtered_cand.sort(key=lambda t: 1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 0)
                             matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
                             matched_tabs = filtered_cand
                     
@@ -435,8 +468,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 entity_views[view_key] = clean_lbl
                             else:
                                 existing = entity_views[view_key]
-                                # Prefer shorter, cleaner labels
-                                if len(clean_lbl) < len(existing):
+                                existing_has_disc = any(td in existing.lower() for td in TAB_DISCRIMINATORS)
+                                new_has_disc = any(td in clean_lbl.lower() for td in TAB_DISCRIMINATORS)
+                                if new_has_disc and not existing_has_disc:
+                                    entity_views[view_key] = clean_lbl
+                                elif not existing_has_disc and len(clean_lbl) < len(existing):
                                     entity_views[view_key] = clean_lbl
                         
                         print(f"🔍 [TAB_DEBUG] Strategy B found {len(entity_views)} distinct views: {list(entity_views.values())[:10]}")
@@ -445,7 +481,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             # We have multiple distinct views — present them as tab choices
                             distinct_tabs = list(entity_views.values())
                             # Sort: Pending first, Completed second, others last
-                            distinct_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new"]) else (1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 2))
+                            distinct_tabs.sort(key=lambda t: 0 if any(k in t.lower() for k in ["pending", "draft", "new", "list"]) and not any(k in t.lower() for k in ["complete", "closed", "approved"]) else 1)
                             
                             is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
                             if not is_cand_specified:
