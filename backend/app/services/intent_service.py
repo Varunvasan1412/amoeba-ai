@@ -316,8 +316,23 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             # (e.g. "grn inspection", "quotations", "invoices", "delivery challan") and did NOT specify a discriminating tab:
             # We do not guess arbitrarily. We ask the user which tab they want to view!
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
+            has_data_kw = bool(re.search(r"\b(table|tables|data|records|rows|column|columns)\b", clean_q))
             
-            if not has_tab_discriminator and sm_all:
+            # Check if query is an exact match for an existing semantic mapping UI label
+            exact_sm = None
+            for sm in sm_all:
+                sm_lbl_clean = sm.ui_label.lower().strip()
+                sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl_clean)) - NON_ENTITY_WORDS
+                stemmed_sm_toks = {_stem_token(t) for t in sm_toks}
+                if sm_lbl_clean == clean_q or (stemmed_sm_toks and stemmed_sm_toks == stemmed_q_toks):
+                    exact_sm = sm
+                    break
+            
+            # If user directly specified an exact entity that has no multi-view tab_group,
+            # or if the user explicitly requested a data table for an entity, bypass tab disambiguation!
+            skip_tab_disambig = has_tab_discriminator or (exact_sm and not getattr(exact_sm, "tab_group", None))
+            
+            if not skip_tab_disambig and sm_all:
                 # Group mappings by explicit tab_group
                 tab_groups: Dict[str, List[Any]] = {}
                 for sm in sm_all:
@@ -391,7 +406,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             print(f"🔍 [TAB_DEBUG] Group '{grp}': only {len(unique_tabs)} unique tab(s), need >= 2")
                             
                 # Fallback: Auto-detect tab groups if tab_group wasn't explicitly populated
-                if not matched_group:
+                if not matched_group and not has_data_kw and not exact_sm:
                     print(f"🔍 [TAB_DEBUG] No tab_group match found, trying fallback auto-detection...")
                     
                     # Strategy A: Find labels with discriminator words in them
@@ -442,11 +457,12 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
                         if not is_cand_specified and len(filtered_cand) >= 2:
                             filtered_cand.sort(key=lambda t: 1 if any(k in t.lower() for k in ["complete", "closed", "approved"]) else 0)
-                            matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
+                            clean_screen_name = re.sub(r'\b(show|list|me|the|view|get|display|table)\b', '', clean_q, flags=re.IGNORECASE).strip()
+                            matched_group = simple_title_case(clean_screen_name) or "this screen"
                             matched_tabs = filtered_cand
                     
                     # Strategy B: If Strategy A didn't find enough candidates, look for
-                    # distinct views of the same entity by grouping by (table, filter)
+                    # distinct views of the SAME entity differing ONLY by tab discriminators
                     if not matched_group:
                         print(f"🔍 [TAB_DEBUG] Trying fallback Strategy B (distinct view detection)...")
                         entity_views = {}  # key=(table, filter) -> best label
@@ -460,6 +476,13 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             if not stemmed_q_toks or not stemmed_lbl:
                                 continue
                             if not (stemmed_q_toks.issubset(stemmed_lbl)):
+                                continue
+                            
+                            # CRITICAL: Any extra tokens in the candidate label MUST be in TAB_DISCRIMINATORS!
+                            # If a label has extra words like "bank" (e.g. "Bank Payment Voucher"), it is a 
+                            # separate voucher/screen entirely, NEVER a tab of "Payment Voucher"!
+                            extra_tokens = stemmed_lbl - stemmed_q_toks
+                            if extra_tokens and not extra_tokens.issubset(TAB_DISCRIMINATORS):
                                 continue
                             
                             view_key = (sm.database_table, sm.default_filter or "")
@@ -485,7 +508,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             
                             is_cand_specified = any(td in stemmed_q_toks for td in TAB_DISCRIMINATORS)
                             if not is_cand_specified:
-                                matched_group = simple_title_case(clean_q.replace("show", "").replace("list", "").replace("me", "").replace("the", "").strip()) or "this screen"
+                                clean_screen_name = re.sub(r'\b(show|list|me|the|view|get|display|table)\b', '', clean_q, flags=re.IGNORECASE).strip()
+                                matched_group = simple_title_case(clean_screen_name) or "this screen"
                                 matched_tabs = distinct_tabs[:6]  # Cap at 6 choices
                 
                 if matched_group and matched_tabs:

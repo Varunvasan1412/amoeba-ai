@@ -269,10 +269,12 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                 
                 all_client_routes = await load_client_sitemap(db_session, int(client_id_val))
                 matched_label = target_page.title()
+                matched_table = None
                 for r in all_client_routes:
                     if r["path"].strip().lower() == path.strip().lower():
                         raw_lbl = " ".join(r["label"].split())
                         matched_label = re.sub(r'\s+\d+$', '', raw_lbl).strip()
+                        matched_table = r.get("table_name")
                         break
 
                 existing_states = await db_session.execute(
@@ -293,7 +295,8 @@ async def execute_fastpath(user_input: str, context: dict = {}, db_session: Asyn
                     collected_data={
                         "label": matched_label,
                         "path": path,
-                        "original_query": user_input
+                        "original_query": user_input,
+                        "table": matched_table
                     }
                 )
                 db_session.add(dual_state)
