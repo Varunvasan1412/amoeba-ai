@@ -104,8 +104,17 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         active_semantics = [s for _, s in scored_semantics[:6]]
         
         if active_semantics:
+            # Pre-fetch all known schema table names for validation
+            all_schema_res = await session.execute(select(SchemaMetadata.table_name).where(SchemaMetadata.client_id == client_id))
+            known_tables = set(r[0].lower() for r in all_schema_res.all() if r[0])
+            
             semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
             for s in active_semantics:
+                # Validate: Only include mappings whose tables actually exist in the DB schema
+                if known_tables and s.database_table.lower() not in known_tables:
+                    print(f"⚠️ [SCHEMA RAG] Skipping semantic mapping '{s.ui_label}' -> '{s.database_table}' (table not found in schema)")
+                    continue
+                    
                 cols_str = ""
                 if s.ui_columns:
                     filter_match = re.search(r'\[Filter:\s*(.*?)\]', s.ui_columns)
