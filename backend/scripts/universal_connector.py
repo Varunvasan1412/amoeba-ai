@@ -620,6 +620,10 @@ def scan_fullstack_semantics(root_path):
             if 'voucher' in label_text.lower() and target_tbl in ['voucher', 'payment_voucher', 'expense_master', 'expense']:
                 target_tbl = 'expence_details'
                 
+            # HARDCODED OVERRIDE: Client 4 uses 'product' table for parts setting list view
+            if 'parts setting' in label_text.lower() and target_tbl in ['product_parts_setting', 'parts_setting', 'part_setting', 'partssetting']:
+                target_tbl = 'product'
+                
             key = (label_text.lower(), target_tbl)
             if key not in seen and len(label_text) >= 3:
                 semantics.append({
@@ -1196,6 +1200,10 @@ def scan_live_web_application(base_url):
                 # HARDCODED OVERRIDE: Client 4 stores payment vouchers in expence_details
                 if 'voucher' in clean_title.lower() and inferred_table in ['voucher', 'payment_voucher', 'expense_master', 'expense']:
                     inferred_table = 'expence_details'
+                    
+                # HARDCODED OVERRIDE: Client 4 uses 'product' table for parts setting list view
+                if 'parts setting' in clean_title.lower() and inferred_table in ['product_parts_setting', 'parts_setting', 'part_setting', 'partssetting']:
+                    inferred_table = 'product'
                     
                 sem_key = (clean_title.lower(), inferred_table.lower())
                 if sem_key not in seen_sem_keys:

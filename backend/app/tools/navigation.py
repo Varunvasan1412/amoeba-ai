@@ -743,6 +743,11 @@ def match_entity_to_table(entity: str, db_tables: List[str]) -> Optional[str]:
         if 'expence_details' in db_tables:
             return 'expence_details'
             
+    # HARDCODED OVERRIDE: Map 'parts setting' to 'product' table instead of 'product_parts_setting'
+    if entity in ['parts setting', 'product parts setting', 'product parts', 'parts_setting', 'partssetting']:
+        if 'product' in db_tables:
+            return 'product'
+            
     # 1. Exact match
     if entity in db_tables:
         return entity
