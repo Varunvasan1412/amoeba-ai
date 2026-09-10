@@ -709,7 +709,9 @@ def infer_entity_keyword(path: str, label: str) -> str:
     return entity
 
 def match_entity_to_table(entity: str, db_tables: List[str]) -> Optional[str]:
-    """Matches entity keyword against actual DB tables with support for common CRM/ERP suffixes."""
+    """Matches entity keyword against actual DB tables with support for common CRM/ERP suffixes.
+    Uses scored matching to prefer the best match over greedy first-match.
+    """
     if not db_tables: return None
     
     entity = entity.lower().strip()
@@ -718,17 +720,41 @@ def match_entity_to_table(entity: str, db_tables: List[str]) -> Optional[str]:
     if entity in db_tables:
         return entity
         
-    # 2. Suffix matches (_detail, _master, _header, _head, _ms, _tran)
-    # Common in ERP/CRM systems
-    for suffix in ["_detail", "_master", "_header", "_head", "_tran", "_ms"]:
-        if f"{entity}{suffix}" in db_tables:
-            return f"{entity}{suffix}"
-            
-    # 3. Contains match (Fallback)
+    # 2. Suffix matches — comprehensive ERP/CRM suffixes
+    for suffix in [
+        "_header", "_head", "_detail", "_details", "_det",
+        "_master", "_mst", "_tran", "_ms",
+        "_items", "_item", "_lines", "_line",
+        "_log", "_history", "_hist",
+    ]:
+        candidate = f"{entity}{suffix}"
+        if candidate in db_tables:
+            return candidate
+    
+    # 3. Prefix matches — common DB prefixes
+    for prefix in ["mst_", "tbl_", "ref_", "sys_", "trn_"]:
+        candidate = f"{prefix}{entity}"
+        if candidate in db_tables:
+            return candidate
+        # Also try prefix + entity + suffix
+        for suffix in ["_header", "_head", "_master", "_mst", "_detail"]:
+            candidate = f"{prefix}{entity}{suffix}"
+            if candidate in db_tables:
+                return candidate
+    
+    # 4. Scored contains match (prefer shortest containing match to avoid false positives)
+    containing = []
     for t in db_tables:
         if entity in t:
-            return t
-            
+            # Score: shorter table names are better (more specific match)
+            # Also prefer tables where entity is a larger portion of the name
+            specificity = len(entity) / max(len(t), 1)
+            containing.append((specificity, t))
+    
+    if containing:
+        containing.sort(key=lambda x: x[0], reverse=True)
+        return containing[0][1]
+        
     return None
 
 def generate_friendly_label(module: Optional[str], entity: str) -> str:

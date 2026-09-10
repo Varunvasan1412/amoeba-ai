@@ -106,8 +106,12 @@ async def sync_semantic_endpoint(
     api_key: str = Query(...),
     session: AsyncSession = Depends(get_session)
 ):
-    """Saves discovered semantic mappings from the codebase profiler."""
+    """Saves discovered semantic mappings from the codebase profiler.
+    Uses smart upsert: validates table names against real DB, fuzzy-matches
+    non-existent tables, and never overwrites source-code mappings with web-crawl guesses.
+    """
     from app.models.semantic_mapping import SemanticMapping
+    from app.services.onboarding import discover_tables
     
     # 1. Verify Client
     result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
@@ -115,40 +119,104 @@ async def sync_semantic_endpoint(
     if not client:
         raise HTTPException(status_code=403, detail="Invalid API Key")
 
-    # 2. Delete old mappings (selective if small batch, full if bulk scan)
-    from sqlmodel import delete
+    # 2. Discover real DB tables for validation
+    real_tables = []
     try:
-        if len(semantics) < 50:
-            labels_to_del = [s.ui_label for s in semantics]
-            await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id, SemanticMapping.ui_label.in_(labels_to_del)))
-        else:
-            await session.execute(delete(SemanticMapping).where(SemanticMapping.client_id == client.id))
+        if client.db_connection_url:
+            tables_raw = discover_tables(client.db_connection_url)
+            real_tables = [t["name"].lower() for t in tables_raw]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error during deletion: {str(e)}")
+        print(f"⚠️ [SEMANTIC SYNC] Could not discover tables for validation: {e}")
     
-    # 3. Insert new mappings
+    def fuzzy_match_table(guessed_table, real_tables_list):
+        """Try to match a guessed table name to a real one."""
+        if not real_tables_list:
+            return guessed_table
+        gt = guessed_table.lower().strip()
+        # 1. Exact match
+        if gt in real_tables_list:
+            return gt
+        # 2. Suffix matches
+        for suffix in ['_head', '_header', '_master', '_mst', '_detail', '_details', '_items', '_det', '_tran', '_ms', '_log', '_history']:
+            if f"{gt}{suffix}" in real_tables_list:
+                return f"{gt}{suffix}"
+        # 3. Contains match (prefer shortest containing match)
+        containing = [t for t in real_tables_list if gt in t]
+        if containing:
+            containing.sort(key=len)
+            return containing[0]
+        # 4. Reverse contains (table name contained in guessed name)
+        for t in real_tables_list:
+            t_base = t.replace('_head', '').replace('_header', '').replace('_master', '').replace('_mst', '').replace('_detail', '')
+            if t_base and len(t_base) >= 3 and t_base in gt:
+                return t
+        return guessed_table  # Return as-is if no match found
+
+    # 3. Smart Upsert: Update existing, add new, validate tables
     added = 0
+    updated = 0
+    skipped = 0
     try:
         for s in semantics:
-            new_map = SemanticMapping(
-                client_id=client.id,
-                ui_label=s.ui_label,
-                database_table=s.database_table,
-                source_file=s.source_file,
-                ui_columns=s.ui_columns,
-                default_filter=s.default_filter,
-                base_query=s.base_query,
-                required_joins=s.required_joins,
-                tab_group=s.tab_group
+            # Validate and fix table name
+            validated_table = s.database_table
+            if real_tables and s.database_table.lower() not in real_tables:
+                corrected = fuzzy_match_table(s.database_table, real_tables)
+                if corrected != s.database_table.lower():
+                    print(f"🔧 [SEMANTIC SYNC] Table correction: '{s.database_table}' -> '{corrected}'")
+                    validated_table = corrected
+                else:
+                    print(f"⚠️ [SEMANTIC SYNC] Table '{s.database_table}' not found in DB, keeping as-is for label '{s.ui_label}'")
+            
+            is_web_crawl = s.source_file and s.source_file.startswith("HTTP")
+            
+            # Check if mapping already exists
+            existing_stmt = select(SemanticMapping).where(
+                SemanticMapping.client_id == client.id,
+                SemanticMapping.ui_label == s.ui_label
             )
-            session.add(new_map)
-            added += 1
+            existing_res = await session.execute(existing_stmt)
+            existing = existing_res.scalars().first()
+            
+            if existing:
+                # Never overwrite source-code-based mapping with a web-crawl guess
+                existing_is_source_code = existing.source_file and not existing.source_file.startswith("HTTP")
+                if is_web_crawl and existing_is_source_code:
+                    skipped += 1
+                    continue
+                
+                # Update existing mapping
+                existing.database_table = validated_table
+                existing.source_file = s.source_file
+                existing.ui_columns = s.ui_columns
+                existing.default_filter = s.default_filter
+                existing.base_query = s.base_query
+                existing.required_joins = s.required_joins
+                existing.tab_group = s.tab_group
+                session.add(existing)
+                updated += 1
+            else:
+                new_map = SemanticMapping(
+                    client_id=client.id,
+                    ui_label=s.ui_label,
+                    database_table=validated_table,
+                    source_file=s.source_file,
+                    ui_columns=s.ui_columns,
+                    default_filter=s.default_filter,
+                    base_query=s.base_query,
+                    required_joins=s.required_joins,
+                    tab_group=s.tab_group
+                )
+                session.add(new_map)
+                added += 1
             
         await session.commit()
-        return {"status": "success", "message": f"Synced {added} semantic mappings"}
+        msg = f"Synced semantic mappings: {added} added, {updated} updated, {skipped} skipped (protected)"
+        print(f"✅ [SEMANTIC SYNC] {msg}")
+        return {"status": "success", "message": msg, "added": added, "updated": updated, "skipped": skipped}
     except Exception as e:
         await session.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error during insert: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database error during sync: {str(e)}")
 
 @router.get("/semantic/debug")
 async def debug_semantic_endpoint(

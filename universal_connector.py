@@ -237,13 +237,16 @@ def extract_sql_filters(code_snippet):
     for m in re.finditer(r'->whereNull\s*\(\s*[\'"]([a-zA-Z0-9_\.]+)[\'"]\s*\)', code_snippet, re.IGNORECASE):
         filters.append(f"{m.group(1)} IS NULL")
         
+    # Post-processing: Remove filters containing PHP variables, session data, or user-specific conditions
+    FILTER_BLACKLIST = ['$', 'session', 'userdata', 'auth_user', 'user_id', 'branch_id', 'company_id', 'logged_in', 'this->', 'self::']
     unique = []
     seen = set()
     for f in filters:
         f_clean = re.sub(r'\s+', ' ', f).strip()
         if f_clean.lower() not in seen:
-            unique.append(f_clean)
-            seen.add(f_clean.lower())
+            if not any(bad in f_clean.lower() for bad in FILTER_BLACKLIST):
+                unique.append(f_clean)
+                seen.add(f_clean.lower())
     return unique
 
 def scan_fullstack_semantics(root_path):
@@ -511,11 +514,23 @@ def scan_fullstack_semantics(root_path):
     semantics = []
     seen = set()
 
+    # Common ERP table name abbreviation expansions
+    TABLE_ABBREVIATIONS = {
+        'po': 'purchase order', 'so': 'sales order', 'se': 'sales enquiry',
+        'grn': 'goods received note', 'dc': 'delivery challan', 'dn': 'delivery note',
+        'inv': 'invoice', 'pi': 'purchase indent', 'pr': 'purchase request',
+        'sq': 'sales quotation', 'pq': 'purchase quotation', 'rfq': 'request for quotation',
+        'wo': 'work order', 'jo': 'job order', 'bom': 'bill of material',
+        'hr': 'human resource', 'emp': 'employee', 'dept': 'department',
+        'mr': 'material request', 'mi': 'material issue', 'qc': 'quality control',
+        'qi': 'quality inspection', 'insp': 'inspection',
+    }
+    
     def choose_primary_table(table_list, headers=None, from_tables=None):
         if not table_list:
             return None
             
-        lookup_tables = {'users', 'user', 'employee', 'branch', 'city', 'state', 'country', 'settings', 'currency', 'company', 'admin', 'auth'}
+        lookup_tables = {'users', 'user', 'employee', 'branch', 'city', 'state', 'country', 'settings', 'currency', 'company', 'admin', 'auth', 'master_city', 'master_state', 'master_country'}
         
         # Priority 1: Driving tables (from_tables) that are not lookup tables
         core_from = [t for t in (from_tables or []) if t not in lookup_tables]
@@ -524,7 +539,8 @@ def scan_fullstack_semantics(root_path):
         pool = core_from if core_from else (core_all if core_all else table_list)
         
         # Prefer header/parent tables over detail/items tables
-        header_tables = [t for t in pool if not any(t.endswith(sfx) for sfx in ['_detail', '_details', '_items', '_item', '_history', '_log'])]
+        detail_suffixes = ['_detail', '_details', '_items', '_item', '_history', '_log', '_det', '_lines', '_line']
+        header_tables = [t for t in pool if not any(t.endswith(sfx) for sfx in detail_suffixes)]
         candidate_pool = header_tables if header_tables else pool
         
         # Priority 2: Score candidate tables against UI column headers if available
@@ -537,11 +553,18 @@ def scan_fullstack_semantics(root_path):
             for tbl in candidate_pool:
                 tbl_clean = tbl.replace('_', ' ').lower()
                 tbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', tbl_clean))
-                overlap = len(header_tokens.intersection(tbl_tokens))
+                
+                # Expand abbreviated table tokens (e.g. 'po' -> 'purchase order')
+                expanded_tokens = set(tbl_tokens)
+                for tok in list(tbl_tokens):
+                    if tok in TABLE_ABBREVIATIONS:
+                        expanded_tokens.update(TABLE_ABBREVIATIONS[tok].split())
+                
+                overlap = len(header_tokens.intersection(expanded_tokens))
                 score = overlap * 15
                 
                 # Substring match (e.g. "purchase" or "order" in header text)
-                for t in tbl_tokens:
+                for t in expanded_tokens:
                     if len(t) >= 4 and t in header_text:
                         score += 10
                         
@@ -549,7 +572,12 @@ def scan_fullstack_semantics(root_path):
                 if core_from and tbl in core_from:
                     score += 8
                     
+                # Frequency bonus: tables referenced more often in the method are more likely primary
                 score += table_list.count(tbl)
+                
+                # _head/_header suffix bonus (these are typically the primary/parent tables)
+                if any(tbl.endswith(sfx) for sfx in ['_head', '_header', '_master', '_mst']):
+                    score += 5
                 
                 if score > best_score:
                     best_score = score
@@ -953,7 +981,9 @@ def scan_codebase_for_enums(root_path):
                 selects = select_regex.findall(content)
                 for select_name, select_inner in selects:
                     column_name = select_name.replace('[]', '').strip()
-                    if column_name.lower() not in ['status', 'type', 'category', 'role', 'state', 'is_active', 'gender', 'urgency', 'priority']:
+                    # Match any column containing status/type/state/mode/stage/category keywords
+                    ENUM_KEYWORDS = ['status', 'type', 'category', 'role', 'state', 'active', 'gender', 'urgency', 'priority', 'mode', 'stage', 'grade', 'level', 'class']
+                    if not any(kw in column_name.lower() for kw in ENUM_KEYWORDS):
                         continue
                     options = option_regex.findall(select_inner)
                     mapping = {}
@@ -1135,7 +1165,8 @@ def scan_live_web_application(base_url):
         # Extract Enums from selects
         for select_name, select_inner in select_regex.findall(html):
             col_name = select_name.replace('[]', '').strip()
-            if col_name.lower() in ['status', 'type', 'category', 'role', 'state', 'gender', 'urgency', 'priority', 'employee_id']:
+            ENUM_KEYWORDS_LIVE = ['status', 'type', 'category', 'role', 'state', 'gender', 'urgency', 'priority', 'mode', 'stage', 'grade', 'level', 'class', 'employee_id']
+            if any(kw in col_name.lower() for kw in ENUM_KEYWORDS_LIVE):
                 options = option_regex.findall(select_inner)
                 mapping = {}
                 for val, text in options:
@@ -1267,6 +1298,38 @@ if __name__ == "__main__":
     if routes:
         cleaned_routes = []
         seen_norm = set()
+        
+        # Dynamic base path detection: find the common prefix folder from all route paths
+        all_paths = [r.get("path", "") for r in routes]
+        parsed_paths = []
+        for p in all_paths:
+            if "://" in p:
+                try: p = urllib.parse.urlparse(p).path
+                except: pass
+            parsed_paths.append(p)
+        
+        # Find common base prefix (e.g. /newlook/ or /sterling_company/)
+        common_base = "/"
+        if parsed_paths and folder_name:
+            # Use the folder_name as the primary prefix to strip
+            common_base_pattern = rf"^/(?:{re.escape(folder_name)})/"
+        else:
+            # Auto-detect: find the most common first path segment
+            first_segments = []
+            for p in parsed_paths:
+                parts = [x for x in p.strip('/').split('/') if x]
+                if len(parts) >= 2:
+                    first_segments.append(parts[0].lower())
+            if first_segments:
+                from collections import Counter as PathCounter
+                most_common_seg = PathCounter(first_segments).most_common(1)
+                if most_common_seg and most_common_seg[0][1] > len(first_segments) * 0.5:
+                    common_base_pattern = rf"^/{re.escape(most_common_seg[0][0])}/"
+                else:
+                    common_base_pattern = None
+            else:
+                common_base_pattern = None
+        
         for r in routes:
             p = r.get("path", "")
             if "://" in p:
@@ -1274,7 +1337,8 @@ if __name__ == "__main__":
                     p = urllib.parse.urlparse(p).path
                 except:
                     pass
-            p = re.sub(rf"^/(?:{re.escape(folder_name)}|newlook|varun_sterling|sterling_company)/", "/", p, flags=re.IGNORECASE)
+            if common_base_pattern:
+                p = re.sub(common_base_pattern, "/", p, flags=re.IGNORECASE)
             if not p.startswith("/"):
                 p = "/" + p
             
