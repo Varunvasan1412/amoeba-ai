@@ -1050,7 +1050,10 @@ async def websocket_endpoint(
                                                     elif isinstance(result, (list, tuple)):
                                                         response_text = f"No records found for **{display_title}**."
                                                     else:
-                                                        response_text = f"Records retrieved for **{display_title}**."
+                                                        # Result is an error string (e.g. "Database Error: table doesn't exist")
+                                                        # Do NOT return - fall through to Schema RAG for intelligent table resolution
+                                                        print(f"⚠️ [FAST CONTROLLER] base_query returned error for '{display_title}': {result}", flush=True)
+                                                        raise ValueError(f"base_query failed: {result}")
                                                     
                                                     ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
                                                     local_session.add(ai_msg)
