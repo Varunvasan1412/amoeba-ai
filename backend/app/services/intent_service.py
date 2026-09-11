@@ -41,9 +41,19 @@ def _is_ui_facing_label(label: str) -> bool:
         return False
     lbl_lower = label.lower().strip()
     lbl_words = set(re.findall(r'[a-zA-Z0-9]+', lbl_lower))
-    # Any label containing internal action words is not user-facing
+    # Any label containing isolated internal action words is not user-facing
     if lbl_words.intersection(INTERNAL_ACTION_WORDS):
         return False
+        
+    # Check for concatenated action words (e.g. "quotationdelete", "getglassprice")
+    for word in lbl_words:
+        for action in INTERNAL_ACTION_WORDS:
+            # Avoid short words matching randomly by requiring length >= 4 and strict prefix/suffix
+            if len(action) >= 4 and (word.startswith(action) or word.endswith(action)) and len(word) > len(action):
+                return False
+            # "get" is short, so only check prefix (e.g. "getcustomers")
+            if action == "get" and word.startswith("get") and len(word) > 3:
+                return False
     return True
 
 # Intent keywords - REORDERED: Update/Delete/Create before Read to avoid collisions with words like "list"
@@ -391,13 +401,26 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             # (e.g. "report" in "list the payroll report", or "history" in "payroll history"),
                             # do NOT trigger tab disambiguation—resolve directly to that tab!
                             is_tab_specified = False
+                            
+                            # 1. Exact Match First (if user clicked a disambiguation button)
                             for tab_lbl in unique_tabs:
-                                tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl.lower().strip())) - NON_ENTITY_WORDS
-                                stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens} - stemmed_grp_toks
-                                if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
+                                if tab_lbl.lower().strip() == clean_q.strip() or f"view {tab_lbl.lower().strip()} table" == clean_q.strip():
                                     is_tab_specified = True
-                                    print(f"🔍 [TAB_DEBUG] Tab '{tab_lbl}' specified by user query (tokens={stemmed_tab_tokens}, overlap={stemmed_tab_tokens.intersection(stemmed_q_toks)})")
+                                    matched_group = grp
+                                    matched_tabs = [tab_lbl]
+                                    print(f"🔍 [TAB_DEBUG] Exact match found for tab '{tab_lbl}'!")
                                     break
+                                    
+                            # 2. Token overlap fallback
+                            if not is_tab_specified:
+                                for tab_lbl in unique_tabs:
+                                    tab_tokens = set(re.findall(r'[a-zA-Z0-9]+', tab_lbl.lower().strip())) - NON_ENTITY_WORDS
+                                    stemmed_tab_tokens = {_stem_token(t) for t in tab_tokens} - stemmed_grp_toks
+                                    if stemmed_tab_tokens and stemmed_tab_tokens.intersection(stemmed_q_toks):
+                                        is_tab_specified = True
+                                        print(f"🔍 [TAB_DEBUG] Tab '{tab_lbl}' specified by user query (tokens={stemmed_tab_tokens}, overlap={stemmed_tab_tokens.intersection(stemmed_q_toks)})")
+                                        break
+                                        
                             if not is_tab_specified:
                                 matched_group = grp
                                 matched_tabs = unique_tabs
