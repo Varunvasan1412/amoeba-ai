@@ -541,8 +541,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         target_table = best_sm_for_tab.database_table if best_sm_for_tab else None
                         return {
                             "intent": "read",
-                            "entity": matched_tabs[0],
-                            "table": target_table,
+                            "entity": target_table,
+                            "label": matched_tabs[0],
                             "url": None,
                             "status": "resolved"
                         }
