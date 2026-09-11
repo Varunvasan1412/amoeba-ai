@@ -195,21 +195,41 @@ def scan_php_mvc_routes(root_path, base_url):
 # =========================================================================
 
 
-def extract_base_query_with_ai(php_code, base_api_url, api_key):
-    try:
-        url = f"{base_api_url}/api/v2/semantic/extract-sql"
-        data = json.dumps({"php_code": php_code}).encode('utf-8')
-        req = urllib.request.Request(url, data=data, headers={
-            'Content-Type': 'application/json',
-            'X-API-Key': api_key,
-            'User-Agent': 'AmoebaConnector/3.5'
-        })
-        with urllib.request.urlopen(req) as response:
-            res = json.loads(response.read().decode('utf-8'))
-            return res.get("base_query")
-    except Exception as e:
-        print(f"⚠️ AI SQL Extraction failed: {e}")
-        return None
+def extract_base_query_with_ai(php_code, base_api_url, api_key, max_retries=3):
+    import time
+    for attempt in range(max_retries):
+        try:
+            url = f"{base_api_url}/api/v2/semantic/extract-sql"
+            data = json.dumps({"php_code": php_code}).encode('utf-8')
+            req = urllib.request.Request(url, data=data, headers={
+                'Content-Type': 'application/json',
+                'X-API-Key': api_key,
+                'User-Agent': 'AmoebaConnector/3.5'
+            })
+            with urllib.request.urlopen(req) as response:
+                res = json.loads(response.read().decode('utf-8'))
+                bq = res.get("base_query")
+                if bq and bq.startswith("ERROR:"):
+                    if "429" in bq or "exhausted" in bq.lower() or "quota" in bq.lower():
+                        print(f"⚠️ Rate limited by AI. Waiting 10s before retry {attempt+1}/{max_retries}...")
+                        time.sleep(10)
+                        continue
+                    else:
+                        print(f"⚠️ AI Error: {bq}")
+                        return None
+                return bq
+        except urllib.error.HTTPError as e:
+            if e.code == 429 or e.code == 503 or e.code == 502:
+                print(f"⚠️ Server overloaded ({e.code}). Waiting 10s before retry {attempt+1}/{max_retries}...")
+                time.sleep(10)
+                continue
+            else:
+                print(f"⚠️ HTTP Error {e.code}: {e.reason}")
+                return None
+        except Exception as e:
+            print(f"⚠️ AI SQL Extraction failed: {e}")
+            time.sleep(2)
+    return None
 
 def extract_sql_filters(code_snippet):
     """
@@ -973,7 +993,7 @@ def scan_fullstack_semantics(root_path):
                 if order_by_list: parts.append(f"ORDER BY {', '.join(dict.fromkeys(order_by_list))}")
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str or group_by_list or order_by_list) else None
                 if use_ai and m_data.get("raw_code"):
-                    print(f"🧠 Using AI to extract SQL for Node route...")
+                    print(f"🧠 Using AI to extract SQL for {cn}/{m_name}...")
                     ai_query = extract_base_query_with_ai(m_data["raw_code"], amoeba_host, client_api_key)
                     if ai_query: base_query_str = ai_query
 
