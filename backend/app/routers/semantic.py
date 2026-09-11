@@ -17,7 +17,7 @@ from app.models.semantic_mapping import SemanticMapping
 from app.services.llm_service import get_brain
 from langchain_core.messages import HumanMessage, SystemMessage
 
-router = APIRouter(dependencies=[Depends(get_current_active_admin)])
+router = APIRouter()
 
 # Security Scheme
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -77,7 +77,8 @@ class SemanticMappingUpdate(BaseModel):
 async def upsert_semantic_columns(
     payload: BulkSemanticRequest,
     client: ClientConfig = Depends(get_current_client),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
 ):
     """
     Bulk create or update semantic definitions.
@@ -93,7 +94,8 @@ async def upsert_semantic_columns(
 @router.get("/v2/semantic/schema")
 async def get_full_semantic_schema(
     client: ClientConfig = Depends(get_current_client),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
 ):
     """
     Get the full semantic map for the client.
@@ -104,7 +106,8 @@ async def get_full_semantic_schema(
 async def get_table_metadata(
     table_name: str,
     client: ClientConfig = Depends(get_current_client),
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
 ):
     """
     Get semantic metadata for a specific table.
@@ -114,7 +117,8 @@ async def get_table_metadata(
 @router.get("/v2/semantic/mappings", response_model=List[SemanticMappingResponse])
 async def get_ui_table_mappings(
     client_id: int,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
 ):
     """
     Get all UI-to-Table Semantic Mappings.
@@ -141,7 +145,8 @@ async def update_ui_table_mapping(
     mapping_id: int,
     client_id: int,
     payload: SemanticMappingUpdate,
-    session: AsyncSession = Depends(get_session)
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
 ):
     """
     Update the database_table for a specific Semantic Mapping.
@@ -155,7 +160,7 @@ async def update_ui_table_mapping(
     await session.commit()
     return {"status": "success"}
 
-@router.post("/v2/semantic/extract-sql", dependencies=[])
+@router.post("/v2/semantic/extract-sql")
 async def extract_sql_from_php(
     payload: SQLExtractRequest,
     api_key: str = Security(api_key_header),
