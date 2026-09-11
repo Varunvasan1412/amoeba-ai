@@ -869,7 +869,7 @@ def scan_fullstack_semantics(root_path):
                 if filter_str: parts.append(f"WHERE {filter_str}")
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str) else None
                 if use_ai and c_data.get("raw_code"):
-                    print(f"🧠 Using AI to extract SQL for {fn}...")
+                    print(f"🧠 Using AI to extract SQL for {matched_method}...")
                     ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, api_key)
                     if ai_query: base_query_str = ai_query
 
