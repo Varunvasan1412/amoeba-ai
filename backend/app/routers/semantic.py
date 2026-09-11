@@ -135,6 +135,7 @@ async def get_ui_table_mappings(
             id=m.id,
             ui_label=m.ui_label,
             database_table=m.database_table,
+            base_query=m.base_query,
             source_file=m.source_file,
             is_doubtful=True if not m.base_query else False
         ))
@@ -193,4 +194,4 @@ RETURN ONLY THE CLEAN SQL STRING. Do not return markdown, do not return explanat
         return {"base_query": sql.strip()}
     except Exception as e:
         print(f"Error during LLM SQL extraction: {e}")
-        return {"base_query": None}
+        return {"base_query": f"ERROR: {str(e)}"}

@@ -7,6 +7,7 @@ interface SemanticMappingResponse {
   id: number;
   ui_label: string;
   database_table: string;
+  base_query: string | null;
   source_file: string | null;
   is_doubtful: boolean;
 }
@@ -142,8 +143,13 @@ const SemanticMappingsPage: React.FC = () => {
                           </div>
                         )}
                       </td>
-                      <td className="px-6 py-4 font-medium text-gray-900">
-                        {mapping.ui_label}
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-gray-900">{mapping.ui_label}</div>
+                        {mapping.base_query && (
+                          <div className="mt-2 text-xs font-mono text-emerald-700 bg-emerald-50 p-2 rounded border border-emerald-100 break-all max-h-32 overflow-y-auto">
+                            {mapping.base_query}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         {editingId === mapping.id ? (
