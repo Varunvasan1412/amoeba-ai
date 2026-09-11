@@ -536,19 +536,25 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 matched_tabs = distinct_tabs[:6]  # Cap at 6 choices
                 
                 if matched_group and matched_tabs:
-                    print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
-                    return {
-                        "intent": "tab_disambiguation",
-                        "screen": matched_group,
-                        "tabs": [
-                            {
-                                "label": tab_label # Clean UI displayed name, NEVER table name!
-                            }
-                            for tab_label in matched_tabs
-                        ],
-                        "entity": None,
-                        "url": None
-                    }
+                    if len(matched_tabs) == 1:
+                        best_sm_for_tab = next((s for s in sm_all if s.ui_label == matched_tabs[0]), None)
+                        target_table = best_sm_for_tab.database_table if best_sm_for_tab else None
+                        return {
+                            "intent": "read",
+                            "entity": matched_tabs[0],
+                            "table": target_table,
+                            "url": None,
+                            "status": "resolved"
+                        }
+                    else:
+                        print(f"🔀 [INTENT] Tab Disambiguation Triggered for group '{matched_group}' with tabs: {matched_tabs}")
+                        return {
+                            "intent": "tab_disambiguation",
+                            "screen": matched_group,
+                            "tabs": [{"label": tab_label} for tab_label in matched_tabs],
+                            "entity": None,
+                            "url": None
+                        }
 
             best_sm = None
             best_sm_score = 0
