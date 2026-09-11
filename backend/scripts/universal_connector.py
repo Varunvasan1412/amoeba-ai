@@ -197,7 +197,7 @@ def scan_php_mvc_routes(root_path, base_url):
 
 def extract_base_query_with_ai(php_code, base_api_url, api_key):
     try:
-        url = f"{base_api_url}/v2/semantic/extract-sql"
+        url = f"{base_api_url}/api/v2/semantic/extract-sql"
         data = json.dumps({"php_code": php_code}).encode('utf-8')
         req = urllib.request.Request(url, data=data, headers={
             'Content-Type': 'application/json',
