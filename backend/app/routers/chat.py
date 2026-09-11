@@ -990,8 +990,6 @@ async def websocket_endpoint(
                                                 best_score = -999
                                                 
                                                 for sm in all_sms:
-                                                    if not sm.base_query:
-                                                        continue
                                                     sm_lbl = sm.ui_label.lower().strip()
                                                     sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
                                                     
