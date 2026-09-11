@@ -882,7 +882,7 @@ def scan_fullstack_semantics(root_path):
                         
                     if code_to_parse:
                         print(f"🧠 Using AI to extract SQL for Semantic View: {lbl}...")
-                        ai_query = extract_base_query_with_ai(code_to_parse, amoeba_host, api_key)
+                        ai_query = extract_base_query_with_ai(code_to_parse, amoeba_host, client_api_key)
                         if ai_query: base_query_str = ai_query
 
                 ui_cols_str = f"{headers_str} [Filter: {filter_str}]".strip() if filter_str else (headers_str or None)
@@ -974,7 +974,7 @@ def scan_fullstack_semantics(root_path):
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str or group_by_list or order_by_list) else None
                 if use_ai and m_data.get("raw_code"):
                     print(f"🧠 Using AI to extract SQL for Node route...")
-                    ai_query = extract_base_query_with_ai(m_data["raw_code"], amoeba_host, api_key)
+                    ai_query = extract_base_query_with_ai(m_data["raw_code"], amoeba_host, client_api_key)
                     if ai_query: base_query_str = ai_query
 
                 
