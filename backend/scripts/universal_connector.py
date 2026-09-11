@@ -718,7 +718,7 @@ def scan_fullstack_semantics(root_path):
                             
                             if use_ai and best_m_data.get("raw_code"):
                                 print(f"🧠 Using AI to extract SQL for {best_m_name}...")
-                                ai_query = extract_base_query_with_ai(best_m_data["raw_code"], amoeba_host, api_key)
+                                ai_query = extract_base_query_with_ai(best_m_data["raw_code"], amoeba_host, client_api_key)
                                 if ai_query: base_query_str = ai_query
 
                         
@@ -775,7 +775,7 @@ def scan_fullstack_semantics(root_path):
                         
                         if use_ai and c_data.get("raw_code"):
                             print(f"🧠 Using AI to extract SQL for {m_only}...")
-                            ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, api_key)
+                            ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, client_api_key)
                             if ai_query: base_query_str = ai_query
 
                     
