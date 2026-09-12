@@ -815,16 +815,7 @@ def scan_fullstack_semantics(root_path):
                     last_primary_table = primary_table
                     last_ui_cols = ui_cols
 
-        # C. Default Main View Title (e.g. "GRN Inspection" -> default tab / table)
-        if handled_via_tabs or handled_via_endpoints:
-            target_main_table = primary_pending_table if primary_pending_table else last_primary_table
-            main_cols = primary_pending_filters if primary_pending_filters else last_ui_cols
-            if target_main_table:
-                add_endpoint_entry(v["ui_label"], target_main_table, main_cols, v["rel_path"])
-                add_endpoint_entry(f"{v['ui_label']} List", target_main_table, main_cols, v["rel_path"])
-                base_label = re.sub(r'\b(Pending|Completed|List|View|Report|Details|Master|Management|Index)\b', '', v["ui_label"], flags=re.IGNORECASE).strip()
-                if base_label and base_label.lower() != v["ui_label"].lower():
-                    add_endpoint_entry(base_label, target_main_table, main_cols, v["rel_path"])
+
 
         # D. Single View / Non-AJAX Fallback
         if not handled_via_tabs and not handled_via_endpoints:
