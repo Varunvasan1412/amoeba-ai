@@ -211,10 +211,22 @@ async def sync_semantic_endpoint(
                 session.add(new_map)
                 added += 1
             
+        # Auto-cleanup: Delete ghost mappings no longer present in the codebase
+        received_labels = {s.ui_label for s in semantics}
+        deleted = 0
+        if received_labels:
+            from sqlalchemy import delete
+            delete_stmt = delete(SemanticMapping).where(
+                SemanticMapping.client_id == client.id,
+                SemanticMapping.ui_label.notin_(received_labels)
+            )
+            delete_res = await session.execute(delete_stmt)
+            deleted = delete_res.rowcount
+            
         await session.commit()
-        msg = f"Synced semantic mappings: {added} added, {updated} updated, {skipped} skipped (protected)"
+        msg = f"Synced semantic mappings: {added} added, {updated} updated, {deleted} ghost records removed"
         print(f"✅ [SEMANTIC SYNC] {msg}")
-        return {"status": "success", "message": msg, "added": added, "updated": updated, "skipped": skipped}
+        return {"status": "success", "message": msg, "added": added, "updated": updated, "deleted": deleted}
     except Exception as e:
         await session.rollback()
         raise HTTPException(status_code=500, detail=f"Database error during sync: {str(e)}")
