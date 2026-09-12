@@ -459,7 +459,13 @@ def scan_fullstack_semantics(root_path):
         for file in files:
             if not file.endswith(('.php', '.html', '.blade.php', '.vue', '.jsx', '.tsx')): continue
             rel_path = os.path.relpath(os.path.join(subdir, file), root_path).replace('\\', '/')
-            if any(k in rel_path.lower() for k in ['templates', 'template', 'header', 'footer', 'sidebar', 'menu']):
+            ignore_keywords = [
+                'templates', 'template', 'header', 'footer', 'sidebar', 'menu',
+                'charts_', 'component_', 'contact_', 'ecommerce_', 'email_',
+                'error_', 'extension_', 'extra_', 'forms_', 'icons_', 'map_',
+                'sample_', 'tables_', 'ui_', 'widgets_', 'box_', 'auth_', 'login'
+            ]
+            if any(k in rel_path.lower() for k in ignore_keywords):
                 continue
                 
             try:
