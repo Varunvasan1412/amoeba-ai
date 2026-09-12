@@ -103,6 +103,13 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         scored_semantics.sort(key=lambda x: x[0], reverse=True)
         active_semantics = [s for _, s in scored_semantics[:6]]
         
+        # If we have a definitive target_table, ensure its semantic mapping is prioritized
+        if target_table:
+            target_sm = next((s for s in semantics if s.database_table == target_table), None)
+            if target_sm:
+                active_semantics = [s for s in active_semantics if s.database_table != target_table]
+                active_semantics.insert(0, target_sm)
+        
         if active_semantics:
             # Pre-fetch all known schema table names for validation
             all_schema_res = await session.execute(select(SchemaMetadata.table_name).where(SchemaMetadata.client_id == client_id))
