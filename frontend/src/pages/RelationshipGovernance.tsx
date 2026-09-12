@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { useAdmin } from "../context/AdminContext";
 import { apiFetch } from "../utils/api";
 import { JoinExplorer } from "../components/admin/JoinExplorer";
+import { TutorialBanner } from "../components/admin/TutorialBanner";
 
 export default function RelationshipGovernance() {
   const { apiKey } = useAdmin();
@@ -74,6 +75,14 @@ export default function RelationshipGovernance() {
 
   return (
     <div className="max-w-7xl mx-auto py-6 px-4">
+      <TutorialBanner 
+          title="Relationship Governance"
+          description="This menu acts as the security guard and the Auto-Join engine. It maps foreign keys so the AI knows exactly how your database tables connect to each other behind the scenes."
+          bugFixes={[
+              "Fix the AI returning raw Foreign Key IDs instead of human-readable names globally.",
+              "Prevent the AI from hallucinating joins to sensitive tables (like passwords or salaries)."
+          ]}
+      />
       {/* Header */}
       <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-3xl border border-gray-100 shadow-sm">
         <div className="flex items-center gap-4">

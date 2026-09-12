@@ -3,6 +3,7 @@ import { useAdmin } from "../context/AdminContext";
 import { Check, Database, Save, AlertTriangle, Loader2, Link2 } from "lucide-react";
 import { apiFetch } from "../utils/api";
 import { SearchableDropdown } from "../components/admin/SearchableDropdown";
+import { TutorialBanner } from "../components/admin/TutorialBanner";
 
 interface ColumnMapping {
   table_name: string;
@@ -247,6 +248,15 @@ export default function SemanticMapper() {
 
   return (
     <div className="p-4 md:p-6 w-full max-w-[1400px] mx-auto min-h-screen flex flex-col gap-6">
+        <TutorialBanner 
+            title="Semantic Graph & Data Flow Overrides"
+            description="This menu connects human language to your database tables and raw SQL queries. It's where the AI learns your specific business logic (e.g. what 'completed' actually means in your database)."
+            bugFixes={[
+                "Fix AI pulling the completely wrong data (e.g. wrong filters).",
+                "Fix AI selecting the wrong table when asked a specific question.",
+                "Fix missing JOINs if a specific view needs complex data merging."
+            ]}
+        />
         {/* Header - Pill Styled */}
         <header className="bg-white p-6 rounded-[32px] shadow-sm border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-6">
             <div className="flex items-center gap-4">

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAdmin } from '../../context/AdminContext';
 import { Plus, Trash2, Map, Layout, Table, Pencil, RefreshCcw, Search, Activity, Globe, Zap } from 'lucide-react';
 import { SearchableDropdown } from '../../components/admin/SearchableDropdown';
+import { TutorialBanner } from '../../components/admin/TutorialBanner';
 import { apiFetch } from '../../utils/api';
 
 interface NavigationItem {
@@ -155,6 +156,13 @@ const RouteMap: React.FC = () => {
 
   return (
     <div className="p-4 md:p-6 w-full max-w-[1400px] mx-auto min-h-screen flex flex-col">
+      <TutorialBanner 
+          title="Intelligent Routing"
+          description="This menu acts as the search index. It teaches the AI which specific frontend screens and endpoints exist in the client's application."
+          bugFixes={[
+              "Fix the AI saying \"I don't know how to do that\" when a user asks to navigate to a specific page or perform a specific action."
+          ]}
+      />
       {/* Header */}
       <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[32px] shadow-sm border border-gray-100">
         <div className="flex items-center gap-4">
