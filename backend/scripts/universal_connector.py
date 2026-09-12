@@ -634,7 +634,7 @@ def scan_fullstack_semantics(root_path):
             return Counter(candidate_pool).most_common(1)[0][0]
         return table_list[0] if table_list else None
 
-    for v in views:
+    for v_idx, v in enumerate(views, 1):
         # Resolve companion controller for this view
         related_ctrl_methods = {}
         related_ctrl_file = None
@@ -743,7 +743,7 @@ def scan_fullstack_semantics(root_path):
                             base_query_str = " ".join(parts).strip() if (joins_str or filter_str or best_m_data.get("group_by") or best_m_data.get("order_by")) else None
                             
                             if use_ai and best_m_data.get("raw_code"):
-                                print(f"🧠 Using AI to extract SQL for {best_m_name}...")
+                                print(f"[{v_idx}/{len(views)}] 🧠 Using AI to extract SQL for {best_m_name}...")
                                 ai_query = extract_base_query_with_ai(best_m_data["raw_code"], amoeba_host, client_api_key)
                                 if ai_query: base_query_str = ai_query
 
@@ -800,7 +800,7 @@ def scan_fullstack_semantics(root_path):
                         base_query_str = " ".join(parts).strip() if (joins_str or filter_str or c_data.get("group_by") or c_data.get("order_by")) else None
                         
                         if use_ai and c_data.get("raw_code"):
-                            print(f"🧠 Using AI to extract SQL for {m_only}...")
+                            print(f"[{v_idx}/{len(views)}] 🧠 Using AI to extract SQL for {m_only}...")
                             ai_query = extract_base_query_with_ai(c_data["raw_code"], amoeba_host, client_api_key)
                             if ai_query: base_query_str = ai_query
 
@@ -898,7 +898,7 @@ def scan_fullstack_semantics(root_path):
                         code_to_parse = v.get("content")
                         
                     if code_to_parse:
-                        print(f"🧠 Using AI to extract SQL for Semantic View: {lbl}...")
+                        print(f"[{v_idx}/{len(views)}] 🧠 Using AI to extract SQL for Semantic View: {lbl}...")
                         ai_query = extract_base_query_with_ai(code_to_parse, amoeba_host, client_api_key)
                         if ai_query: base_query_str = ai_query
 
@@ -931,7 +931,7 @@ def scan_fullstack_semantics(root_path):
     # Many modern MVC apps (CodeIgniter, Laravel, Django, Rails) route actions directly to methods,
     # and each method executes a specific query (reports, lists, summaries, stages) and loads a view.
     # We correlate EVERY controller public action method to ensure no report or list is lost!
-    for cn, c_info in controller_files.items():
+    for c_idx, (cn, c_info) in enumerate(controller_files.items(), 1):
         ctrl_file = c_info.get("file", "")
         methods = c_info.get("methods", {})
         
@@ -990,7 +990,7 @@ def scan_fullstack_semantics(root_path):
                 if order_by_list: parts.append(f"ORDER BY {', '.join(dict.fromkeys(order_by_list))}")
                 base_query_str = " ".join(parts).strip() if (joins_str or filter_str or group_by_list or order_by_list) else None
                 if use_ai and m_data.get("raw_code"):
-                    print(f"🧠 Using AI to extract SQL for {cn}/{m_name}...")
+                    print(f"[{c_idx}/{len(controller_files)}] 🧠 Using AI to extract SQL for {cn}/{m_name}...")
                     ai_query = extract_base_query_with_ai(m_data["raw_code"], amoeba_host, client_api_key)
                     if ai_query: base_query_str = ai_query
 
