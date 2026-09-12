@@ -164,6 +164,16 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             if em.enum_mappings:
                 map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
                 semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
+
+    # Inject Amoeba Auto-Discovered Relationships (Critical for legacy PHP apps without physical DB Foreign Keys)
+    from app.services.relationship_service import get_relationship_graph
+    rel_graph = await get_relationship_graph(session, client_id)
+    if rel_graph:
+        semantic_context += "\nAMOEBA AUTO-DISCOVERED RELATIONSHIPS (USE THESE FOR JOINS):\n"
+        for table_a, rels in rel_graph.items():
+            for table_b, meta in rels.items():
+                if meta["direction"] == "forward":
+                    semantic_context += f"- {table_a}.{meta['local_column']} = {table_b}.{meta['remote_column']}\n"
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
