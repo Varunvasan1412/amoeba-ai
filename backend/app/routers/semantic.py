@@ -176,7 +176,10 @@ async def extract_sql_from_php(
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
     
     client = await get_current_client(api_key=api_key, session=session)
-    llm = await get_brain(client_id=client.id, session=session)
+    _, _, raw_llm = await get_brain(client_id=client.id, session=session)
+    
+    if not raw_llm:
+        raise HTTPException(status_code=500, detail="Failed to initialize AI Brain")
     
     sys_prompt = SystemMessage(content='''You are an expert legacy PHP and SQL database engineer. 
 Your only job is to analyze the provided PHP controller code and extract the final SQL `SELECT` query it generates.
@@ -186,7 +189,7 @@ RETURN ONLY THE CLEAN SQL STRING. Do not return markdown, do not return explanat
     human_prompt = HumanMessage(content=f"PHP CODE:\n```php\n{payload.php_code}\n```")
     
     try:
-        response = await llm.ainvoke([sys_prompt, human_prompt])
+        response = await raw_llm.ainvoke([sys_prompt, human_prompt])
         sql = response.content.strip()
         if sql.startswith("```sql"): sql = sql[6:]
         if sql.startswith("```"): sql = sql[3:]
