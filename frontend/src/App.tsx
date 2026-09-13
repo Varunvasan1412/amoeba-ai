@@ -1,4 +1,4 @@
-import { Routes, Route, useLocation } from "react-router-dom";
+import { Routes, Route, useLocation, Navigate } from "react-router-dom";
 import ChatWidget from "./components/ChatWidget";
 import AmoebaChat from "./pages/AmoebaChat";
 import AdminLayout from "./components/AdminLayout";
@@ -166,8 +166,9 @@ export default function App() {
 
                     <Route path="/ai" element={<AmoebaChat />} />
 
-                    <Route path="/" element={
-                        <div className="pointer-events-auto w-full h-full">
+                    <Route path="/" element={<Navigate to="/admin" replace />} />
+                    <Route path="/widget-demo" element={
+                        <div className="pointer-events-auto w-full h-full bg-white">
                             <ChatWidget />
                         </div>
                     } />
