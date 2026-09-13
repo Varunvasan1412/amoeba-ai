@@ -1,4 +1,4 @@
-amoeba.space {
+app.amoeba.space {
     handle /api/* {
         reverse_proxy backend:8000
     }
@@ -6,4 +6,9 @@ amoeba.space {
     handle {
         reverse_proxy frontend:5173
     }
+}
+
+amoeba.space {
+    root * /srv/website
+    file_server
 }

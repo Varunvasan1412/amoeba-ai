@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+:root {
+  --background: #070b14; /* Deep navy background exactly as per reference */
+  --foreground: #f8fafc;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans, "sans-serif");
+  --font-heading: var(--font-heading, "serif");
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  overflow-x: hidden;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+/* Custom utilities for the glowing gradients and text */
+@layer utilities {
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[#00d2ff] to-[#3a7bd5];
+  }
+  .bg-glass {
+    @apply bg-white/5 backdrop-blur-lg border border-white/10;
+  }
+}
