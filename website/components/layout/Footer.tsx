@@ -23,19 +23,19 @@ export function Footer() {
 
         {/* Right Side: Links */}
         <div className="flex items-center gap-2">
-          <a
-            href="#"
+          <Link
+            href="/terms"
             className="hover:text-white transition-colors"
           >
             Terms & Conditions
-          </a>
+          </Link>
           <span>|</span>
-          <a
-            href="#"
+          <Link
+            href="/privacy"
             className="hover:text-white transition-colors"
           >
             Privacy Policy
-          </a>
+          </Link>
         </div>
 
       </div>
