@@ -103,6 +103,14 @@ export default function AdminDashboard() {
       featureKey: "feature_semantic_enabled"
     },
     {
+      title: "Knowledge Sources & Governance",
+      description: "Manage data streams (ERP, Documents, Web) and toggle Strict Database Mapping.",
+      icon: Database,
+      to: "/admin/settings/sources",
+      color: "amber",
+      permission: "configure_system"
+    },
+    {
       title: "AI Infrastructure",
       description: "Switch between LLM providers (Gemini, OpenAI, Ollama) and configure model settings.",
       icon: Cpu,
