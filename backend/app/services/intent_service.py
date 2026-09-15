@@ -150,15 +150,18 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
     query_lower = query.lower().strip()
 
     # --- CONTEXT-AWARE DISAMBIGUATION GUARD ---
-    # If the AI just asked a disambiguation question, do not intercept as CRUD
+    # If the AI just asked a disambiguation question, do not intercept as CRUD UNLESS user is asking a new query
     if history:
         last_ai_msg = [m for m in history if (m.get("role") if isinstance(m, dict) else getattr(m, "role", "user")) in ["ai", "assistant"]]
         if last_ai_msg:
             last_ai_content = last_ai_msg[-1].get("content", "") if isinstance(last_ai_msg[-1], dict) else getattr(last_ai_msg[-1], "content", "")
             if "Which" in last_ai_content and "would you like" in last_ai_content:
                 if "tab" not in last_ai_content.lower() and any(kw in last_ai_content.lower() for kw in ["page", "route", "destination", "link"]):
-                    print("🛡️ [INTENT] User is answering a navigation disambiguation prompt. Forcing navigation intent.")
-                    return {"intent": "navigate", "url": None, "entity": None}
+                    # If the user is asking a clear CRUD/read query, treat it as a NEW command instead of forcing navigation
+                    is_new_crud_query = any(re.search(rf"\b{kw}\b", query_lower) for kw in ["give me", "show me", "list", "view", "get", "fetch", "find", "create", "delete", "update", "order", "quotation", "customer", "invoice", "vendor"])
+                    if not is_new_crud_query:
+                        print("🛡️ [INTENT] User is answering a navigation disambiguation prompt. Forcing navigation intent.")
+                        return {"intent": "navigate", "url": None, "entity": None, "status": "resolved"}
 
     # --- INQUIRY DETECTION ---
     # Patterns that are PURE inquiries (always guide, never act)
@@ -553,7 +556,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             "screen": matched_group,
                             "tabs": [{"label": tab_label} for tab_label in matched_tabs],
                             "entity": None,
-                            "url": None
+                            "url": None,
+                            "status": "disambiguation"
                         }
 
             best_sm = None
@@ -664,7 +668,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     "entity": disp_title,
                     "table": target_table,
                     "url": nav_url,
-                    "options": opts
+                    "options": opts,
+                    "status": "disambiguation"
                 }
 
         # =========================================================================
@@ -705,7 +710,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                 "path": s.path
                             }
                             for s in sibling_screens
-                        ]
+                        ],
+                        "status": "disambiguation"
                     }
 
         # STRATEGY -1: Direct Navigation Label Match

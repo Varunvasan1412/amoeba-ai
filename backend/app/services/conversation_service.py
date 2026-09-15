@@ -138,7 +138,9 @@ async def process_conversation(
 
     # CASE 1: NEW INTENT (Highest Priority)
     if intent_data:
-        print(f"✨ [CRUD CONV] New Intent: {intent_data['intent']} (Status: {intent_data['status']})")
+        curr_intent = intent_data.get("intent", "unknown")
+        curr_status = intent_data.get("status", "resolved")
+        print(f"✨ [CRUD CONV] New Intent: {curr_intent} (Status: {curr_status})")
         
         pronouns = ["it", "this", "that", "item", "items", "record", "records", "them", "these", "one", "ones"]
         is_pronoun = intent_data.get("use_context") or (intent_data.get("entity") in pronouns)
@@ -164,7 +166,7 @@ async def process_conversation(
 
         if intent_data.get("status") == "unresolved_entity":
             # Hand over to Entity Selector for ambiguity resolution
-            intent = intent_data["intent"]
+            intent = intent_data.get("intent", "read")
             entity_query = intent_data.get("entity") or user_input
             from app.services.entity_selector import EntitySelector
             from app.services.onboarding import discover_tables
@@ -188,6 +190,7 @@ async def process_conversation(
                     )
                     db_session.add(state)
                     await db_session.commit()
+                    await db_session.refresh(state)
                     if matches[0].get("module"):
                         log_event(client_id, action="CONTEXT_MODULE_SET", entity=matches[0].get("label") or matches[0]["table_name"], table_name=matches[0]["table_name"], details={"module": matches[0].get("module"), "entity": matches[0]["table_name"]})
                     # Fall through to flow handlers below
@@ -206,18 +209,19 @@ async def process_conversation(
             
             return f"I understand you want to {intent} something, but I couldn't find that entity. Please try a different name.", []
 
-        elif intent_data.get("status") == "resolved":
+        elif intent_data.get("status") in ["resolved", None] and intent_data.get("entity"):
             # Start a fresh flow
             init_data = {"ui_label": intent_data.get("label")} if intent_data.get("label") else {}
             state = ConversationState(
                 client_id=client_id, session_id=session_id,
-                intent=intent_data["intent"], entity_name=intent_data["entity"],
+                intent=intent_data.get("intent", "read"), entity_name=intent_data.get("entity", ""),
                 module=intent_data.get("module"),
                 view_mode=view_mode,
                 current_step="start", collected_data=init_data
             )
             db_session.add(state)
             await db_session.commit()
+            await db_session.refresh(state)
             if intent_data.get("module"):
                 log_event(client_id, action="CONTEXT_MODULE_SET", entity=intent_data.get("entity"), table_name=intent_data.get("entity"), details={"module": intent_data["module"], "entity": intent_data["entity"]})
 

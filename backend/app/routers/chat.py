@@ -752,6 +752,12 @@ async def websocket_endpoint(
                                         await websocket.send_json({"text": cancel_msg, "actions": [], "type": "chat_response"})
                                         await websocket.send_json({"type": "done", "session_id": s_id})
                                         return
+                                    else:
+                                        # User entered a new query instead of selecting a screen option;
+                                        # clear the stale disambiguation state so the turn evaluates as a fresh request.
+                                        await local_session.delete(active_choice_state)
+                                        await local_session.commit()
+                                        active_choice_state = None
 
                                 if active_choice_state and active_choice_state.intent == "dual_action_disambiguation" and active_choice_state.current_step == "resolve_dual_action":
                                     c_data = active_choice_state.collected_data or {}

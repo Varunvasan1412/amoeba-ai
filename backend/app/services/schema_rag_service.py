@@ -168,32 +168,49 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                 map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
                 semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
 
-    # Inject Amoeba Auto-Discovered Relationships (Critical for legacy PHP apps without physical DB Foreign Keys)
-    if client_config.governance_mode != "strict":
-        from app.services.relationship_service import get_relationship_graph
-        rel_graph = await get_relationship_graph(session, client_id)
-        if rel_graph:
-            semantic_context += "\nAMOEBA AUTO-DISCOVERED RELATIONSHIPS (USE THESE FOR JOINS):\n"
-            for table_a, rels in rel_graph.items():
-                for table_b, meta in rels.items():
-                    if meta["direction"] == "forward":
-                        semantic_context += f"- {table_a}.{meta['local_column']} = {table_b}.{meta['remote_column']}\n"
+    # Inject Amoeba Auto-Discovered / Explicitly Approved Relationships (Critical for legacy PHP apps without physical DB Foreign Keys)
+    from app.services.relationship_service import get_relationship_graph
+    rel_graph = await get_relationship_graph(session, client_id)
+    if rel_graph:
+        semantic_context += "\nAMOEBA CONFIGURED RELATIONSHIPS (USE THESE FOR JOINS):\n"
+        for table_a, rels in rel_graph.items():
+            for table_b, meta in rels.items():
+                if meta.get("direction") == "forward":
+                    semantic_context += f"- {table_a}.{meta['local_column']} = {table_b}.{meta['remote_column']}\n"
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
     if target_table:
         if client_config.governance_mode == "strict":
-            # In strict mode, only force the table if it's explicitly allowed/mapped
+            # In strict mode, allow target_table if it's explicitly mapped OR configured in AllowedRelationship
             from app.models.semantic_mapping import SemanticMapping
+            from app.models.allowed_relationship import AllowedRelationship
+            from sqlalchemy import or_
+
             sm_stmt = select(SemanticMapping).where(
                 SemanticMapping.client_id == client_id,
                 SemanticMapping.database_table == target_table
             )
             is_mapped = (await session.execute(sm_stmt)).scalars().first()
-            if is_mapped:
+
+            rel_stmt = select(AllowedRelationship).where(
+                AllowedRelationship.client_id == client_id,
+                AllowedRelationship.is_enabled == True,
+                AllowedRelationship.is_restricted == False,
+                or_(
+                    AllowedRelationship.parent_table == target_table,
+                    AllowedRelationship.child_table == target_table
+                )
+            )
+            matching_rels = (await session.execute(rel_stmt)).scalars().all()
+
+            if is_mapped or matching_rels:
                 tables_to_force.add(target_table)
+                for r in matching_rels:
+                    tables_to_force.add(r.parent_table)
+                    tables_to_force.add(r.child_table)
             else:
-                print(f"⚠️ STRICT MODE: Skipping intent table '{target_table}' because it has no explicit SemanticMapping.")
+                print(f"⚠️ STRICT MODE: Skipping intent table '{target_table}' because it has no explicit SemanticMapping or AllowedRelationship.")
         else:
             tables_to_force.add(target_table)
         
