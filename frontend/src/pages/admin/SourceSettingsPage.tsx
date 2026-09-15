@@ -8,7 +8,9 @@ import {
   Save, 
   Check,
   AlertCircle,
-  ToggleRight
+  ToggleRight,
+  Network,
+  Waypoints
 } from "lucide-react";
 
 export default function SourceSettingsPage() {
@@ -22,6 +24,7 @@ export default function SourceSettingsPage() {
     documents: true,
     web: false
   });
+  const [governanceMode, setGovernanceMode] = useState("guided");
 
   useEffect(() => {
     if (clientId && clients.length > 0) {
@@ -32,6 +35,7 @@ export default function SourceSettingsPage() {
           documents: client.documents_enabled ?? true,
           web: client.web_enabled ?? false
         });
+        setGovernanceMode(client.governance_mode || "guided");
       }
     }
   }, [clientId, clients]);
@@ -54,6 +58,14 @@ export default function SourceSettingsPage() {
 
       if (!res.ok) throw new Error("Failed to save source settings");
       
+      const govRes = await apiFetch(`/api/clients/${clientId}/governance-mode`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ governance_mode: governanceMode })
+      });
+
+      if (!govRes.ok) throw new Error("Failed to save governance mode");
+
       await refreshClients();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -134,8 +146,32 @@ export default function SourceSettingsPage() {
             onToggle={() => handleToggle("web")}
           />
         </div>
+      </div>
 
-        <div className="mt-8 pt-6 border-t border-gray-50 flex items-center justify-between">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+            <Network size={24} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Database Governance</h1>
+            <p className="text-sm text-gray-500">Control how the AI generates SQL queries across multiple tables.</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <SourceToggle 
+            label="Strict Manual Mapping"
+            description="The AI will ONLY use the manual relationships you have explicitly defined in the Admin Panel to join tables. This prevents automatic heuristic joins."
+            value={governanceMode === "strict"}
+            icon={Waypoints}
+            onToggle={() => setGovernanceMode(prev => prev === "strict" ? "guided" : "strict")}
+          />
+        </div>
+      </div>
+
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div className="flex items-center justify-between">
           <div className="flex-1">
             {error && <p className="text-sm text-red-600 flex items-center gap-1 font-medium"><AlertCircle size={14}/> {error}</p>}
             {success && <p className="text-sm text-green-600 flex items-center gap-1 font-medium"><Check size={14}/> Knowledge source settings saved</p>}
