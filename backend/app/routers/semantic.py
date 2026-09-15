@@ -71,6 +71,13 @@ class SQLExtractRequest(BaseModel):
 class SemanticMappingUpdate(BaseModel):
     database_table: str
 
+class SemanticMappingCreate(BaseModel):
+    ui_label: str
+    database_table: str
+    base_query: Optional[str] = None
+    default_filter: Optional[str] = None
+    ui_columns: Optional[str] = None
+
 # --- Endpoints ---
 
 @router.post("/v2/semantic/columns")
@@ -160,6 +167,70 @@ async def update_ui_table_mapping(
     session.add(mapping)
     await session.commit()
     return {"status": "success"}
+
+@router.post("/v2/semantic/mappings", response_model=SemanticMappingResponse)
+async def create_ui_table_mapping(
+    client_id: int,
+    payload: SemanticMappingCreate,
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
+):
+    """
+    Manually create a new UI-to-Table Semantic Mapping.
+    """
+    new_m = SemanticMapping(
+        client_id=client_id,
+        ui_label=payload.ui_label.strip(),
+        database_table=payload.database_table.strip(),
+        base_query=payload.base_query,
+        default_filter=payload.default_filter,
+        ui_columns=payload.ui_columns,
+        source_file="manual"
+    )
+    session.add(new_m)
+    await session.commit()
+    await session.refresh(new_m)
+    return SemanticMappingResponse(
+        id=new_m.id,
+        ui_label=new_m.ui_label,
+        database_table=new_m.database_table,
+        base_query=new_m.base_query,
+        source_file=new_m.source_file,
+        is_doubtful=False
+    )
+
+@router.delete("/v2/semantic/mappings/{mapping_id}")
+async def delete_ui_table_mapping(
+    mapping_id: int,
+    client_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
+):
+    """
+    Delete a specific Semantic Mapping.
+    """
+    mapping = await session.get(SemanticMapping, mapping_id)
+    if not mapping or mapping.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    await session.delete(mapping)
+    await session.commit()
+    return {"status": "success"}
+
+@router.post("/v2/semantic/mappings/purge")
+async def purge_client_semantic_mappings(
+    client_id: int,
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
+):
+    """
+    Purge all semantic mappings for a client.
+    """
+    from sqlalchemy import delete
+    del_stmt = delete(SemanticMapping).where(SemanticMapping.client_id == client_id)
+    res = await session.execute(del_stmt)
+    await session.commit()
+    return {"status": "success", "deleted_count": res.rowcount}
+
 
 @router.post("/v2/semantic/extract-sql")
 async def extract_sql_from_php(

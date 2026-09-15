@@ -276,6 +276,25 @@ async def debug_semantic_endpoint(
         "matches": matches[:30]
     }
 
+@router.post("/semantic/purge")
+async def purge_semantic_endpoint(
+    api_key: str = Query(...),
+    session: AsyncSession = Depends(get_session)
+):
+    """Purge all auto-discovered and semantic mappings for a client."""
+    from app.models.semantic_mapping import SemanticMapping
+    from sqlalchemy import delete
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    
+    del_stmt = delete(SemanticMapping).where(SemanticMapping.client_id == client.id)
+    res = await session.execute(del_stmt)
+    await session.commit()
+    return {"status": "success", "message": f"Successfully purged {res.rowcount} semantic mappings.", "deleted_count": res.rowcount}
+
+
 @router.post("/enums/learn")
 async def learn_enums_endpoint(
     enums: Dict[str, Dict[str, Dict[str, str]]], # table_name -> column_name -> mapping (e.g. {"unit": {"status": {"1": "Active"}}})
@@ -1041,37 +1060,42 @@ async def websocket_endpoint(
                                                         best_sm = sm
 
                                                 if best_sm and best_sm.base_query:
-                                                    print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{best_sm.ui_label}' (Score: {best_score})", flush=True)
-                                                    raw_records = await execute_sql_query(best_sm.base_query)
-                                                    result = sanitize_for_json(raw_records)
-                                                    display_title = best_sm.ui_label
-                                                    actions_list = []
-                                                    if isinstance(result, (list, tuple)) and result:
-                                                        headers = list(result[0].keys())
-                                                        actions_list.append({
-                                                            "type": "data_table",
-                                                            "payload": {
-                                                                "title": display_title,
-                                                                "headers": headers,
-                                                                "rows": list(result),
-                                                                "total": len(result)
-                                                            }
-                                                        })
-                                                        response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
-                                                    elif isinstance(result, (list, tuple)):
-                                                        response_text = f"No records found for **{display_title}**."
+                                                    # If strict mode is enabled, do not execute unverified automated crawler guesses
+                                                    if client_config and client_config.governance_mode == "strict" and best_sm.source_file and ("backup" in best_sm.source_file.lower() or not best_sm.source_file.startswith("manual")):
+                                                        print(f"⚠️ STRICT MODE: Bypassing unverified fast controller mapping '{best_sm.ui_label}'", flush=True)
+                                                        best_sm = None
                                                     else:
-                                                        # Result is an error string (e.g. "Database Error: table doesn't exist")
-                                                        # Do NOT return - fall through to Schema RAG for intelligent table resolution
-                                                        print(f"⚠️ [FAST CONTROLLER] base_query returned error for '{display_title}': {result}", flush=True)
-                                                        raise ValueError(f"base_query failed: {result}")
-                                                    
-                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
-                                                    local_session.add(ai_msg)
-                                                    await local_session.commit()
-                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
-                                                    await websocket.send_json({"type": "done", "session_id": s_id})
-                                                    return
+                                                        print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{best_sm.ui_label}' (Score: {best_score})", flush=True)
+                                                        raw_records = await execute_sql_query(best_sm.base_query)
+                                                        result = sanitize_for_json(raw_records)
+                                                        display_title = best_sm.ui_label
+                                                        actions_list = []
+                                                        if isinstance(result, (list, tuple)) and result:
+                                                            headers = list(result[0].keys())
+                                                            actions_list.append({
+                                                                "type": "data_table",
+                                                                "payload": {
+                                                                    "title": display_title,
+                                                                    "headers": headers,
+                                                                    "rows": list(result),
+                                                                    "total": len(result)
+                                                                }
+                                                            })
+                                                            response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
+                                                        elif isinstance(result, (list, tuple)):
+                                                            response_text = f"No records found for **{display_title}**."
+                                                        else:
+                                                            # Result is an error string (e.g. "Database Error: table doesn't exist")
+                                                            # Do NOT return - fall through to Schema RAG for intelligent table resolution
+                                                            print(f"⚠️ [FAST CONTROLLER] base_query returned error for '{display_title}': {result}", flush=True)
+                                                            raise ValueError(f"base_query failed: {result}")
+                                                        
+                                                        ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+                                                        local_session.add(ai_msg)
+                                                        await local_session.commit()
+                                                        await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+                                                        await websocket.send_json({"type": "done", "session_id": s_id})
+                                                        return
                                             except Exception as fast_err:
                                                 print(f"⚠️ Fast base_query execution skipped/failed ({fast_err}), falling back", flush=True)
 
@@ -1094,14 +1118,21 @@ async def websocket_endpoint(
                                                     if display_title and "_" in display_title and display_title.islower():
                                                         display_title = display_title.replace("_", " ").title()
 
-                                                    if isinstance(result, (list, tuple)) and result:
+                                                    # Check if result is an Error object from strict mode or execution failure
+                                                    is_error_result = isinstance(result, (list, tuple)) and result and any("Error" in r for r in result if isinstance(r, dict))
+
+                                                    if is_error_result:
+                                                        err_msg = rag_result.get("user_message") or result[0].get("Error")
+                                                        response_text = f"⚠️ {err_msg}"
+                                                        actions_list = []
+                                                    elif isinstance(result, (list, tuple)) and result:
                                                         headers = list(result[0].keys())
                                                         actions_list.append({
                                                             "type": "data_table", 
                                                             "payload": {
                                                                 "title": display_title, 
-                                                                "headers": headers,
-                                                                "rows": list(result),
+                                                                "headers": headers, 
+                                                                "rows": list(result), 
                                                                 "total": len(result)
                                                             }
                                                         })
