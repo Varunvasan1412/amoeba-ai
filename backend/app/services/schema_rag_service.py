@@ -48,7 +48,9 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         raise Exception("Client config not found.")
 
     # 1. Get Schema Context
-    schema_definitions = await get_relevant_schemas(user_query, client_id, session)
+    schema_definitions = []
+    if client_config.governance_mode != "strict":
+        schema_definitions = await get_relevant_schemas(user_query, client_id, session)
     # 1.5 Get Codebase Semantic Mappings
     from app.models.semantic_mapping import SemanticMapping
     import re
@@ -57,6 +59,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     
     semantic_context = ""
     semantic_tables = []
+    active_semantics = []
     if semantics:
         query_lower = user_query.lower()
         stop_words = {
@@ -166,19 +169,33 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                 semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
 
     # Inject Amoeba Auto-Discovered Relationships (Critical for legacy PHP apps without physical DB Foreign Keys)
-    from app.services.relationship_service import get_relationship_graph
-    rel_graph = await get_relationship_graph(session, client_id)
-    if rel_graph:
-        semantic_context += "\nAMOEBA AUTO-DISCOVERED RELATIONSHIPS (USE THESE FOR JOINS):\n"
-        for table_a, rels in rel_graph.items():
-            for table_b, meta in rels.items():
-                if meta["direction"] == "forward":
-                    semantic_context += f"- {table_a}.{meta['local_column']} = {table_b}.{meta['remote_column']}\n"
+    if client_config.governance_mode != "strict":
+        from app.services.relationship_service import get_relationship_graph
+        rel_graph = await get_relationship_graph(session, client_id)
+        if rel_graph:
+            semantic_context += "\nAMOEBA AUTO-DISCOVERED RELATIONSHIPS (USE THESE FOR JOINS):\n"
+            for table_a, rels in rel_graph.items():
+                for table_b, meta in rels.items():
+                    if meta["direction"] == "forward":
+                        semantic_context += f"- {table_a}.{meta['local_column']} = {table_b}.{meta['remote_column']}\n"
             
     # Force include target_table and semantic_tables in the schema context so the AI isn't blind
     tables_to_force = set(semantic_tables)
     if target_table:
-        tables_to_force.add(target_table)
+        if client_config.governance_mode == "strict":
+            # In strict mode, only force the table if it's explicitly allowed/mapped
+            from app.models.semantic_mapping import SemanticMapping
+            sm_stmt = select(SemanticMapping).where(
+                SemanticMapping.client_id == client_id,
+                SemanticMapping.database_table == target_table
+            )
+            is_mapped = (await session.execute(sm_stmt)).scalars().first()
+            if is_mapped:
+                tables_to_force.add(target_table)
+            else:
+                print(f"⚠️ STRICT MODE: Skipping intent table '{target_table}' because it has no explicit SemanticMapping.")
+        else:
+            tables_to_force.add(target_table)
         
     # We will fetch ALL schema definitions for this client to give the LLM full visibility for JOINs.
     from sqlmodel import col
@@ -198,7 +215,19 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         else:
             other_schemas.append(fs.schema_definition)
             
-    schema_context = "\n\n".join(prioritized_schemas + other_schemas)
+    if client_config.governance_mode == "strict":
+        schema_context = "\n\n".join(prioritized_schemas)
+        if not prioritized_schemas:
+            # Fast-fail if nothing is explicitly mapped in strict mode
+            return {
+                "generated_sql": "",
+                "records": [{"Error": "This table is not configured yet. Please map it manually in the Admin Panel."}],
+                "thought_process": "Strict mode is enabled and no explicit SemanticMappings were found for this intent. Fast-failing.",
+                "user_message": "This table is not configured yet. Please map it manually in the Admin Panel.",
+                "display_title": target_table or "Unknown"
+            }
+    else:
+        schema_context = "\n\n".join(prioritized_schemas + other_schemas)
 
     # 2. Build LLM Prompt
     from langchain_openai import ChatOpenAI

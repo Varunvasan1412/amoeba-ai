@@ -40,32 +40,44 @@ export default function SourceSettingsPage() {
     }
   }, [clientId, clients]);
 
-  const handleToggle = (key: keyof typeof sources) => {
-    setSources(prev => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const handleSave = async () => {
+  const handleToggle = async (key: keyof typeof sources) => {
+    const newSources = { ...sources, [key]: !sources[key] };
+    setSources(newSources);
+    
     setSaving(true);
     setError(null);
     setSuccess(false);
-
     try {
       const res = await apiFetch(`/api/clients/${clientId}/sources`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sources)
+        body: JSON.stringify(newSources)
       });
-
       if (!res.ok) throw new Error("Failed to save source settings");
-      
+      await refreshClients();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleGovernanceToggle = async () => {
+    const newMode = governanceMode === "strict" ? "guided" : "strict";
+    setGovernanceMode(newMode);
+    
+    setSaving(true);
+    setError(null);
+    setSuccess(false);
+    try {
       const govRes = await apiFetch(`/api/clients/${clientId}/governance-mode`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ governance_mode: governanceMode })
+        body: JSON.stringify({ governance_mode: newMode })
       });
-
       if (!govRes.ok) throw new Error("Failed to save governance mode");
-
       await refreshClients();
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
@@ -165,7 +177,7 @@ export default function SourceSettingsPage() {
             description="The AI will ONLY use the manual relationships you have explicitly defined in the Admin Panel to join tables. This prevents automatic heuristic joins."
             value={governanceMode === "strict"}
             icon={Waypoints}
-            onToggle={() => setGovernanceMode(prev => prev === "strict" ? "guided" : "strict")}
+            onToggle={handleGovernanceToggle}
           />
         </div>
       </div>
@@ -174,17 +186,9 @@ export default function SourceSettingsPage() {
         <div className="flex items-center justify-between">
           <div className="flex-1">
             {error && <p className="text-sm text-red-600 flex items-center gap-1 font-medium"><AlertCircle size={14}/> {error}</p>}
-            {success && <p className="text-sm text-green-600 flex items-center gap-1 font-medium"><Check size={14}/> Knowledge source settings saved</p>}
+            {success && <p className="text-sm text-green-600 flex items-center gap-1 font-medium"><Check size={14}/> Settings saved successfully</p>}
+            {saving && <p className="text-sm text-blue-600 flex items-center gap-1 font-medium"><Save size={14}/> Saving...</p>}
           </div>
-          
-          <button 
-            onClick={handleSave}
-            disabled={saving}
-            className="bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-50 shadow-lg shadow-blue-200 transition-all flex items-center gap-2"
-          >
-            <Save size={18} />
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
         </div>
       </div>
 
