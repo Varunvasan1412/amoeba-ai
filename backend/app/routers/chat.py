@@ -504,6 +504,8 @@ async def websocket_endpoint(
                                     "web": False
                                 }
                                 sources = p.get("sources", DEFAULT_SOURCES)
+                                if not isinstance(sources, dict):
+                                    sources = DEFAULT_SOURCES
                                 model_override = p.get("model")
                                 print(f"\nACTIVE SOURCES:\nerp={sources.get('erp')}\ndocuments={sources.get('documents')}\nweb={sources.get('web')}\nMODEL_OVERRIDE={model_override}\n")
 
