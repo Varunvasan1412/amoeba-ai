@@ -167,8 +167,8 @@ export default function App() {
                     <Route path="/ai" element={<AmoebaChat />} />
 
                     <Route path="/" element={<Navigate to="/admin" replace />} />
-                    <Route path="/widget-demo" element={
-                        <div className="pointer-events-auto w-full h-full bg-white">
+                    <Route path="/widget" element={
+                        <div className="pointer-events-auto w-full h-full">
                             <ChatWidget />
                         </div>
                     } />
