@@ -260,9 +260,9 @@ const RouteMap: React.FC = () => {
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2">
                                                 <div className="w-7 h-7 bg-blue-100/50 text-blue-700 rounded-lg flex items-center justify-center font-black text-[9px] shrink-0">
-                                                    {item.module.substring(0, 2).toUpperCase()}
+                                                    {(item.module || 'NA').substring(0, 2).toUpperCase()}
                                                 </div>
-                                                <span className="font-bold text-gray-500 truncate" title={item.module}>{item.module}</span>
+                                                <span className="font-bold text-gray-500 truncate" title={item.module || 'Uncategorized'}>{item.module || 'Uncategorized'}</span>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
