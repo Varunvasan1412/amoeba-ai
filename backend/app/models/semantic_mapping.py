@@ -12,3 +12,5 @@ class SemanticMapping(SQLModel, table=True):
     base_query: Optional[str] = Field(default=None)
     required_joins: Optional[str] = Field(default=None)
     tab_group: Optional[str] = Field(default=None)
+    synonyms: Optional[str] = Field(default=None) # JSON list of strings
+    relationships: Optional[str] = Field(default=None) # JSON list of dicts

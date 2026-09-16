@@ -4,7 +4,8 @@ from typing import Optional, Dict, Any
 from sqlmodel import SQLModel, Field, JSON
 from datetime import datetime, timezone
 from sqlalchemy import Column, DateTime, text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON
 
 class AuditLog(SQLModel, table=True):
     __tablename__ = "audit_logs"
@@ -29,7 +30,7 @@ class AuditLog(SQLModel, table=True):
     status: str = Field(index=True) # SUCCESS, FAILED
     details: Dict[str, Any] = Field(
         default={},
-        sa_column=Column(JSONB)
+        sa_column=Column(JSON)
     )
     ip_address: Optional[str] = Field(default=None)
     created_at: datetime = Field(

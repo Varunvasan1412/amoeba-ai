@@ -118,6 +118,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             all_schema_res = await session.execute(select(SchemaMetadata.table_name).where(SchemaMetadata.client_id == client_id))
             known_tables = set(r[0].lower() for r in all_schema_res.all() if r[0])
             
+            table_filters = {}
             semantic_context = "CODEBASE SEMANTIC MAPPINGS (USE THESE TO MAP UI TERMS TO TABLES):\n"
             for s in active_semantics:
                 # Validate: Only include mappings whose tables actually exist in the DB schema
@@ -129,16 +130,20 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                 if s.ui_columns:
                     filter_match = re.search(r'\[Filter:\s*(.*?)\]', s.ui_columns)
                     if filter_match:
-                        filter_expr = filter_match.group(1).strip()
                         clean_cols = s.ui_columns[:filter_match.start()].rstrip(" ,;")
                         cols_part = f" (Displayed Columns: {clean_cols})" if clean_cols else ""
-                        cols_str = f"{cols_part} [Required Default Filter: {filter_expr}]"
+                        cols_str = f"{cols_part}"
                     else:
                         cols_str = f" (Displayed Columns: {s.ui_columns})"
                         
                 extra_parts = []
-                if s.default_filter and "[Required Default Filter:" not in cols_str:
-                    extra_parts.append(f"[Required Default Filter: {s.default_filter}]")
+                
+                # Structural Filter Enforcement: We track the filter but DO NOT tell the LLM about it. 
+                # We structurally wrap it at execution time.
+                if s.default_filter:
+                    table_filters[s.database_table] = s.default_filter
+                    # NOTE: We intentionally do NOT append it to extra_parts as a prompt hint anymore.
+                    
                 if s.required_joins:
                     extra_parts.append(f"[Mandatory Joins: {s.required_joins}]")
                 if s.base_query:
@@ -163,10 +168,37 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     if enum_metadata:
         semantic_context += "\nENUM MAPPINGS (USE THESE TO CONVERT INTEGERS TO STRINGS VIA 'CASE WHEN' OR 'IF'):\n"
         for em in enum_metadata:
-            # em.enum_mappings is a dict like {"1": "Active", "0": "Inactive"}
             if em.enum_mappings:
                 map_str = ", ".join([f"{k}='{v}'" for k, v in em.enum_mappings.items()])
                 semantic_context += f"- Table '{em.table_name}', Column '{em.column_name}': {map_str}\n"
+
+    # 1.7 Field-Level App Concept Mapping (Virtual Field Dictionary)
+    from app.models.field_metadata import FieldMetadata
+    field_res = await session.execute(
+        select(FieldMetadata).where(
+            FieldMetadata.client_id == client_id,
+            FieldMetadata.label != None,
+            FieldMetadata.label != ""
+        )
+    )
+    field_metadata = field_res.scalars().all()
+    
+    # 1.8 Fetch Synonyms for Field Mappings
+    sm_res = await session.execute(
+        select(SemanticMetadata).where(
+            SemanticMetadata.client_id == client_id,
+            SemanticMetadata.synonyms != None
+        )
+    )
+    semantic_metadata = sm_res.scalars().all()
+    synonym_map = {(sm.table_name, sm.column_name): sm.synonyms for sm in semantic_metadata}
+
+    if field_metadata:
+        semantic_context += "\nFIELD MAPPINGS FOR APP CONCEPTS (CRITICAL: Use these EXACT physical columns for these business terms):\n"
+        for fm in field_metadata:
+            syns = synonym_map.get((fm.table_name, fm.column_name), [])
+            syn_str = f" (Synonyms: {', '.join(syns)})" if syns else ""
+            semantic_context += f"- Table '{fm.table_name}': UI Term \"{fm.label}\"{syn_str} -> Physical Column `{fm.column_name}`\n"
 
     # Inject Amoeba Auto-Discovered / Explicitly Approved Relationships (Critical for legacy PHP apps without physical DB Foreign Keys)
     from app.services.relationship_service import get_relationship_graph
@@ -293,6 +325,12 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         - In manufacturing/pipeline ERPs, pending stages (such as Pending Invoices, Pending Jobcards, Pending Delivery) exist in the driving pipeline header (`enquiry_header`, `order_header`) with stage IDs (`eh.enquiry_status_id = 9`). They do NOT yet exist in the downstream final table (`invoice_header`).
         - If the query specifies 'Pending' or matches a stage filter, you MUST query the driving pipeline header table. You MUST NEVER switch to the completed transaction table (`invoice_header`)!
         - Only query tables that actually exist in the schema. NEVER invent joins to non-existent columns (e.g. do not join customer to menu_master).
+    17. **APP CONCEPTS & FIELD MAPPINGS (CRITICAL)**:
+        - The user will ask questions using friendly business terms (e.g., "Quotation Value", "Customer Name", "Status").
+        - You MUST look at the `FIELD MAPPINGS FOR APP CONCEPTS` block below. This dictionary provides the exact mapping from the user's friendly term to the exact physical column in the database (e.g. `Quotation Value` -> `amount`).
+        - If a user asks for a business term that is mapped in the FIELD MAPPINGS block, you MUST use the corresponding physical column in your SELECT, WHERE, and JOIN clauses.
+        - NEVER blindly guess physical column names for business terms if a mapping exists.
+        - If the user uses a business term that is NOT in the FIELD MAPPINGS block but refers to an obvious standard column (like `created_at` for dates), you may use it. But for custom fields, rely on the dictionary.
 
     {semantic_context}
 
@@ -346,7 +384,7 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             from app.core.context import current_db_url
             token = current_db_url.set(client_config.db_connection_url)
             try:
-                records = await execute_sql_query(sql_query)
+                records = await execute_sql_query(sql_query, table_filters=table_filters)
             finally:
                 current_db_url.reset(token)
                 
@@ -386,7 +424,7 @@ Write a valid SELECT query for the requested entity, or 'SELECT 1 WHERE 1=0' if 
                     print(f"🧠 [SCHEMA RAG] Retrying with alternative SQL: {fb_sql}")
                     token = current_db_url.set(client_config.db_connection_url)
                     try:
-                        fb_records = await execute_sql_query(fb_sql)
+                        fb_records = await execute_sql_query(fb_sql, table_filters=table_filters)
                     finally:
                         current_db_url.reset(token)
                         

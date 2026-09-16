@@ -80,6 +80,66 @@ class SemanticMappingCreate(BaseModel):
 
 # --- Endpoints ---
 
+from app.models.schema_metadata import SchemaMetadata
+import json
+
+@router.post("/v2/semantic/discover")
+async def discover_concepts(
+    client: ClientConfig = Depends(get_current_client),
+    session: AsyncSession = Depends(get_session),
+    admin = Depends(get_current_active_admin)
+):
+    """
+    Uses heuristics and LLM to propose business concepts from the raw database schema.
+    Returns a list of suggested App Concepts for the 'Learn From My App' wizard.
+    """
+    # 1. Fetch all schema definitions
+    schema_res = await session.execute(select(SchemaMetadata).where(SchemaMetadata.client_id == client.id))
+    schemas = schema_res.scalars().all()
+    
+    if not schemas:
+        return {"suggested_concepts": []}
+        
+    # Group schemas into a concise context block
+    schema_text = "\n".join([s.schema_definition for s in schemas])
+    
+    # Trim to avoid token limits if necessary
+    if len(schema_text) > 40000:
+        schema_text = schema_text[:40000] + "\n... (truncated)"
+        
+    prompt = f"""
+You are an expert application data modeler.
+Analyze the following physical database schema and identify the primary high-level "Business Concepts" a non-technical user would care about (e.g., Quotations, Customers, Orders, Invoices).
+
+For each concept, provide:
+1. `concept_name`: The human-readable business name (e.g., "Quotation").
+2. `source_table`: The physical database table that primarily stores this data.
+3. `description`: A brief, non-technical explanation of what this data represents.
+4. `likely_condition`: If the table stores multiple types of records (e.g., `enquiries` storing both tickets and quotes), propose a likely SQL filter condition (e.g., "type = 'quotation'"). Otherwise, leave null.
+
+Return your response ONLY as a JSON array of objects.
+
+SCHEMA:
+{schema_text}
+"""
+    try:
+        llm = get_brain()
+        messages = [
+            SystemMessage(content="You return ONLY raw JSON arrays. No markdown, no explanation."),
+            HumanMessage(content=prompt)
+        ]
+        response = await llm.ainvoke(messages)
+        
+        content = response.content.strip()
+        if content.startswith("```json"): content = content[7:]
+        if content.endswith("```"): content = content[:-3]
+        
+        parsed = json.loads(content)
+        return {"suggested_concepts": parsed}
+    except Exception as e:
+        print(f"Error in auto-discovery: {e}")
+        return {"suggested_concepts": []}
+
 @router.post("/v2/semantic/columns")
 async def upsert_semantic_columns(
     payload: BulkSemanticRequest,

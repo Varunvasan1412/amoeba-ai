@@ -436,6 +436,12 @@ async def websocket_endpoint(
                     client_id = 0
                     client_context_id = "default"
 
+            # ASSISTANT MODE CHECK
+            if client and hasattr(client, 'assistant_enabled') and not client.assistant_enabled:
+                print(f"🚫 Connection rejected: Assistant Mode is disabled for Client {client_id}")
+                await websocket.close(code=1008, reason="Assistant Mode is disabled.")
+                return
+
             # 2. MESSAGE LOOP
             from app.core.database import async_session as SessionLocal
             
@@ -476,6 +482,54 @@ async def websocket_endpoint(
                         if session_id in active_tasks:
                             print(f"🛑 [WS] Received STOP for Session {session_id}. Cancelling Task.")
                             active_tasks[session_id].cancel()
+                            await websocket.send_json({"type": "done", "session_id": session_id})
+                        continue
+
+                    # CRUD CONFIRMATION LOGIC
+                    if msg_type in ["crud_confirm", "crud_cancel"]:
+                        from app.services.conversation_service import get_active_conversation
+                        from app.services.crud_foundation import execute_crud_operation
+                        from app.models.crud_schema import CrudOperation
+                        
+                        async with SessionLocal() as local_session:
+                            state = await get_active_conversation(local_session, client_id, session_id)
+                            if not state or state.current_step != "confirm":
+                                await websocket.send_json({"text": "No active operation to confirm or cancel.", "type": "chat_response", "actions": []})
+                                continue
+                                
+                            if msg_type == "crud_cancel":
+                                await local_session.delete(state)
+                                await local_session.commit()
+                                ai_msg = ChatMessage(role="ai", content="Operation cancelled.", client_id=client_id, session_id=session_id)
+                                local_session.add(ai_msg)
+                                await local_session.commit()
+                                await websocket.send_json({"text": "Operation cancelled.", "type": "chat_response", "actions": []})
+                            elif msg_type == "crud_confirm":
+                                op_data = state.collected_data.get("operation_data")
+                                if not op_data:
+                                    await websocket.send_json({"text": "Error: Staged operation data not found.", "type": "chat_response"})
+                                    continue
+                                    
+                                op = CrudOperation(**op_data)
+                                try:
+                                    # Execute
+                                    await execute_crud_operation(op, client_id, "SYSTEM", local_session)
+                                    await local_session.delete(state)
+                                    await local_session.commit()
+                                    
+                                    success_msg = f"Successfully executed {op.action} on {state.collected_data.get('ui_label', op.table)}."
+                                    ai_msg = ChatMessage(role="ai", content=success_msg, client_id=client_id, session_id=session_id)
+                                    local_session.add(ai_msg)
+                                    await local_session.commit()
+                                    
+                                    await websocket.send_json({
+                                        "text": success_msg,
+                                        "type": "chat_response",
+                                        "actions": [{"type": "success", "payload": op.action}]
+                                    })
+                                except Exception as e:
+                                    await websocket.send_json({"text": f"Execution failed: {str(e)}", "type": "chat_response"})
+                            
                             await websocket.send_json({"type": "done", "session_id": session_id})
                         continue
 

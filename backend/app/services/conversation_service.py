@@ -15,6 +15,11 @@ import re
 import traceback
 from app.services.audit_service import log_event
 
+import uuid
+from app.services.crud_llm_service import CrudLlmService
+from app.services.crud_foundation import validate_operation, execute_crud_operation
+from app.models.crud_schema import CrudOperation
+
 
 async def get_active_conversation(session: AsyncSession, client_id: int, session_id: str) -> Optional[ConversationState]:
     statement = select(ConversationState).where(
@@ -201,7 +206,7 @@ async def process_conversation(
                         intent=intent, entity_name="", module=None, 
                         view_mode=view_mode,
                         current_step="resolve_ambiguity",
-                        collected_data={}
+                        collected_data={"original_query": user_input}
                     )
                     db_session.add(state)
                     await db_session.commit()
@@ -288,6 +293,8 @@ async def process_conversation(
 
         state.current_step = "start"
         state.updated_at = datetime.utcnow()
+        if state.collected_data and "original_query" in state.collected_data:
+            user_input = state.collected_data["original_query"]
         db_session.add(state)
         await db_session.commit()
     
@@ -305,64 +312,85 @@ async def process_conversation(
     return "I'm not sure how to handle that CRUD operation.", []
 
 async def handle_create_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
-    print(f"DEBUG LABEL → module={state.module}, entity={state.entity_name}")
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "create"})
     
-    if state.current_step == "start":
-        state.current_step = "collect_data"
-        db_session.add(state)
-        await db_session.commit()
-        form_config = await SmartFormService.generate_form(state.client_id, state.entity_name, db_session, module=state.module)
-        
-        final_label = friendly_name
-        payload = {
-            "table_name": state.entity_name,
-            "fields": form_config["fields"],
-            "label": final_label,
-            "display_title": final_label,
-            "module": state.module
-        }
-        print("🚀 FORM PAYLOAD:", payload)
-        return f"Please fill out the form to create a new {final_label}.", [{"type": "form", "payload": payload}]
-
-    elif state.current_step == "collect_data":
+    if state.current_step in ["start", "collect_fields"]:
+        full_query = user_input if state.current_step == "start" else state.collected_data.get("original_request", "") + ". " + user_input
         try:
-            # Check if input is likely JSON
-            if not user_input.strip().startswith("{"):
-                print(f"⚠️ [CREATE FLOW] Expected JSON, got text: '{user_input[:20]}'")
-                form_config = await SmartFormService.generate_form(state.client_id, state.entity_name, db_session, module=state.module)
-                final_label = friendly_name
-                payload = {
-                    "table_name": state.entity_name,
-                    "fields": form_config["fields"],
-                    "label": final_label,
-                    "display_title": final_label,
-                    "module": state.module
-                }
-                print("🚀 FORM PAYLOAD (RETRY):", payload)
-                return f"I'm waiting for the {final_label} details. Please use the form shown above.", [{"type": "form", "payload": payload}]
+            crud_op = await CrudLlmService.generate_crud_operation(
+                client_id=state.client_id,
+                session=db_session,
+                action="CREATE",
+                table_name=state.entity_name,
+                concept=friendly_name,
+                user_query=full_query
+            )
+            
+            field_metadata = await CrudLlmService._get_field_metadata(db_session, state.client_id, state.entity_name)
+            missing_required_fields = []
+            
+            for f in field_metadata:
+                if f.get("is_required"):
+                    col_name = f["column_name"]
+                    val = crud_op.fields.get(col_name)
+                    if val is None or str(val).strip() == "":
+                        if f.get("default_value") is not None:
+                            crud_op.fields[col_name] = f["default_value"]
+                        else:
+                            missing_required_fields.append(col_name.replace('_', ' ').title())
+                            
+            if missing_required_fields:
+                missing_str = ", ".join(missing_required_fields)
+                state.current_step = "collect_fields"
+                if not state.collected_data: state.collected_data = {}
+                state.collected_data["original_request"] = full_query
+                db_session.add(state)
+                await db_session.commit()
+                return f"To create this {friendly_name}, I need a bit more information. Please provide: {missing_str}.", []
+            
+            is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
+            if not is_valid:
+                # Flow reset on validation fail
+                await db_session.delete(state)
+                await db_session.commit()
+                return f"Validation failed: {err}", []
                 
-            form_data = json.loads(user_input)
-            record_id = await CRUDService.create_record(state.entity_name, form_data, user_id=None, client_id=state.client_id)
+            op_id = str(uuid.uuid4())
+            if not state.collected_data: state.collected_data = {}
+            state.collected_data["operation_id"] = op_id
+            state.collected_data["operation_data"] = crud_op.model_dump()
+            state.collected_data["ui_label"] = friendly_name
+            state.current_step = "confirm"
+            db_session.add(state)
+            await db_session.commit()
+            
+            display_fields = {}
+            for k, v in crud_op.fields.items():
+                friendly_k = k.replace('_', ' ').title()
+                display_fields[friendly_k] = v
+
+            payload = {
+                "action": "CREATE",
+                "entity_label": friendly_name,
+                "fields": display_fields,
+                "operation_id": op_id
+            }
+            return f"Please confirm the creation of the new {friendly_name}.", [{"type": "crud_confirmation", "payload": payload}]
+        except Exception as e:
+            traceback.print_exc()
             await db_session.delete(state)
             await db_session.commit()
-            return f"Successfully created new {friendly_name}!", [{"type": "success", "payload": "Created"}]
-        except Exception as e:
-            print(f"❌ [CREATE FLOW] Error: {e}")
-            form_config = await SmartFormService.generate_form(state.client_id, state.entity_name, db_session, module=state.module)
-            final_label = friendly_name
-            payload = {
-                "table_name": state.entity_name,
-                "fields": form_config["fields"],
-                "label": final_label,
-                "display_title": final_label,
-                "module": state.module
-            }
-            print("🚀 FORM PAYLOAD (ERROR):", payload)
-            return f"{str(e)}", [{"type": "form", "payload": payload}]
-
+            return f"Error preparing CREATE operation: {e}", []
+            
+    elif state.current_step == "confirm":
+        if user_input.strip().lower() in ["yes", "confirm", "ok", "proceed", "create"]:
+            return "Please use the Confirm button in the UI above to safely execute this operation.", []
+        else:
+            await db_session.delete(state)
+            await db_session.commit()
+            return "Creation cancelled.", []
     
     return "Flow in unexpected state.", []
 
@@ -385,69 +413,129 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "update"})
     
     if state.current_step == "start":
-        id_match = re.search(r"\b(\d+)\b", user_input)
-        if id_match: return await _init_update_form(id_match.group(1), state, db_session)
-        records = await RecordSelectorService.get_records_for_selection(state.client_id, state.entity_name, db_session)
-        if not records: return f"No records found to update in {friendly_name}.", []
-        state.current_step = "select_record"
-        db_session.add(state)
-        await db_session.commit()
-        return f"Which {friendly_name} would you like to update?", [{"type": "record_selection", "payload": records}]
-
-    elif state.current_step == "select_record":
-        return await _init_update_form(user_input.strip(), state, db_session)
-
-    elif state.current_step == "collect_data":
-        try:
-            if not user_input.strip().startswith("{"):
-                form_config = await SmartFormService.generate_form(state.client_id, state.entity_name, db_session, module=state.module)
-                form_config.update({
-                    "label": friendly_name,
-                    "display_title": friendly_name,
-                    "module": state.module
-                })
-                return f"Please use the form to submit your updates for {friendly_name}.", [{"type": "form", "payload": form_config}]
-                
-            form_data = json.loads(user_input)
-            state.collected_data = {**state.collected_data, "update_data": form_data}
-            state.current_step = "confirm"
-            db_session.add(state)
-            await db_session.commit()
-            return f"Confirm update for {friendly_name}?", [{"type": "confirmation", "payload": { "action": "update", "entity": friendly_name }}]
-        except Exception as e: return f"Error: {str(e)}", []
-
-    elif state.current_step == "confirm":
-        if user_input.lower() in ["yes", "confirm", "ok"]:
-            client_config = await db_session.get(ClientConfig, state.client_id)
-            inspector = inspect(create_engine(client_config.db_connection_url))
-            pk_name = inspector.get_pk_constraint(state.entity_name)["constrained_columns"][0]
-            count = await CRUDService.update_records(state.entity_name, {pk_name: state.collected_data["id"]}, state.collected_data["update_data"], client_id=state.client_id)
+        filters = await CrudLlmService.extract_filters(state.client_id, db_session, "UPDATE", state.entity_name, friendly_name, user_input)
+        
+        result = await CRUDService.read_records(
+            table_name=state.entity_name, 
+            filters=filters, 
+            limit=10, 
+            client_id=state.client_id
+        )
+        records = result.get("records", result) if isinstance(result, dict) else result
+        
+        if not records:
             await db_session.delete(state)
             await db_session.commit()
-            return f"Updated {friendly_name} successfully.", [{"type": "success", "payload": "Updated"}]
+            return f"I couldn't find any {friendly_name} matching that description. Please try again with different keywords.", []
+            
+        if len(records) > 1:
+            formatted_records = []
+            selection_map = {}
+            for r in records:
+                rid = r.get("id") or list(r.values())[0]
+                label_parts = [str(v) for k, v in r.items() if v and isinstance(v, str) and k != "id"][:2]
+                label = " | ".join(label_parts) if label_parts else f"Entry #{rid}"
+                token = str(uuid.uuid4())
+                selection_map[token] = str(rid)
+                formatted_records.append({"token": token, "label": label})
+                
+            state.current_step = "select_record"
+            if not state.collected_data: state.collected_data = {}
+            state.collected_data["original_request"] = user_input
+            state.collected_data["selection_map"] = selection_map
+            db_session.add(state)
+            await db_session.commit()
+            return f"I found multiple matching records. Which {friendly_name} would you like to update?", [{"type": "record_selection", "payload": formatted_records}]
+            
+        return await _stage_update(records[0], user_input, state, db_session, friendly_name)
+
+    elif state.current_step == "select_record":
+        token = user_input.strip()
+        selection_map = state.collected_data.get("selection_map", {})
+        record_id = selection_map.get(token)
+        if not record_id:
+            return "Invalid selection. Please select a valid record from the options provided.", []
+            
+        result = await CRUDService.read_records(
+            table_name=state.entity_name, 
+            filters={"id": record_id}, 
+            limit=1, 
+            client_id=state.client_id
+        )
+        records = result.get("records", result) if isinstance(result, dict) else result
+        if not records:
+            return "That record no longer exists. Please try again.", []
+            
+        original_req = state.collected_data.get("original_request", "")
+        return await _stage_update(records[0], original_req, state, db_session, friendly_name)
+
+    elif state.current_step == "confirm":
+        if user_input.strip().lower() in ["yes", "confirm", "ok", "proceed", "update"]:
+            return "Please use the Confirm button in the UI above to safely execute this operation.", []
         else:
-            await db_session.delete(state); await db_session.commit()
+            await db_session.delete(state)
+            await db_session.commit()
             return "Update cancelled.", []
             
     return "Update flow in unexpected state.", []
 
-async def _init_update_form(record_id: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
-    final_label = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
-    state.collected_data = {"id": record_id}
-    state.current_step = "collect_data"
-    db_session.add(state); await db_session.commit()
-    form_config = await SmartFormService.generate_form(state.client_id, state.entity_name, db_session, module=state.module)
-    
-    payload = {
-        "table_name": state.entity_name,
-        "fields": form_config["fields"],
-        "label": final_label,
-        "display_title": final_label,
-        "module": state.module,
-        "record_id": record_id
-    }
-    print("🚀 FORM PAYLOAD (UPDATE):", payload)
-    return f"Updating {final_label}. Please check the fields below:", [{"type": "form", "payload": payload}]
+async def _stage_update(record: dict, user_query: str, state: ConversationState, db_session: AsyncSession, friendly_name: str) -> Tuple[str, List[Any]]:
+    try:
+        record_id = record.get("id") or list(record.values())[0]
+        crud_op = await CrudLlmService.generate_crud_operation(
+            client_id=state.client_id,
+            session=db_session,
+            action="UPDATE",
+            table_name=state.entity_name,
+            concept=friendly_name,
+            user_query=user_query,
+            record_id=record_id,
+            record_data=record
+        )
+        
+        is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
+        if not is_valid:
+            await db_session.delete(state)
+            await db_session.commit()
+            return f"Validation failed: {err}", []
+            
+        op_id = str(uuid.uuid4())
+        if not state.collected_data: state.collected_data = {}
+        state.collected_data["operation_id"] = op_id
+        state.collected_data["operation_data"] = crud_op.model_dump()
+        state.collected_data["ui_label"] = friendly_name
+        
+        label_parts = [str(v) for k, v in record.items() if v and isinstance(v, str) and k != "id"][:2]
+        record_label = f"{friendly_name} (" + " | ".join(label_parts) + ")" if label_parts else f"{friendly_name} #{record_id}"
+        state.collected_data["record_label"] = record_label
+        
+        state.current_step = "confirm"
+        db_session.add(state)
+        await db_session.commit()
+        
+        # Build business-friendly fields output
+        display_fields = {}
+        for k, v in crud_op.fields.items():
+            friendly_k = k.replace('_', ' ').title()
+            old_val = record.get(k)
+            if old_val is not None and str(old_val) != str(v):
+                display_fields[friendly_k] = {"old": old_val, "new": v}
+            else:
+                display_fields[friendly_k] = v
+
+        payload = {
+            "action": "UPDATE",
+            "entity_label": friendly_name,
+            "record_label": record_label,
+            "fields": display_fields,
+            "operation_id": op_id
+        }
+        return f"Please confirm the updates for {record_label}.", [{"type": "crud_confirmation", "payload": payload}]
+    except Exception as e:
+        traceback.print_exc()
+        await db_session.delete(state)
+        await db_session.commit()
+        return f"Error preparing UPDATE operation: {e}", []
 
 async def handle_delete_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
@@ -455,34 +543,112 @@ async def handle_delete_flow(user_input: str, state: ConversationState, db_sessi
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "delete"})
     
     if state.current_step == "start":
-        id_match = re.search(r"\b(\d+)\b", user_input)
-        if id_match: return await _init_delete_confirm(id_match.group(1), state, db_session)
-        records = await RecordSelectorService.get_records_for_selection(state.client_id, state.entity_name, db_session)
-        if not records: return f"No records found to delete in {friendly_name}.", []
-        state.current_step = "select_record"
-        db_session.add(state); await db_session.commit()
-        return f"Which {friendly_name} would you like to delete?", [{"type": "record_selection", "payload": records}]
+        filters = await CrudLlmService.extract_filters(state.client_id, db_session, "DELETE", state.entity_name, friendly_name, user_input)
+        
+        result = await CRUDService.read_records(
+            table_name=state.entity_name, 
+            filters=filters, 
+            limit=10, 
+            client_id=state.client_id
+        )
+        records = result.get("records", result) if isinstance(result, dict) else result
+        
+        if not records:
+            await db_session.delete(state)
+            await db_session.commit()
+            return f"I couldn't find any {friendly_name} matching that description to delete.", []
+            
+        if len(records) > 1:
+            formatted_records = []
+            selection_map = {}
+            for r in records:
+                rid = r.get("id") or list(r.values())[0]
+                label_parts = [str(v) for k, v in r.items() if v and isinstance(v, str) and k != "id"][:2]
+                label = " | ".join(label_parts) if label_parts else f"Entry #{rid}"
+                token = str(uuid.uuid4())
+                selection_map[token] = str(rid)
+                formatted_records.append({"token": token, "label": label})
+                
+            state.current_step = "select_record"
+            if not state.collected_data: state.collected_data = {}
+            state.collected_data["original_request"] = user_input
+            state.collected_data["selection_map"] = selection_map
+            db_session.add(state)
+            await db_session.commit()
+            return f"I found multiple matching records. Which {friendly_name} would you like to delete?", [{"type": "record_selection", "payload": formatted_records}]
+            
+        return await _stage_delete(records[0], state, db_session, friendly_name)
 
     elif state.current_step == "select_record":
-        return await _init_delete_confirm(user_input.strip(), state, db_session)
+        token = user_input.strip()
+        selection_map = state.collected_data.get("selection_map", {})
+        record_id = selection_map.get(token)
+        if not record_id:
+            return "Invalid selection. Please select a valid record from the options provided.", []
+            
+        result = await CRUDService.read_records(
+            table_name=state.entity_name, 
+            filters={"id": record_id}, 
+            limit=1, 
+            client_id=state.client_id
+        )
+        records = result.get("records", result) if isinstance(result, dict) else result
+        if not records:
+            return "That record no longer exists. Please try again.", []
+            
+        return await _stage_delete(records[0], state, db_session, friendly_name)
             
     elif state.current_step == "confirm":
-        if user_input.lower() in ["yes", "confirm", "ok"]:
-            client_config = await db_session.get(ClientConfig, state.client_id)
-            inspector = inspect(create_engine(client_config.db_connection_url))
-            pk_name = inspector.get_pk_constraint(state.entity_name)["constrained_columns"][0]
-            count = await CRUDService.delete_records(state.entity_name, {pk_name: state.collected_data["id"]}, client_id=state.client_id)
-            await db_session.delete(state); await db_session.commit()
-            return f"Deleted record from {friendly_name}.", [{"type": "success", "payload": "Deleted"}]
+        if user_input.strip().lower() in ["yes", "confirm", "ok", "proceed", "delete"]:
+            return "Please use the Confirm button in the UI above to safely execute this operation.", []
         else:
-            await db_session.delete(state); await db_session.commit()
-            return "Operation cancelled.", []
+            await db_session.delete(state)
+            await db_session.commit()
+            return "Deletion cancelled.", []
             
     return "Delete flow in unexpected state.", []
 
-async def _init_delete_confirm(record_id: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
-    friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
-    state.collected_data = {"id": record_id}
-    state.current_step = "confirm"
-    db_session.add(state); await db_session.commit()
-    return f"Are you sure you want to delete this {friendly_name} entry?", [{"type": "confirmation", "payload": { "action": "delete", "entity": friendly_name }}]
+async def _stage_delete(record: dict, state: ConversationState, db_session: AsyncSession, friendly_name: str) -> Tuple[str, List[Any]]:
+    try:
+        record_id = record.get("id") or list(record.values())[0]
+        
+        crud_op = CrudOperation(
+            action="DELETE",
+            table=state.entity_name,
+            record_id=record_id,
+            fields={}
+        )
+        
+        is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
+        if not is_valid:
+            await db_session.delete(state)
+            await db_session.commit()
+            return f"Validation failed: {err}", []
+            
+        op_id = str(uuid.uuid4())
+        if not state.collected_data: state.collected_data = {}
+        state.collected_data["operation_id"] = op_id
+        state.collected_data["operation_data"] = crud_op.model_dump()
+        state.collected_data["ui_label"] = friendly_name
+        
+        label_parts = [str(v) for k, v in record.items() if v and isinstance(v, str) and k != "id"][:2]
+        record_label = f"{friendly_name} (" + " | ".join(label_parts) + ")" if label_parts else f"{friendly_name} #{record_id}"
+        state.collected_data["record_label"] = record_label
+        
+        state.current_step = "confirm"
+        db_session.add(state)
+        await db_session.commit()
+        
+        payload = {
+            "action": "DELETE",
+            "entity_label": friendly_name,
+            "record_label": record_label,
+            "fields": {},
+            "operation_id": op_id
+        }
+        return f"🚨 Are you absolutely sure you want to DELETE {record_label}?", [{"type": "crud_confirmation", "payload": payload}]
+    except Exception as e:
+        traceback.print_exc()
+        await db_session.delete(state)
+        await db_session.commit()
+        return f"Error preparing DELETE operation: {e}", []

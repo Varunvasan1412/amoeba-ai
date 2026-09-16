@@ -1,7 +1,7 @@
 from typing import Optional, List, Any
 from datetime import datetime
 from sqlmodel import SQLModel, Field, Column
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID
 
 try:
     from pgvector.sqlalchemy import Vector

@@ -32,6 +32,9 @@ class FieldMetadata(SQLModel, table=True):
     # Date Filtering
     is_primary_date: bool = Field(default=False)  # Marks the primary date column for NL date filtering
     
+    # Synonyms
+    synonyms: Optional[str] = Field(default=None) # JSON list of strings
+    
     # Audit
     created_at: datetime = Field(
         default_factory=datetime.utcnow,

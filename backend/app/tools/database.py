@@ -30,8 +30,66 @@ def _get_sync_url(db_url: str) -> str:
         return db_url.replace("mysql://", "mysql+pymysql://")
     return db_url
 
-async def execute_sql_query(query: str):
+def enforce_structural_filters(sql: str, table_filters: dict) -> str:
+    """
+    Safely wraps tables with subqueries to enforce mandatory filters using an AST parser.
+    Fails closed if the query structure is ambiguous, unparseable, or accesses indirect sources.
+    """
+    if not table_filters:
+        return sql
+        
+    try:
+        import sqlglot
+        from sqlglot import exp
+        # Parse the SQL using PostgreSQL dialect. If syntax is invalid, it fails closed.
+        ast = sqlglot.parse_one(sql, read="postgres")
+    except Exception as e:
+        raise ValueError(f"Failed to parse SQL. Execution rejected for safety: {e}")
+
+    # 1. Identify all CTE aliases so we don't treat them as physical tables
+    cte_names = {cte.alias for cte in ast.find_all(exp.CTE)}
+
+    # 2. Iterate through all table references
+    for node in ast.find_all(exp.Table):
+        # SECURITY CHECK: A Table node's "this" must be an Identifier (a normal table name).
+        # If it's a function or view call (Anonymous), it's indirect access -> FAIL CLOSED.
+        if not isinstance(node.this, exp.Identifier):
+            raise ValueError(f"Indirect access detected in FROM/JOIN (View/Function/Procedure). Failing closed.")
+            
+        table_name = node.name
+        
+        # Skip CTE references
+        if table_name in cte_names:
+            continue
+            
+        # Apply mandatory filters if the physical table is protected
+        if table_name in table_filters:
+            condition = table_filters[table_name]
+            
+            # Construct the replacement subquery preserving schema if provided
+            full_table_name = f"{node.db}.{table_name}" if node.db else table_name
+            
+            # Create the protected subquery: (SELECT * FROM table WHERE condition)
+            subq = sqlglot.parse_one(f"(SELECT * FROM {full_table_name} WHERE {condition})")
+            
+            # Subqueries in FROM/JOIN must have an alias.
+            # If the original table had an alias, preserve it. Otherwise, use the table name.
+            alias_name = node.alias or table_name
+            aliased_subq = sqlglot.alias(subq, alias_name)
+            
+            # Replace the original table node with the aliased protected subquery
+            node.replace(aliased_subq)
+
+    # Re-serialize back to SQL using PostgreSQL dialect
+    return ast.sql(dialect="postgres")
+
+
+async def execute_sql_query(query: str, table_filters: dict = None):
     """Executes a read-only SQL query against the database via direct driver."""
+    if table_filters:
+        query = enforce_structural_filters(query, table_filters)
+        print(f"🔒 [SECURITY] Enforced structural filters. Final Query: {query}")
+        
     # 1. Safety Check
     forbidden = ["DELETE", "DROP", "UPDATE", "INSERT", "ALTER", "TRUNCATE"]
     pattern = r"\b(" + "|".join(forbidden) + r")\b"

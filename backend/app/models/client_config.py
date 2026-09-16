@@ -43,3 +43,5 @@ class ClientConfig(SQLModel, table=True):
 
     # Onboarding Status
     onboarding_completed: bool = Field(default=False)
+    assistant_enabled: bool = Field(default=False)
+    operations_enabled: bool = Field(default=False)

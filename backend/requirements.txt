@@ -28,4 +28,4 @@ python-docx
 pgvector
 apscheduler
 slowapi
-redis
+redissqlglot

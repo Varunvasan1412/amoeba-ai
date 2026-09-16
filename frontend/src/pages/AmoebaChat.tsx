@@ -31,6 +31,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
     onSubmitForm?: (data: any) => void,
     onSwitchMode?: (mode: "assistant" | "operations") => void,
     onEdit?: (text: string, index: number) => void,
+    onEvent?: (eventPayload: any) => void,
     darkMode?: boolean,
     globalViewMode?: "table" | "chart",
     chartType?: "bar" | "line" | "pie"
@@ -43,6 +44,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
   const formRequest = msg.actions?.find(a => a.type === "form_request"); // Legacy
   const confirmation = msg.actions?.find(a => a.type === "confirmation");
   const success = msg.actions?.find(a => a.type === "success");
+  const crudConfirmation = msg.actions?.find(a => a.type === "crud_confirmation");
   const switchModeAction = msg.actions?.find(a => a.type === "SWITCH_MODE");
   const sourcesAction = msg.actions?.find(a => a.type === "SOURCES");
   const rawDataTable = msg.actions?.find(a => a.type === "data_table" || a.type === "DISPLAY_TABLE");
@@ -189,7 +191,7 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                     <span className="text-[9px] opacity-60 mt-1 italic text-right">Edited</span>
                 )}
             </div>
-        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction || dataTable) ? (
+        ) : (choices || entitySelection || recordSelection || formAction || formRequest || confirmation || success || switchModeAction || dataTable || crudConfirmation) ? (
             <div className={`font-sans text-[15px] flex flex-col gap-2 ${darkMode ? 'text-gray-200' : 'text-gray-800'}`}>
                 {/* Render textual context first if it exists alongside actions */}
                 {msg.text && (
@@ -644,8 +646,8 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                     {filteredRecords.length > 0 ? (
                         filteredRecords.map((r: any) => (
                             <button
-                                key={r.id}
-                                onClick={() => onSelect && onSelect(r.id.toString())}
+                                key={r.token || r.id}
+                                onClick={() => onSelect && onSelect(r.token || r.id?.toString())}
                                 className="text-left text-sm p-3 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100"
                             >
                                 {r.label}
@@ -718,6 +720,75 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                 >
                     Cancel
                 </button>
+            </div>
+        )}
+
+        {/* CRUD Confirmation Component */}
+        {msg.role === "ai" && crudConfirmation && crudConfirmation.payload && (
+            <div className={`rounded-xl p-5 shadow-sm mt-1 w-full max-w-sm flex flex-col gap-4 border ${darkMode ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-100'}`}>
+                <h4 className={`text-sm font-bold uppercase tracking-wider mb-1 flex items-center gap-2 ${
+                    crudConfirmation.payload.action === 'DELETE' ? 'text-red-500' : 
+                    crudConfirmation.payload.action === 'UPDATE' ? 'text-orange-500' : 
+                    'text-green-500'
+                }`}>
+                    {crudConfirmation.payload.action === 'DELETE' ? <Trash2 size={16} /> : 
+                     crudConfirmation.payload.action === 'UPDATE' ? <Pencil size={16} /> : 
+                     <Plus size={16} />}
+                    {crudConfirmation.payload.action} {crudConfirmation.payload.entity_label}
+                </h4>
+                
+                {crudConfirmation.payload.record_label && (
+                    <div className={`text-xs font-semibold px-3 py-2 rounded-lg border ${
+                        darkMode ? 'bg-gray-800 border-gray-700 text-gray-300' : 'bg-gray-50 border-gray-200 text-gray-700'
+                    }`}>
+                        Target: {crudConfirmation.payload.record_label}
+                    </div>
+                )}
+
+                {Object.keys(crudConfirmation.payload.fields || {}).length > 0 && (
+                    <div className="flex flex-col gap-2">
+                        <span className={`text-[10px] uppercase font-bold tracking-widest ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>Changes</span>
+                        <div className={`flex flex-col gap-1 text-xs rounded-lg p-3 ${darkMode ? 'bg-gray-800/50' : 'bg-gray-50'}`}>
+                            {Object.entries(crudConfirmation.payload.fields).map(([k, v]: [string, any]) => (
+                                <div key={k} className="flex flex-col gap-0.5 break-all">
+                                    <span className="font-semibold capitalize opacity-80">{k.replace(/_/g, ' ')}</span>
+                                    <span className="font-mono opacity-90">
+                                        {typeof v === 'object' && v !== null && 'old' in v && 'new' in v
+                                            ? <><span className="line-through opacity-60 mr-2">{String(v.old)}</span><span className={darkMode ? "text-green-400" : "text-green-600"}>{String(v.new)}</span></>
+                                            : String(v)}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                <div className="flex gap-2 mt-2">
+                    <button 
+                        onClick={() => {
+                            if (onEvent) onEvent({ type: 'crud_confirm', operation_id: crudConfirmation.payload.operation_id });
+                        }}
+                        className={`flex-1 py-2 text-xs font-bold rounded-lg shadow-sm hover:-translate-y-0.5 transition-all text-white ${
+                            crudConfirmation.payload.action === 'DELETE' ? 'bg-red-600 hover:bg-red-700' : 
+                            crudConfirmation.payload.action === 'UPDATE' ? 'bg-orange-600 hover:bg-orange-700' : 
+                            'bg-green-600 hover:bg-green-700'
+                        }`}
+                    >
+                        Confirm
+                    </button>
+                    <button 
+                        onClick={() => {
+                            if (onEvent) onEvent({ type: 'crud_cancel', operation_id: crudConfirmation.payload.operation_id });
+                        }}
+                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition-colors border ${
+                            darkMode 
+                            ? 'border-gray-700 hover:bg-gray-800 text-gray-300' 
+                            : 'border-gray-300 hover:bg-gray-50 text-gray-700'
+                        }`}
+                    >
+                        Cancel
+                    </button>
+                </div>
             </div>
         )}
     </div>
@@ -1104,6 +1175,18 @@ export default function AmoebaChat() {
     setIsTyping(true);
   }, [isConnected, chatMode, currentApiKey, currentSessionId, sources]);
 
+  const handleEvent = useCallback((eventPayload: any) => {
+    if (!socketRef.current || !isConnected) return;
+    pendingNewAIMessage.current = true;
+    const payload = {
+        ...eventPayload, // expects {type: 'crud_confirm', operation_id: '...'}
+        mode: chatMode,
+        api_key: currentApiKey,
+        session_id: currentSessionId,
+    };
+    socketRef.current.send(JSON.stringify(payload));
+    setIsTyping(true);
+  }, [isConnected, chatMode, currentApiKey, currentSessionId]);
 
   const sendMessage = (overrideText?: any) => {
     const textToProcess = typeof overrideText === 'string' ? overrideText : input;
@@ -1519,6 +1602,7 @@ export default function AmoebaChat() {
                                     onSubmitForm={handleFormSubmit}
                                     onSwitchMode={handleSwitchAndResend}
                                     onEdit={handleEdit}
+                                    onEvent={handleEvent}
                                     darkMode={darkMode}
                                     globalViewMode={viewMode}
                                     chartType={chartType}
