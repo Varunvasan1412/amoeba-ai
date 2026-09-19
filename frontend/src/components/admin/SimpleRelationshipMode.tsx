@@ -230,9 +230,9 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                 </div>
                                                 {/* Visual Connection mapping */}
                                                 {outRel && (
-                                                    <div className="flex items-center text-indigo-500 gap-2 opacity-70 group-hover:opacity-100 transition-opacity">
-                                                        <span>───────►</span>
-                                                        <span className="font-bold text-indigo-700">{outRel.parent_table}.{outRel.parent_column}</span>
+                                                    <div className="flex items-center text-indigo-500 gap-2 opacity-70 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                                        <span className="text-indigo-400">──►</span>
+                                                        <span className="font-bold text-indigo-700 truncate max-w-[150px]" title={`${outRel.parent_table}.${outRel.parent_column}`}>{outRel.parent_table}.{outRel.parent_column}</span>
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setActiveRel(outRel); }}
                                                             className="ml-3 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -254,11 +254,11 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
                                     Outgoing Relationships (FKs)
                                 </div>
-                                <div className="p-5 font-mono text-sm space-y-3">
+                                <div className="p-5 font-mono text-sm space-y-3 overflow-x-auto">
                                     {allRels.filter(r => r.child_table === selectedTable).map(r => (
-                                        <div key={r.id} className="flex items-center gap-4 group">
+                                        <div key={r.id} className="flex items-center gap-3 group min-w-max">
                                             <div className="text-slate-800 font-bold">{selectedTable}.{r.child_column}</div>
-                                            <div className="text-indigo-400">───────────────►</div>
+                                            <div className="text-indigo-400">──►</div>
                                             <div className="text-slate-500">{r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span></div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
@@ -278,11 +278,11 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
                                     Incoming Relationships
                                 </div>
-                                <div className="p-5 font-mono text-sm space-y-3">
+                                <div className="p-5 font-mono text-sm space-y-3 overflow-x-auto">
                                     {allRels.filter(r => r.parent_table === selectedTable).map(r => (
-                                        <div key={r.id} className="flex items-center gap-4 group">
+                                        <div key={r.id} className="flex items-center gap-3 group min-w-max">
                                             <div className="text-slate-500">{r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span></div>
-                                            <div className="text-indigo-400">───────────────►</div>
+                                            <div className="text-indigo-400">──►</div>
                                             <div className="text-slate-800 font-bold">{selectedTable}.{r.parent_column}</div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
