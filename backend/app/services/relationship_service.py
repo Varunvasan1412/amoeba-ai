@@ -44,6 +44,7 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
     stmt = select(AllowedRelationship).where(
         AllowedRelationship.client_id == client_id,
         AllowedRelationship.is_enabled == True,
+        AllowedRelationship.approval_status == "approved",
         AllowedRelationship.is_restricted == False
     )
     all_db_rels = (await session.execute(stmt)).scalars().all()
@@ -166,15 +167,15 @@ async def discover_and_sync_relationships(session: AsyncSession, client_id: int)
             pair_key = (parent.lower(), child.lower())
             if pair_key not in db_rel_map:
                 risk_level, confidence = _calculate_risk(meta.get("method", "heuristic"), parent, child)
-                is_auto_enabled = determine_default_status(parent, child, meta.get("method", "heuristic"))
-                
+                # Phase 3: Newly discovered relationships MUST NOT be active until explicit approval.
                 new_rel = AllowedRelationship(
                     client_id=client_id,
                     parent_table=parent,
                     parent_column=remote_col,
                     child_table=child,
                     child_column=local_col,
-                    is_enabled=is_auto_enabled,
+                    is_enabled=False,
+                    approval_status="discovered",
                     risk_level=risk_level,
                     confidence_score=confidence
                 )
@@ -234,6 +235,25 @@ async def bulk_update_relationships(session: AsyncSession, client_id: int, actio
 
     clear_relationship_cache(client_id)
     return {"status": "success", "updated_count": count}
+
+async def get_relationship_health_summary(session: AsyncSession, client_id: int) -> dict:
+    from sqlmodel import select
+    stmt = select(AllowedRelationship.approval_status).where(AllowedRelationship.client_id == client_id)
+    statuses = (await session.execute(stmt)).scalars().all()
+    
+    summary = {
+        "discovered": 0,
+        "needs_review": 0,
+        "ambiguous": 0,
+        "approved": 0,
+        "rejected": 0,
+        "total": len(statuses)
+    }
+    for s in statuses:
+        if s in summary:
+            summary[s] += 1
+            
+    return summary
 
 async def approve_join_path(session: AsyncSession, client_id: int, path_signature: str, user_id: str) -> dict:
     """
@@ -363,7 +383,10 @@ async def resolve_semantic_relationship(session: AsyncSession, client_id: int, s
     existing = (await session.execute(stmt)).scalars().first()
     
     if existing:
-        existing.is_enabled = True
+        # If it was rejected, a semantic resolve overrides it to needs_review
+        if existing.approval_status == "rejected" or existing.approval_status == "discovered":
+            existing.approval_status = "needs_review"
+            existing.is_enabled = False
         session.add(existing)
         await session.commit()
         await session.refresh(existing)
@@ -376,7 +399,8 @@ async def resolve_semantic_relationship(session: AsyncSession, client_id: int, s
             parent_column=mapping["parent_column"],
             child_table=child,
             child_column=mapping["child_column"],
-            is_enabled=True,
+            is_enabled=False,
+            approval_status="needs_review",
             risk_level="safe" if mapping["method"] == "explicit" else "heuristic",
             confidence_score=1.0 if mapping["method"] == "explicit" else 0.8
         )

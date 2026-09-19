@@ -26,6 +26,18 @@ async def list_relationships(
     client_id = await get_client_id_by_key(api_key, session)
     return await get_all_relationships(session, client_id, sync=sync)
 
+@router.get("/health", response_model=dict)
+async def get_relationships_health(
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Get a summary of the relationship health (counts of statuses).
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    from app.services.relationship_service import get_relationship_health_summary
+    return await get_relationship_health_summary(session, client_id)
+
 from pydantic import BaseModel
 
 class ManualRelationshipCreate(BaseModel):
@@ -209,6 +221,50 @@ async def update_relationship_columns(
         raise HTTPException(status_code=404, detail="Relationship not found")
         
     rel.selected_columns = payload.columns
+    session.add(rel)
+    await session.commit()
+    await session.refresh(rel)
+    
+    clear_relationship_cache(client_id)
+    
+    return {"status": "success", "data": rel}
+
+class RelationshipStatusUpdate(BaseModel):
+    status: str # "discovered", "needs_review", "ambiguous", "approved", "rejected"
+
+@router.put("/{rel_id}/status")
+async def update_relationship_status(
+    rel_id: int,
+    payload: RelationshipStatusUpdate,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Update the lifecycle status of a relationship and enforce invariants.
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.id == rel_id, 
+        AllowedRelationship.client_id == client_id
+    )
+    rel = (await session.execute(stmt)).scalars().first()
+    
+    if not rel:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+        
+    valid_statuses = {"discovered", "needs_review", "ambiguous", "approved", "rejected"}
+    if payload.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail="Invalid status")
+        
+    rel.approval_status = payload.status
+    
+    # Enforce Invariants
+    if payload.status == "approved":
+        rel.is_enabled = True
+    else:
+        rel.is_enabled = False
+        
     session.add(rel)
     await session.commit()
     await session.refresh(rel)

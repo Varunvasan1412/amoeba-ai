@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { useAdmin } from "../context/AdminContext";
 import { apiFetch } from "../utils/api";
 import { JoinExplorer } from "../components/admin/JoinExplorer";
+import { SimpleRelationshipMode } from "../components/admin/SimpleRelationshipMode";
 import { TutorialBanner } from "../components/admin/TutorialBanner";
 
 export default function RelationshipGovernance() {
@@ -245,7 +246,7 @@ export default function RelationshipGovernance() {
               <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-20">
                   <Wand2 className="animate-bounce text-blue-600" size={48} />
               </div>
-          ) : (
+          ) : isAdvancedMode ? (
               <JoinExplorer 
                 rels={allRels} 
                 schemaData={fullSchema}
@@ -253,6 +254,13 @@ export default function RelationshipGovernance() {
                 apiKey={apiKey}
                 isAdvancedMode={isAdvancedMode}
                 onOpenPayload={(rel) => setActiveRelForPayload(rel)}
+                onRefresh={fetchData}
+              />
+          ) : (
+              <SimpleRelationshipMode 
+                allRels={allRels}
+                appConcepts={appConcepts}
+                apiKey={apiKey}
                 onRefresh={fetchData}
               />
           )}

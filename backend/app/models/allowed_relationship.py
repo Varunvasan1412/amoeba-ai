@@ -21,6 +21,10 @@ class AllowedRelationship(SQLModel, table=True):
     # Format: ["col1", "col2", "col3"]
     selected_columns: List[str] = Field(default=[], sa_column=Column(JSON))
 
+    # Lifecycle Classification (Phase 3)
+    # Valid values: discovered, needs_review, ambiguous, approved, rejected
+    approval_status: str = Field(default="discovered", index=True)
+
     # Risk Classification (v3)
     risk_level: str = Field(default="safe") # safe | heuristic | circular | high_cardinality
     confidence_score: float = Field(default=1.0) # 1.0 = Explicit, <1.0 = Heuristic
