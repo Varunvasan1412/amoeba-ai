@@ -355,7 +355,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                             </div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
+                                                className="absolute top-3 right-3 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm"
                                             >
                                                 Manage
                                             </button>
@@ -385,7 +385,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                             </div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
+                                                className="absolute top-3 right-3 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm"
                                             >
                                                 Manage
                                             </button>
