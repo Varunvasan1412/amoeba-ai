@@ -104,11 +104,14 @@ async def redis_connection_error_handler(request: Request, exc: redis.exceptions
 
 from fastapi.exceptions import ResponseValidationError
 
+last_error_debug = {}
+
 @app.exception_handler(ResponseValidationError)
 async def validation_exception_handler(request: Request, exc: ResponseValidationError):
     import logging
     logger = logging.getLogger("app")
     logger.error(f"Response Validation Error: {exc.errors()}")
+    last_error_debug.update({"type": "ResponseValidationError", "errors": exc.errors()})
     return JSONResponse(
         status_code=500,
         content={"detail": "Response Validation Error", "errors": exc.errors()},
@@ -119,11 +122,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     import traceback, logging
     logger = logging.getLogger("app")
     logger.error(f"Global Exception: {exc}")
+    last_error_debug.update({"type": "Global Exception", "error": str(exc), "trace": traceback.format_exc()})
     # We return JSON so the frontend can display the actual error instead of a plain text Nginx/Starlette 500
     return JSONResponse(
         status_code=500,
         content={"detail": "Global Exception", "error": str(exc), "trace": traceback.format_exc()}
     )
+
+@app.get("/api/v2/debug-error")
+def get_debug_error():
+    return last_error_debug
 
 app.add_middleware(SlowAPIMiddleware)
 
