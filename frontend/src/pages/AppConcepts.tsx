@@ -140,7 +140,7 @@ export default function AppConcepts() {
               <div className="space-y-3">
                 {suggestedSources.map(src => (
                   <div key={src.name} className={`p-4 border rounded-lg cursor-pointer ${newConcept.database_table === src.name ? 'border-indigo-600 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'}`} onClick={() => setNewConcept({...newConcept, database_table: src.name})}>
-                    <div className="font-bold text-slate-800">Option: {src.name === 'enquiries' ? 'Quotations / Enquiries' : 'Sales Records'}</div>
+                    <div className="font-bold text-slate-800">Option: {src.name}</div>
                     <div className="text-sm text-slate-500">{src.description}</div>
                   </div>
                 ))}
