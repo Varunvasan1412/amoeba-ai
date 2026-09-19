@@ -216,22 +216,22 @@ async def init_db():
 
         # 5. Update 'allowed_relationships' table (Phase 3 Lifecycle)
         try:
-            # We use savepoints/nested transactions to prevent a failed update from aborting the whole transaction
-            res = await conn.execute(text(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'allowed_relationships' AND column_name = 'approval_status'"
-            ))
-            if not res.fetchone():
-                await conn.execute(text("ALTER TABLE allowed_relationships ADD COLUMN approval_status VARCHAR DEFAULT 'discovered'"))
-                print("  ✅ Added 'approval_status' to allowed_relationships")
-            
-            # Backfill rules (Use dialect-agnostic or try/except for boolean)
-            if "postgresql" in str(conn.engine.url):
-                await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'approved' WHERE is_enabled = true AND (approval_status IS NULL OR approval_status = 'discovered')"))
-                await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'discovered' WHERE is_enabled = false AND (approval_status IS NULL OR approval_status = '')"))
-            else:
-                await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'approved' WHERE is_enabled = 1 AND (approval_status IS NULL OR approval_status = 'discovered')"))
-                await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'discovered' WHERE is_enabled = 0 AND (approval_status IS NULL OR approval_status = '')"))
-            
+            # We use a nested transaction (savepoint) so that a failure (like column already exists) doesn't abort the outer transaction
+            async with conn.begin_nested():
+                res = await conn.execute(text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'allowed_relationships' AND column_name = 'approval_status'"
+                ))
+                if not res.fetchone():
+                    await conn.execute(text("ALTER TABLE allowed_relationships ADD COLUMN approval_status VARCHAR DEFAULT NULL"))
+                    print("  ✅ Added 'approval_status' to allowed_relationships")
+                
+                # Backfill rules: 
+                # Only backfill is_enabled=False legacy connections to 'discovered'
+                # Do NOT backfill is_enabled=True legacy connections to 'approved', leave as NULL for legacy compatibility
+                if "postgresql" in str(conn.engine.url):
+                    await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'discovered' WHERE is_enabled = false AND (approval_status IS NULL OR approval_status = '')"))
+                else:
+                    await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'discovered' WHERE is_enabled = 0 AND (approval_status IS NULL OR approval_status = '')"))
         except Exception as e:
             print(f"AllowedRelationship migration notice: {e}")
 

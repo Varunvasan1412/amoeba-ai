@@ -23,7 +23,7 @@ class AllowedRelationship(SQLModel, table=True):
 
     # Lifecycle Classification (Phase 3)
     # Valid values: discovered, needs_review, ambiguous, approved, rejected
-    approval_status: str = Field(default="discovered", index=True)
+    approval_status: Optional[str] = Field(default="discovered", index=True, nullable=True)
 
     # Risk Classification (v3)
     risk_level: str = Field(default="safe") # safe | heuristic | circular | high_cardinality

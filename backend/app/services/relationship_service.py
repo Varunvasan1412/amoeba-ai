@@ -40,11 +40,14 @@ async def get_relationship_graph(session: AsyncSession, client_id: int) -> Dict[
         return _RELATIONSHIP_CACHE[client_id]
 
     # Build FINAL Bidirectional Graph from ALL Enabled DB Records
-    from sqlmodel import select
+    from sqlmodel import select, or_
     stmt = select(AllowedRelationship).where(
         AllowedRelationship.client_id == client_id,
         AllowedRelationship.is_enabled == True,
-        AllowedRelationship.approval_status == "approved",
+        or_(
+            AllowedRelationship.approval_status == "approved",
+            AllowedRelationship.approval_status.is_(None)
+        ),
         AllowedRelationship.is_restricted == False
     )
     all_db_rels = (await session.execute(stmt)).scalars().all()

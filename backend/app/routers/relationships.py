@@ -70,6 +70,125 @@ async def get_relationships_health(
     from app.services.relationship_service import get_relationship_health_summary
     return await get_relationship_health_summary(session, client_id)
 
+@router.get("/physical-schema", response_model=Dict)
+async def get_physical_schema(
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Returns the full physical schema (columns, primary keys, foreign keys) 
+    using the enhanced v2 discovery without exposing sensitive DB credentials.
+    """
+    from app.models.client_config import ClientConfig
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    client = await session.get(ClientConfig, client_id)
+    if not client or not client.database_url:
+        raise HTTPException(status_code=400, detail="Database URL not configured.")
+        
+    from app.services.schema_discovery_v2 import discover_full_schema
+    import asyncio
+    
+    loop = asyncio.get_running_loop()
+    # Mask credentials for sync driver
+    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql")
+    
+    try:
+        schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
+        return schema_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/candidates", response_model=List[Dict])
+async def get_relationship_candidates(
+    table_a: str,
+    table_b: str,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Given two tables, returns possible foreign key candidate connections
+    between them. This powers the 'Manual Table Investigation' workflow.
+    """
+    from app.models.client_config import ClientConfig
+    client_id = await get_client_id_by_key(api_key, session)
+    
+    client = await session.get(ClientConfig, client_id)
+    if not client or not client.database_url:
+        raise HTTPException(status_code=400, detail="Database URL not configured.")
+        
+    from app.services.schema_discovery_v2 import discover_full_schema
+    import asyncio
+    
+    loop = asyncio.get_running_loop()
+    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql")
+    
+    try:
+        schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    candidates = []
+    
+    # Check A -> B
+    if table_a in schema_data:
+        for fk in schema_data[table_a].get("foreign_keys", []):
+            if fk["referred_table"] == table_b:
+                candidates.append({
+                    "source_table": table_a,
+                    "source_column": fk["constrained_columns"][0],
+                    "target_table": table_b,
+                    "target_column": fk["referred_columns"][0],
+                    "direction": "forward"
+                })
+                
+    # Check B -> A
+    if table_b in schema_data:
+        for fk in schema_data[table_b].get("foreign_keys", []):
+            if fk["referred_table"] == table_a:
+                candidates.append({
+                    "source_table": table_b,
+                    "source_column": fk["constrained_columns"][0],
+                    "target_table": table_a,
+                    "target_column": fk["referred_columns"][0],
+                    "direction": "reverse"
+                })
+                
+    # Heuristic Checks (if no explicit FKs)
+    if not candidates:
+        if table_a in schema_data and table_b in schema_data:
+            # Check A -> B
+            b_cols = [c["name"].lower() for c in schema_data[table_b].get("columns", [])]
+            if "id" in b_cols:
+                for a_col in schema_data[table_a].get("columns", []):
+                    c_name = a_col["name"].lower()
+                    if c_name.endswith("_id") and table_b.lower() in c_name:
+                        candidates.append({
+                            "source_table": table_a,
+                            "source_column": a_col["name"],
+                            "target_table": table_b,
+                            "target_column": "id",
+                            "direction": "forward",
+                            "method": "heuristic"
+                        })
+            
+            # Check B -> A
+            a_cols = [c["name"].lower() for c in schema_data[table_a].get("columns", [])]
+            if "id" in a_cols:
+                for b_col in schema_data[table_b].get("columns", []):
+                    c_name = b_col["name"].lower()
+                    if c_name.endswith("_id") and table_a.lower() in c_name:
+                        candidates.append({
+                            "source_table": table_b,
+                            "source_column": b_col["name"],
+                            "target_table": table_a,
+                            "target_column": "id",
+                            "direction": "reverse",
+                            "method": "heuristic"
+                        })
+
+    return candidates
+
 class ManualRelationshipCreate(BaseModel):
     parent_table: str
     parent_column: str
@@ -295,8 +414,11 @@ async def update_relationship_status(
     rel.approval_status = payload.status
     
     # Enforce Invariants
-    if payload.status == "approved":
+    if payload.status in ("approved", "needs_review"):
+        # Explicit check for Business Concepts
         await validate_activation(session, client_id, rel)
+    
+    if payload.status == "approved":
         rel.is_enabled = True
     else:
         rel.is_enabled = False
