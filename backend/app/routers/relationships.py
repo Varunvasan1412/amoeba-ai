@@ -7,6 +7,38 @@ from app.services.relationship_service import get_all_relationships, clear_relat
 from app.routers.builder import get_client_id_by_key # Reuse helper
 from app.core.auth_deps import get_current_active_admin
 from sqlmodel import select
+from pydantic import BaseModel
+
+async def validate_activation(session: AsyncSession, client_id: int, rel: AllowedRelationship):
+    from app.models.semantic_mapping import SemanticMapping
+    # 1. Relationship exists (checked by caller)
+    # 2. Technical relationship is valid (assumed if it exists in DB)
+    # 3 & 4. Source and target have approved App Concepts
+    stmt_parent = select(SemanticMapping).where(
+        SemanticMapping.client_id == client_id,
+        SemanticMapping.database_table == rel.parent_table
+    )
+    parent_concept = (await session.execute(stmt_parent)).scalars().first()
+    
+    stmt_child = select(SemanticMapping).where(
+        SemanticMapping.client_id == client_id,
+        SemanticMapping.database_table == rel.child_table
+    )
+    child_concept = (await session.execute(stmt_child)).scalars().first()
+    
+    if not parent_concept or not child_concept:
+        missing = []
+        if not parent_concept: missing.append(rel.parent_table)
+        if not child_concept: missing.append(rel.child_table)
+        raise HTTPException(status_code=400, detail=f"Cannot approve relationship. Missing App Concepts for {', '.join(missing)}.")
+        
+    # 5. Relationship is not ambiguous
+    if rel.approval_status == "ambiguous":
+         raise HTTPException(status_code=400, detail="Cannot approve an ambiguous relationship. Please resolve ambiguity first.")
+         
+    # 6. User has permission (checked by Depends(get_current_active_admin) in router)
+    # 7. Explicitly requested (checked by caller via explicit route)
+    return True
 
 router = APIRouter(
     prefix="/v2/relationships", 
@@ -37,8 +69,6 @@ async def get_relationships_health(
     client_id = await get_client_id_by_key(api_key, session)
     from app.services.relationship_service import get_relationship_health_summary
     return await get_relationship_health_summary(session, client_id)
-
-from pydantic import BaseModel
 
 class ManualRelationshipCreate(BaseModel):
     parent_table: str
@@ -130,7 +160,12 @@ async def toggle_relationship(
     if not rel:
         raise HTTPException(status_code=404, detail="Relationship not found")
         
-    rel.is_enabled = payload.get("is_enabled", rel.is_enabled)
+    is_enabled_payload = payload.get("is_enabled", rel.is_enabled)
+    if is_enabled_payload and not rel.is_enabled:
+        await validate_activation(session, client_id, rel)
+        rel.approval_status = "approved"
+        
+    rel.is_enabled = is_enabled_payload
     session.add(rel)
     await session.commit()
     await session.refresh(rel)
@@ -261,6 +296,7 @@ async def update_relationship_status(
     
     # Enforce Invariants
     if payload.status == "approved":
+        await validate_activation(session, client_id, rel)
         rel.is_enabled = True
     else:
         rel.is_enabled = False

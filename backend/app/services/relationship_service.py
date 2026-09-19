@@ -250,8 +250,9 @@ async def get_relationship_health_summary(session: AsyncSession, client_id: int)
         "total": len(statuses)
     }
     for s in statuses:
-        if s in summary:
-            summary[s] += 1
+        status_key = s if s else "discovered"
+        if status_key in summary:
+            summary[status_key] += 1
             
     return summary
 

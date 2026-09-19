@@ -106,7 +106,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
     };
 
     // Filter relationships requiring attention
-    const needsAttention = allRels.filter(r => r.approval_status === 'needs_review' || r.approval_status === 'ambiguous');
+    const needsAttention = allRels.filter(r => r.approval_status === 'needs_review' || r.approval_status === 'ambiguous' || r.approval_status === 'discovered');
     
     // Group active relationships by parent for the visual map
     const activeMap = useMemo(() => {
@@ -189,7 +189,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                 <h2 className="text-xl font-black text-slate-800 mb-4 flex items-center gap-2"><Activity size={20} className="text-blue-500"/> Relationship Health</h2>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
-                        <span className="text-3xl font-black text-slate-800">{health.total}</span>
+                        <span className="text-3xl font-black text-slate-800">{health.discovered}</span>
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Discovered</span>
                     </div>
                     <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 shadow-sm flex flex-col items-center justify-center">
@@ -218,29 +218,58 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                     <h3 className="text-lg font-black text-amber-600 flex items-center gap-2 mb-4 relative z-10"><AlertTriangle size={18} /> Needs Your Attention</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
                         {needsAttention.map(rel => {
-                            const pLabel = getConceptLabel(rel.parent_table);
-                            const cLabel = getConceptLabel(rel.child_table);
+                            const pConcept = appConcepts.find(c => c.database_table === rel.parent_table);
+                            const cConcept = appConcepts.find(c => c.database_table === rel.child_table);
+                            const isMissingConcepts = !pConcept || !cConcept || pConcept.is_doubtful || cConcept.is_doubtful;
                             const isAmbiguous = rel.approval_status === 'ambiguous';
+                            const pLabel = pConcept ? pConcept.ui_label : '';
+                            const cLabel = cConcept ? cConcept.ui_label : '';
+                            
                             return (
-                                <div key={rel.id} className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex flex-col justify-between hover:border-amber-300 transition-colors cursor-pointer group" onClick={() => setActiveRel(rel)}>
+                                <div key={rel.id} className="bg-slate-50 border border-slate-200 p-4 rounded-2xl flex flex-col justify-between hover:border-amber-300 transition-colors cursor-pointer group" onClick={() => {
+                                    if (!isMissingConcepts) setActiveRel(rel);
+                                }}>
                                     <div>
                                         <div className="flex items-center gap-2 mb-2">
                                             {isAmbiguous ? <HelpCircle size={16} className="text-orange-500"/> : <Zap size={16} className="text-amber-500" />}
-                                            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isAmbiguous ? 'Ambiguous' : 'Needs Review'}</span>
+                                            <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">{isAmbiguous ? 'Ambiguous' : (isMissingConcepts ? 'Discovered' : 'Needs Review')}</span>
                                         </div>
-                                        <div className="text-sm font-semibold text-slate-800">
-                                            {cLabel} <span className="text-slate-400 mx-1 font-normal">belongs to</span> {pLabel}
-                                        </div>
-                                        <p className="text-xs text-slate-500 mt-2 line-clamp-2">
-                                            {isAmbiguous 
-                                                ? 'Amoeba found more than one possible connection.' 
-                                                : 'Amoeba found a database relationship connecting these concepts.'}
-                                        </p>
+                                        
+                                        {isMissingConcepts ? (
+                                            <>
+                                                <div className="text-sm font-semibold text-slate-800">
+                                                    Connection discovered
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-2 line-clamp-2">
+                                                    Business meaning not yet mapped
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <div className="text-sm font-semibold text-slate-800">
+                                                    {cLabel} <span className="text-slate-400 mx-1 font-normal">belongs to</span> {pLabel}
+                                                </div>
+                                                <p className="text-xs text-slate-500 mt-2 line-clamp-2">
+                                                    {isAmbiguous 
+                                                        ? 'Amoeba found more than one possible connection.' 
+                                                        : 'Amoeba found a database relationship connecting these concepts.'}
+                                                </p>
+                                            </>
+                                        )}
                                     </div>
                                     <div className="mt-4 flex justify-end">
-                                        <button className="text-xs font-bold bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                                            Review
-                                        </button>
+                                        {isMissingConcepts ? (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); window.location.href = '/admin/semantic'; }}
+                                                className="text-xs font-bold bg-blue-100 text-blue-700 px-3 py-1.5 rounded-lg hover:bg-blue-600 hover:text-white transition-colors"
+                                            >
+                                                Teach Concepts
+                                            </button>
+                                        ) : (
+                                            <button className="text-xs font-bold bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                                                Review
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             );

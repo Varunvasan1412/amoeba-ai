@@ -214,6 +214,25 @@ async def init_db():
         except Exception as e:
             print(f"NavigationItem migration notice: {e}")
 
+        # 5. Update 'allowed_relationships' table (Phase 3 Lifecycle)
+        try:
+            res = await conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'allowed_relationships' AND column_name = 'approval_status'"
+            ))
+            if not res.fetchone():
+                await conn.execute(text("ALTER TABLE allowed_relationships ADD COLUMN approval_status VARCHAR DEFAULT 'discovered'"))
+                print("  ✅ Added 'approval_status' to allowed_relationships")
+            
+            # Backfill rules as per Phase 3 requirements
+            # 1. Any enabled relationship is approved
+            await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'approved' WHERE is_enabled = 1 AND (approval_status IS NULL OR approval_status = 'discovered')"))
+            
+            # 2. Any disabled relationship with no status is discovered
+            await conn.execute(text("UPDATE allowed_relationships SET approval_status = 'discovered' WHERE is_enabled = 0 AND (approval_status IS NULL OR approval_status = '')"))
+            
+        except Exception as e:
+            print(f"AllowedRelationship migration notice: {e}")
+
     # Seed RBAC Data
     from app.services.rbac_service import seed_rbac_data
     await seed_rbac_data()
