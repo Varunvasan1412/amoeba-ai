@@ -83,15 +83,14 @@ async def get_physical_schema(
     client_id = await get_client_id_by_key(api_key, session)
     
     client = await session.get(ClientConfig, client_id)
-    if not client or not client.database_url:
+    if not client or not client.db_connection_url:
         raise HTTPException(status_code=400, detail="Database URL not configured.")
         
     from app.services.schema_discovery_v2 import discover_full_schema
     import asyncio
     
     loop = asyncio.get_running_loop()
-    # Mask credentials for sync driver
-    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite").replace("mysql+aiomysql", "mysql+pymysql").replace("mysql+asyncmy", "mysql+pymysql")
+    sync_url = client.db_connection_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite").replace("mysql+aiomysql", "mysql+pymysql").replace("mysql+asyncmy", "mysql+pymysql")
     
     try:
         schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
@@ -114,14 +113,14 @@ async def get_relationship_candidates(
     client_id = await get_client_id_by_key(api_key, session)
     
     client = await session.get(ClientConfig, client_id)
-    if not client or not client.database_url:
+    if not client or not client.db_connection_url:
         raise HTTPException(status_code=400, detail="Database URL not configured.")
         
     from app.services.schema_discovery_v2 import discover_full_schema
     import asyncio
     
     loop = asyncio.get_running_loop()
-    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite")
+    sync_url = client.db_connection_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite").replace("mysql+aiomysql", "mysql+pymysql").replace("mysql+asyncmy", "mysql+pymysql")
     
     try:
         schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
