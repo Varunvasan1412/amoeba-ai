@@ -45,6 +45,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
     const [selectedTable, setSelectedTable] = useState<string | null>(null);
     const [activeRel, setActiveRel] = useState<Relationship | null>(null);
     const [loadingSchema, setLoadingSchema] = useState(true);
+    const [selectedRelIds, setSelectedRelIds] = useState<Set<number>>(new Set());
 
     // Manual Investigation State
     const [investigateA, setInvestigateA] = useState('');
@@ -85,6 +86,25 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
             }
         } catch (e: any) {
             toast.error(e.message);
+        }
+    };
+
+    const handleBulkUpdateStatus = async (status: string) => {
+        if (selectedRelIds.size === 0) return;
+        try {
+            const promises = Array.from(selectedRelIds).map(id => 
+                apiFetch(`${import.meta.env.VITE_API_URL || ''}/api/v2/relationships/${id}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+                    body: JSON.stringify({ status })
+                })
+            );
+            await Promise.all(promises);
+            toast.success(`Marked ${selectedRelIds.size} relationships as ${status}`);
+            setSelectedRelIds(new Set());
+            onRefresh();
+        } catch (e: any) {
+            toast.error("Bulk update failed: " + e.message);
         }
     };
 
@@ -330,20 +350,55 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
             {/* Bottom Section: Full Width Relationships */}
             {selectedTable && schema[selectedTable] && (allRels.filter(r => r.child_table === selectedTable).length > 0 || allRels.filter(r => r.parent_table === selectedTable).length > 0) && (
                 <div className="p-8 bg-white min-h-[300px]">
-                    <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
-                        <LinkIcon size={20} className="text-indigo-500" /> Connections for {getConceptLabel(selectedTable)}
-                    </h3>
+                    <div className="mb-6 flex items-center justify-between">
+                        <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                            <LinkIcon size={20} className="text-indigo-500" /> Connections for {getConceptLabel(selectedTable)}
+                        </h3>
+                        {selectedRelIds.size > 0 && (
+                            <div className="flex gap-2 animate-in fade-in zoom-in-95 duration-200">
+                                <button onClick={() => handleBulkUpdateStatus('approved')} className="text-sm bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-1.5 rounded-lg font-bold shadow-sm transition-colors flex items-center gap-1">
+                                    <Check size={16}/> Approve Selected ({selectedRelIds.size})
+                                </button>
+                                <button onClick={() => handleBulkUpdateStatus('rejected')} className="text-sm bg-white border border-slate-200 hover:border-red-200 hover:bg-red-50 text-red-600 px-4 py-1.5 rounded-lg font-bold shadow-sm transition-colors flex items-center gap-1">
+                                    <XCircle size={16}/> Reject Selected
+                                </button>
+                            </div>
+                        )}
+                    </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         {/* Forward Relationships (Outgoing) */}
                         {allRels.filter(r => r.child_table === selectedTable).length > 0 && (
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
-                                    Outgoing Relationships (FKs)
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer w-4 h-4"
+                                            checked={allRels.filter(r => r.child_table === selectedTable).length > 0 && allRels.filter(r => r.child_table === selectedTable).every(r => selectedRelIds.has(r.id))}
+                                            onChange={(e) => {
+                                                const newSet = new Set(selectedRelIds);
+                                                const outRels = allRels.filter(r => r.child_table === selectedTable);
+                                                if (e.target.checked) outRels.forEach(r => newSet.add(r.id));
+                                                else outRels.forEach(r => newSet.delete(r.id));
+                                                setSelectedRelIds(newSet);
+                                            }}
+                                        />
+                                        Outgoing Relationships (FKs)
+                                    </div>
                                 </div>
                                 <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {allRels.filter(r => r.child_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                        <div key={r.id} className="group relative flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm pt-8">
+                                            <div className="absolute top-3 left-4">
+                                                <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer w-4 h-4"
+                                                    checked={selectedRelIds.has(r.id)}
+                                                    onChange={(e) => {
+                                                        const newSet = new Set(selectedRelIds);
+                                                        if (e.target.checked) newSet.add(r.id);
+                                                        else newSet.delete(r.id);
+                                                        setSelectedRelIds(newSet);
+                                                    }}
+                                                />
+                                            </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
                                                     {selectedTable}.{r.child_column}
@@ -370,12 +425,35 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                         {/* Reverse Relationships (Incoming) */}
                         {allRels.filter(r => r.parent_table === selectedTable).length > 0 && (
                             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
-                                    Incoming Relationships
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer w-4 h-4"
+                                            checked={allRels.filter(r => r.parent_table === selectedTable).length > 0 && allRels.filter(r => r.parent_table === selectedTable).every(r => selectedRelIds.has(r.id))}
+                                            onChange={(e) => {
+                                                const newSet = new Set(selectedRelIds);
+                                                const inRels = allRels.filter(r => r.parent_table === selectedTable);
+                                                if (e.target.checked) inRels.forEach(r => newSet.add(r.id));
+                                                else inRels.forEach(r => newSet.delete(r.id));
+                                                setSelectedRelIds(newSet);
+                                            }}
+                                        />
+                                        Incoming Relationships
+                                    </div>
                                 </div>
                                 <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {allRels.filter(r => r.parent_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                        <div key={r.id} className="group relative flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm pt-8">
+                                            <div className="absolute top-3 left-4">
+                                                <input type="checkbox" className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer w-4 h-4"
+                                                    checked={selectedRelIds.has(r.id)}
+                                                    onChange={(e) => {
+                                                        const newSet = new Set(selectedRelIds);
+                                                        if (e.target.checked) newSet.add(r.id);
+                                                        else newSet.delete(r.id);
+                                                        setSelectedRelIds(newSet);
+                                                    }}
+                                                />
+                                            </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
                                                     {r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span>
