@@ -399,6 +399,11 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                     }}
                                                 />
                                             </div>
+                                            <div className="absolute top-3 right-4">
+                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 flex items-center gap-1"><Check size={12}/> Approved</span>}
+                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-1"><X size={12}/> Rejected</span>}
+                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">Pending</span>}
+                                            </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
                                                     {selectedTable}.{r.child_column}
@@ -453,6 +458,11 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                         setSelectedRelIds(newSet);
                                                     }}
                                                 />
+                                            </div>
+                                            <div className="absolute top-3 right-4">
+                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 flex items-center gap-1"><Check size={12}/> Approved</span>}
+                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-1"><X size={12}/> Rejected</span>}
+                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">Pending</span>}
                                             </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
