@@ -154,8 +154,10 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
     }, [schema, appConcepts]);
 
     return (
-        <div className="flex h-[800px] bg-slate-50 rounded-3xl overflow-hidden border border-slate-200">
-            {/* Left Pane: Table List */}
+        <div className="bg-slate-50 rounded-3xl overflow-hidden border border-slate-200 flex flex-col">
+            {/* Top Section: 3 Panes */}
+            <div className="flex h-[600px] border-b border-slate-200">
+                {/* Left Pane: Table List */}
             <div className="w-1/3 bg-white border-r border-slate-200 flex flex-col">
                 <div className="p-4 border-b border-slate-200 bg-slate-50/50">
                     <div className="relative">
@@ -247,69 +249,9 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 })}
                             </div>
                         </div>
-
-                        {/* Forward Relationships (Outgoing) */}
-                        {allRels.filter(r => r.child_table === selectedTable).length > 0 && (
-                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
-                                    Outgoing Relationships (FKs)
-                                </div>
-                                <div className="p-4 font-mono text-sm space-y-3">
-                                    {allRels.filter(r => r.child_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group relative p-4 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
-                                                {selectedTable}.{r.child_column}
-                                            </div>
-                                            <div className="text-indigo-400 my-1.5 flex justify-center">
-                                                <ArrowDown size={14} />
-                                            </div>
-                                            <div className="text-slate-500 truncate" title={`${r.parent_table}.${r.parent_column}`}>
-                                                {r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span>
-                                            </div>
-                                            <button 
-                                                onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
-                                            >
-                                                Manage
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Reverse Relationships (Incoming) */}
-                        {allRels.filter(r => r.parent_table === selectedTable).length > 0 && (
-                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8">
-                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
-                                    Incoming Relationships
-                                </div>
-                                <div className="p-4 font-mono text-sm space-y-3">
-                                    {allRels.filter(r => r.parent_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group relative p-4 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                                            <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
-                                                {r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span>
-                                            </div>
-                                            <div className="text-indigo-400 my-1.5 flex justify-center">
-                                                <ArrowDown size={14} />
-                                            </div>
-                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.parent_column}`}>
-                                                {selectedTable}.{r.parent_column}
-                                            </div>
-                                            <button 
-                                                onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
-                                            >
-                                                Manage
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                        
                     </div>
                 ) : (
+
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center text-slate-400">
                         <Database size={48} className="mb-4 text-slate-200" strokeWidth={1} />
                         <h3 className="text-lg font-bold text-slate-600">Select a table to explore</h3>
@@ -382,9 +324,83 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                         </div>
                     )}
                 </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
-            {/* Detail Panel Modal (over middle pane) */}
+            {/* Bottom Section: Full Width Relationships */}
+            {selectedTable && schema[selectedTable] && (allRels.filter(r => r.child_table === selectedTable).length > 0 || allRels.filter(r => r.parent_table === selectedTable).length > 0) && (
+                <div className="p-8 bg-white min-h-[300px]">
+                    <h3 className="text-xl font-black text-slate-800 mb-6 flex items-center gap-2">
+                        <LinkIcon size={20} className="text-indigo-500" /> Connections for {getConceptLabel(selectedTable)}
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Forward Relationships (Outgoing) */}
+                        {allRels.filter(r => r.child_table === selectedTable).length > 0 && (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
+                                    Outgoing Relationships (FKs)
+                                </div>
+                                <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {allRels.filter(r => r.child_table === selectedTable).map(r => (
+                                        <div key={r.id} className="group relative p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
+                                                {selectedTable}.{r.child_column}
+                                            </div>
+                                            <div className="text-indigo-400 my-2 flex justify-center">
+                                                <ArrowDown size={16} />
+                                            </div>
+                                            <div className="text-slate-500 truncate" title={`${r.parent_table}.${r.parent_column}`}>
+                                                {r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span>
+                                            </div>
+                                            <button 
+                                                onClick={() => setActiveRel(r)}
+                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
+                                            >
+                                                Manage
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Reverse Relationships (Incoming) */}
+                        {allRels.filter(r => r.parent_table === selectedTable).length > 0 && (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden h-fit">
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
+                                    Incoming Relationships
+                                </div>
+                                <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {allRels.filter(r => r.parent_table === selectedTable).map(r => (
+                                        <div key={r.id} className="group relative p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                            <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
+                                                {r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span>
+                                            </div>
+                                            <div className="text-indigo-400 my-2 flex justify-center">
+                                                <ArrowDown size={16} />
+                                            </div>
+                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.parent_column}`}>
+                                                {selectedTable}.{r.parent_column}
+                                            </div>
+                                            <button 
+                                                onClick={() => setActiveRel(r)}
+                                                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 transition-opacity shadow-sm"
+                                            >
+                                                Manage
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Detail Panel Modal (over everything) */}
             {activeRel && (
                 <div className="fixed inset-0 z-[120] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in">
                     <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden border border-slate-100 flex flex-col">
