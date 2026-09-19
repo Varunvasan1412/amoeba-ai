@@ -325,6 +325,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                     )}
                 </div>
             </div>
+            </div>
 
             {/* Bottom Section: Full Width Relationships */}
             {selectedTable && schema[selectedTable] && (allRels.filter(r => r.child_table === selectedTable).length > 0 || allRels.filter(r => r.parent_table === selectedTable).length > 0) && (
