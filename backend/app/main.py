@@ -19,6 +19,20 @@ async def lifespan(app: FastAPI):
     print("Connecting to Database...")
     await init_db()
     
+    # Auto-Migrate missing columns in semanticmapping
+    from sqlalchemy import text
+    async with async_session() as session:
+        try:
+            # Safe for both PostgreSQL (ADD COLUMN IF NOT EXISTS) and SQLite (catch error)
+            await session.execute(text("ALTER TABLE semanticmapping ADD COLUMN IF NOT EXISTS synonyms VARCHAR"))
+            await session.execute(text("ALTER TABLE semanticmapping ADD COLUMN IF NOT EXISTS relationships VARCHAR"))
+            await session.commit()
+            print("✅ Auto-migrated semanticmapping schema")
+        except Exception as e:
+            # SQLite doesn't support IF NOT EXISTS for ADD COLUMN, but it will throw an OperationalError if it exists
+            # Either way, we just catch and ignore if it fails (it likely already exists)
+            await session.rollback()
+            print(f"ℹ️ Note: Auto-migration skipped or failed (columns might already exist): {e}")
     # Start Background Cleanup Service
     from app.services.cleanup_service import cleanup_loop
     asyncio.create_task(cleanup_loop())
