@@ -72,6 +72,31 @@ async def create_manual_relationship(
     clear_relationship_cache(client_id)
     return new_rel
 
+class SemanticRelationshipCreate(BaseModel):
+    source_table: str
+    target_table: str
+    relationship_type: str # "belongs_to" or "contains"
+
+@router.post("/semantic", response_model=AllowedRelationship)
+async def create_semantic_relationship(
+    payload: SemanticRelationshipCreate,
+    api_key: str = Header(None, alias="X-API-Key"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Creates a business-level relationship and relies on the backend to resolve technical FKs.
+    """
+    client_id = await get_client_id_by_key(api_key, session)
+    from app.services.relationship_service import resolve_semantic_relationship
+    
+    return await resolve_semantic_relationship(
+        session, 
+        client_id, 
+        payload.source_table, 
+        payload.target_table, 
+        payload.relationship_type
+    )
+
 @router.post("/{rel_id}/toggle")
 async def toggle_relationship(
     rel_id: int,

@@ -279,6 +279,113 @@ def clear_relationship_cache(client_id: Optional[int] = None):
     else:
         _RELATIONSHIP_CACHE = {}
 
+async def resolve_semantic_relationship(session: AsyncSession, client_id: int, source_table: str, target_table: str, rel_type: str) -> AllowedRelationship:
+    """
+    Resolves a business relationship (e.g. Quotation belongs_to Customer) into a technical FK mapping.
+    Raises HTTPException if ambiguous or not found.
+    """
+    if rel_type == "belongs_to":
+        parent = target_table
+        child = source_table
+    elif rel_type == "contains":
+        parent = source_table
+        child = target_table
+    else:
+        raise HTTPException(status_code=400, detail="Invalid relationship type")
+
+    client_config = await session.get(ClientConfig, client_id)
+    if not client_config:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    sync_url = client_config.db_connection_url.replace("+asyncpg", "")
+    loop = asyncio.get_event_loop()
+    schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)
+
+    if parent not in schema_data or child not in schema_data:
+        raise HTTPException(status_code=400, detail="NOT_FOUND: Tables not found in schema.")
+        
+    possible_mappings = []
+
+    # 1. Explicit FKs from child to parent
+    fks = schema_data[child].get("foreign_keys", [])
+    for fk in fks:
+        if fk["referred_table"] == parent:
+            if fk["constrained_columns"] and fk["referred_columns"]:
+                possible_mappings.append({
+                    "child_column": fk["constrained_columns"][0],
+                    "parent_column": fk["referred_columns"][0],
+                    "method": "explicit"
+                })
+
+    # 2. Heuristics (if no explicit FKs found)
+    if not possible_mappings:
+        child_cols = schema_data[child].get("columns", [])
+        parent_cols = schema_data[parent].get("columns", [])
+        
+        parent_base = parent.lower()
+        if parent_base.endswith("s"): parent_base = parent_base[:-1] # naive singular
+        
+        # We assume the parent ID column is 'id' for heuristics
+        parent_id_col = "id"
+        if parent_id_col in [c.lower() for c in parent_cols]:
+            for col in child_cols:
+                l_col = col.lower()
+                if l_col.endswith("_id") or l_col.endswith("id"):
+                    if l_col != "id":
+                        possible_mappings.append({
+                            "child_column": col,
+                            "parent_column": parent_id_col,
+                            "method": "heuristic",
+                            "score": 1 if parent_base in l_col else 0
+                        })
+        
+        if possible_mappings:
+            # Filter by highest score to reduce ambiguity (e.g. prioritize customer_id over created_by_id for Customer table)
+            max_score = max(m["score"] for m in possible_mappings)
+            possible_mappings = [m for m in possible_mappings if m["score"] == max_score]
+
+    if len(possible_mappings) > 1:
+        raise HTTPException(status_code=400, detail="AMBIGUOUS: Amoeba found more than one possible connection. Please review this in Advanced Mode.")
+    elif len(possible_mappings) == 0:
+        raise HTTPException(status_code=400, detail="NOT_FOUND: Amoeba could not confidently determine the connection. Please review this in Advanced Mode.")
+        
+    mapping = possible_mappings[0]
+    
+    # Check if already exists in DB
+    from sqlmodel import select
+    stmt = select(AllowedRelationship).where(
+        AllowedRelationship.client_id == client_id,
+        AllowedRelationship.parent_table == parent,
+        AllowedRelationship.child_table == child,
+        AllowedRelationship.parent_column == mapping["parent_column"],
+        AllowedRelationship.child_column == mapping["child_column"]
+    )
+    existing = (await session.execute(stmt)).scalars().first()
+    
+    if existing:
+        existing.is_enabled = True
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        clear_relationship_cache(client_id)
+        return existing
+    else:
+        new_rel = AllowedRelationship(
+            client_id=client_id,
+            parent_table=parent,
+            parent_column=mapping["parent_column"],
+            child_table=child,
+            child_column=mapping["child_column"],
+            is_enabled=True,
+            risk_level="safe" if mapping["method"] == "explicit" else "heuristic",
+            confidence_score=1.0 if mapping["method"] == "explicit" else 0.8
+        )
+        session.add(new_rel)
+        await session.commit()
+        await session.refresh(new_rel)
+        clear_relationship_cache(client_id)
+        return new_rel
+
 async def validate_join_path(session: AsyncSession, client_id: int, graph: Dict[str, Any], base_table: str, joins: List[Any]) -> List[Dict[str, Any]]:
     """
     Validates a join path. Now supports both linear (List[str]) and branched (List[Dict]) joins.

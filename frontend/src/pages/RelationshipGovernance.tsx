@@ -16,7 +16,9 @@ export default function RelationshipGovernance() {
   const [message, setMessage] = useState<{type: "success" | "error", text: string} | null>(null);
   const [allRels, setAllRels] = useState<any[]>([]);
   const [fullSchema, setFullSchema] = useState<any[]>([]);
+  const [appConcepts, setAppConcepts] = useState<any[]>([]);
   const [activeRelForPayload, setActiveRelForPayload] = useState<any | null>(null);
+  const [isAdvancedMode, setIsAdvancedMode] = useState(false);
 
   const fetchData = async () => {
     if (!apiKey) return;
@@ -28,9 +30,16 @@ export default function RelationshipGovernance() {
       const data = await res.json();
       if (Array.isArray(data)) {
           setAllRels(data);
+          
           const schemaRes = await apiFetch(`${API_BASE}/api/v2/semantic/schema`.replace(/\/\//g, '/').replace(':/', '://'), { headers: { "X-API-Key": apiKey } });
           const sData = await schemaRes.json();
           setFullSchema(sData);
+
+          const conceptsRes = await apiFetch(`${API_BASE}/api/v2/semantic/mappings?client_id=${localStorage.getItem('admin_clientId') || ''}`.replace(/\/\//g, '/').replace(':/', '://'), { headers: { "X-API-Key": apiKey } });
+          if (conceptsRes.ok) {
+              const cData = await conceptsRes.json();
+              setAppConcepts(cData);
+          }
       }
     } catch (err) {
       console.error(err);
@@ -96,10 +105,26 @@ export default function RelationshipGovernance() {
             <p className="text-sm text-gray-500 font-medium tracking-tight">Decide which tables are allowed to talk to each other.</p>
           </div>
         </div>
+        <div className="flex items-center gap-3 bg-slate-50 p-1.5 rounded-xl border border-slate-200">
+            <button 
+                onClick={() => setIsAdvancedMode(false)}
+                className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${!isAdvancedMode ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+                Simple Mode
+            </button>
+            <button 
+                onClick={() => setIsAdvancedMode(true)}
+                className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${isAdvancedMode ? 'bg-white text-indigo-600 shadow-sm border border-slate-200' : 'text-slate-400 hover:text-slate-600'}`}
+            >
+                Advanced Mode
+            </button>
+        </div>
       </div>
 
-      {/* Relationship Discovery Engine */}
-      <div className="mb-8">
+      {/* Relationship Discovery Engine - ONLY ADVANCED MODE */}
+      {isAdvancedMode && (
+        <>
+      <div className="mb-8 animate-in fade-in slide-in-from-top-4">
           <div className="flex items-center gap-2 mb-4">
               <Wand2 size={18} className="text-blue-500" />
               <h2 className="text-lg font-bold text-gray-700">Discovery Engine</h2>
@@ -204,6 +229,8 @@ export default function RelationshipGovernance() {
               </button>
           </div>
       </div>
+        </>
+      )}
 
       {message && (
           <div className={`mb-6 p-4 rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-4 ${message.type === "success" ? "bg-green-50 text-green-700 border border-green-100" : "bg-red-50 text-test-700 border border-red-100"}`}>
@@ -222,7 +249,9 @@ export default function RelationshipGovernance() {
               <JoinExplorer 
                 rels={allRels} 
                 schemaData={fullSchema}
+                appConcepts={appConcepts}
                 apiKey={apiKey}
+                isAdvancedMode={isAdvancedMode}
                 onOpenPayload={(rel) => setActiveRelForPayload(rel)}
                 onRefresh={fetchData}
               />

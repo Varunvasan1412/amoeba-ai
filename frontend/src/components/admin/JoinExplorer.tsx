@@ -29,11 +29,14 @@ interface ChainStep {
 interface JoinExplorerProps {
   rels: Relationship[];
   schemaData: any[];
+  appConcepts?: any[];
   apiKey: string | null;
+  isAdvancedMode?: boolean;
+  onOpenPayload?: (rel: any) => void;
   onRefresh: () => void;
 }
 
-export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, apiKey, onRefresh }) => {
+export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, appConcepts = [], apiKey, isAdvancedMode = true, onOpenPayload, onRefresh }) => {
     // Mode State
     const [mode, setMode] = useState<'single' | 'chain'>('single');
 
@@ -74,6 +77,54 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
             return matchesTable && matchesSearch;
         });
     }, [rels, filterTable, searchTerm]);
+
+    // Simple Mode State
+    const [simpleSource, setSimpleSource] = useState('');
+    const [simpleRelType, setSimpleRelType] = useState('belongs_to');
+    const [simpleTarget, setSimpleTarget] = useState('');
+
+    const handleSaveSimple = async () => {
+        if (!simpleSource || !simpleTarget || !apiKey) return;
+        setSaving(true);
+        try {
+            const API_BASE = import.meta.env.VITE_API_URL || "";
+            const res = await apiFetch(`${API_BASE}/api/v2/relationships/semantic`.replace(/\/\//g, '/').replace(':/', '://'), {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-API-Key": apiKey },
+                body: JSON.stringify({
+                    source_table: simpleSource,
+                    target_table: simpleTarget,
+                    relationship_type: simpleRelType
+                })
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                toast.error(data.detail || "Failed to establish connection.");
+            } else {
+                setSimpleSource(''); setSimpleTarget(''); setSimpleRelType('belongs_to');
+                onRefresh();
+                toast.success("Connection Established!");
+            }
+        } catch (err: any) {
+            toast.error(err.message);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const getConceptLabel = (tableName: string) => {
+        const concept = appConcepts?.find(c => c.database_table === tableName);
+        return concept?.ui_label || tableName;
+    };
+
+    // Filter concepts that have a valid mapping
+    const conceptOptions = useMemo(() => {
+        return (appConcepts || [])
+            .filter(c => !c.is_doubtful)
+            .map(c => ({ value: c.database_table, label: c.ui_label }))
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }, [appConcepts]);
 
     const handleSaveSingle = async () => {
         if (!tableA || !colA || !tableB || !colB || !apiKey) {
@@ -203,6 +254,64 @@ export const JoinExplorer: React.FC<JoinExplorerProps> = ({ rels, schemaData, ap
         setColB(tempCol);
         setPulledData([]); // Reset pulled data as the target table changed
     };
+
+    if (!isAdvancedMode) {
+        return (
+            <div className="flex flex-col h-full bg-[#f8fafc] font-sans p-8 overflow-y-auto">
+                <div className="max-w-4xl mx-auto w-full flex flex-col gap-8 animate-in fade-in slide-in-from-top-4">
+                    {/* Sentence Builder */}
+                    <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm flex flex-col gap-6 relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-500"></div>
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center"><Plus size={24} strokeWidth={3} /></div>
+                            <div>
+                                <h3 className="text-xl font-black text-slate-800 tracking-tight">Teach Amoeba a Connection</h3>
+                                <p className="text-sm text-slate-500 font-medium mt-1">Link your business concepts so Amoeba understands how they relate.</p>
+                            </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-6 rounded-[24px] border border-slate-100">
+                            <SearchableDropdown options={conceptOptions} value={simpleSource} onChange={setSimpleSource} placeholder="Concept (e.g. Quotation)" />
+                            <div className="flex-shrink-0">
+                                <select value={simpleRelType} onChange={e => setSimpleRelType(e.target.value)} className="bg-white border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold text-indigo-600 outline-none focus:ring-4 focus:ring-indigo-100 shadow-sm cursor-pointer appearance-none text-center min-w-[120px]">
+                                    <option value="belongs_to">belongs to</option>
+                                    <option value="contains">contains</option>
+                                </select>
+                            </div>
+                            <SearchableDropdown options={conceptOptions} value={simpleTarget} onChange={setSimpleTarget} placeholder="Concept (e.g. Customer)" />
+                        </div>
+                        <button onClick={handleSaveSimple} disabled={!simpleSource || !simpleTarget || saving} className="w-full bg-indigo-600 text-white font-black text-sm py-4 rounded-2xl hover:bg-indigo-700 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest flex items-center justify-center gap-2">
+                            {saving ? <Loader2 className="animate-spin" size={18}/> : <Link2 strokeWidth={3} size={18}/>}
+                            Save Connection
+                        </button>
+                    </div>
+
+                    {/* Simple List */}
+                    <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm">
+                        <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-2 tracking-tight"><Database size={20} className="text-indigo-500" strokeWidth={3}/> Known Connections</h3>
+                        {rels.length === 0 ? (
+                            <div className="py-16 flex flex-col items-center justify-center text-slate-400">
+                                <Layers size={40} className="mb-3 opacity-20" />
+                                <span className="font-bold text-sm">No connections known yet.</span>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col gap-3">
+                                {rels.map(rel => (
+                                    <div key={rel.id} className="flex items-center justify-between p-5 rounded-2xl border border-slate-100 hover:border-indigo-100 hover:bg-indigo-50/50 transition-all group">
+                                        <div className="flex items-center gap-4">
+                                            <div className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-sm rounded-xl shadow-sm">{getConceptLabel(rel.child_table)}</div>
+                                            <span className="text-slate-400 text-sm font-medium italic">belongs to</span>
+                                            <div className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-sm rounded-xl shadow-sm">{getConceptLabel(rel.parent_table)}</div>
+                                        </div>
+                                        <button onClick={() => handleDelete(rel.id)} className="p-3 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all opacity-0 group-hover:opacity-100 shadow-sm"><Trash2 size={16} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-full bg-[#f8fafc] font-sans">

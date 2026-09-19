@@ -16,10 +16,10 @@ from fastapi.responses import JSONResponse
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🐘 Connecting to Database...")
+    print("Connecting to Database...")
     await init_db()
     
-    # 🧹 Start Background Cleanup Service
+    # Start Background Cleanup Service
     from app.services.cleanup_service import cleanup_loop
     asyncio.create_task(cleanup_loop())
     

@@ -50,8 +50,9 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 # 4. Init DB
 async def init_db():
     async with engine.begin() as conn:
-        # Enable pgvector extension before creating tables
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Enable pgvector extension before creating tables (only if using postgres)
+        if "postgresql" in str(conn.engine.url):
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         
         # Create tables (Handles new tables only)
         await conn.run_sync(SQLModel.metadata.create_all)
@@ -83,7 +84,7 @@ async def init_db():
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE users ADD COLUMN client_id INTEGER"))
         except Exception as e:
-            logger.warning(f"Users migration notice: {e}")
+            print(f"Users migration notice: {e}")
 
         # 1.5 Update 'semantic_metadata' table
         try:
@@ -94,7 +95,7 @@ async def init_db():
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE semantic_metadata ADD COLUMN enum_mappings JSON"))
         except Exception as e:
-            logger.warning(f"SemanticMetadata migration notice: {e}")
+            print(f"SemanticMetadata migration notice: {e}")
 
         # 1.6 Update 'semanticmapping' table
         try:
@@ -133,7 +134,7 @@ async def init_db():
             if not res.fetchone():
                 await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN tab_group VARCHAR(100)"))
         except Exception as e:
-            logger.warning(f"SemanticMapping migration notice: {e}")
+            print(f"SemanticMapping migration notice: {e}")
 
         # 2. Update 'clientconfig' table
         try:
@@ -188,7 +189,7 @@ async def init_db():
                 await conn.execute(text("ALTER TABLE field_metadata ADD COLUMN is_primary_date BOOLEAN DEFAULT FALSE"))
                 print("  ✅ Added 'is_primary_date' to field_metadata")
         except Exception as e:
-            logger.warning(f"FieldMetadata migration notice: {e}")
+            print(f"FieldMetadata migration notice: {e}")
 
         # 4. Update 'navigationitem' table (pgvector)
         try:
@@ -196,8 +197,9 @@ async def init_db():
                 "SELECT column_name FROM information_schema.columns WHERE table_name = 'navigationitem' AND column_name = 'embedding'"
             ))
             if not res.fetchone():
-                await conn.execute(text("ALTER TABLE navigationitem ADD COLUMN embedding vector(1536)"))
-                print("  ✅ Added 'embedding' vector column to navigationitem")
+                if "postgresql" in str(conn.engine.url):
+                    await conn.execute(text("ALTER TABLE navigationitem ADD COLUMN embedding vector(1536)"))
+                print("  Added 'embedding' vector column to navigationitem")
 
             # Clean up legacy project folder prefixes (e.g. /newlook/) and deduplicate
             await conn.execute(text(
@@ -223,22 +225,22 @@ async def test_connection():
     try:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
-            print("🐘 Database connection verified.")
+            print("Database connection verified.")
     except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+        print(f"Database connection failed: {e}")
 
 async def wait_for_db(retries=10):
     while retries > 0:
         try:
             async with engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-                print("✅ Database is UP.")
+                print("Database is UP.")
                 return True
         except Exception as e:
             retries -= 1
-            print(f"⚠️ Database connection failed. Retrying in 2s... ({retries} left)")
+            print(f"Database connection failed. Retrying in 2s... ({retries} left)")
             print(f"Error: {e}")
             await asyncio.sleep(2)
     
     if retries == 0:
-        print("❌ Could not connect to Database after multiple retries.")
+        print("Could not connect to Database after multiple retries.")

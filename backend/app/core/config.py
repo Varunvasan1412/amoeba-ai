@@ -15,10 +15,10 @@ def load_env_file():
     
     for path in candidates:
         if os.path.exists(path):
-            print(f"🔧 CONFIG: Loading .env from {path}")
+            print(f"CONFIG: Loading .env from {path}")
             load_dotenv(path, override=True)
             return True
-    print("⚠️ CONFIG: No .env file found in candidates.")
+    print("CONFIG: No .env file found in candidates.")
     return False
 
 load_env_file()
@@ -86,5 +86,5 @@ class Settings(BaseSettings):
         extra = "ignore"
 
 settings = Settings()
-print(f"🔧 CONFIG: AI Provider: {settings.AI_PROVIDER}")
-print(f"🔧 CONFIG: Google Key Loaded: {bool(settings.GOOGLE_API_KEY)}")
+print(f"CONFIG: AI Provider: {settings.AI_PROVIDER}")
+print(f"CONFIG: Google Key Loaded: {bool(settings.GOOGLE_API_KEY)}")
