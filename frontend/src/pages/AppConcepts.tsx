@@ -67,11 +67,11 @@ export default function AppConcepts() {
   };
 
   const handleNextStep = () => {
-    if (step === 2) {
-      // Mock finding data sources based on the label
+    if (step === 1) {
+      const suggestedTableName = newConcept.ui_label.toLowerCase().replace(/[^a-z0-9_]/g, '');
       setSuggestedSources([
-        { name: "enquiries", description: "Looks like records that could match " + newConcept.ui_label },
-        { name: "sales_records", description: "Contains transaction data" }
+        { name: suggestedTableName, description: `Primary table match for ${newConcept.ui_label}` },
+        { name: `${suggestedTableName}_records`, description: "Alternative matching table" }
       ]);
     }
     setStep(step + 1);
