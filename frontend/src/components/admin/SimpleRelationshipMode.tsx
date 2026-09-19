@@ -224,29 +224,53 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                 {!isPk && outRel && <LinkIcon size={14} className="text-indigo-400" />}
                                             </div>
                                             <div className="flex-1 flex items-center">
-                                                <span className={`${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{col.name}</span>
-                                                <span className="text-slate-400 text-xs ml-3">{col.type}</span>
-                                            </div>
-                                            {/* Visual Connection mapping */}
-                                            {outRel && (
-                                                <div className="absolute left-0 top-0 w-full h-full flex items-center pl-48 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <div className="flex items-center text-indigo-400 gap-2">
-                                                        <span>───────────────►</span>
-                                                        <span className="font-bold">{outRel.parent_table}.{outRel.parent_column}</span>
+                                                <div className="w-48 flex items-center">
+                                                    <span className={`${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{col.name}</span>
+                                                    <span className="text-slate-400 text-xs ml-3">{col.type}</span>
+                                                </div>
+                                                {/* Visual Connection mapping */}
+                                                {outRel && (
+                                                    <div className="flex items-center text-indigo-500 gap-2 opacity-70 group-hover:opacity-100 transition-opacity">
+                                                        <span>───────►</span>
+                                                        <span className="font-bold text-indigo-700">{outRel.parent_table}.{outRel.parent_column}</span>
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setActiveRel(outRel); }}
-                                                            className="ml-4 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100"
+                                                            className="ml-3 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100 opacity-0 group-hover:opacity-100 transition-opacity"
                                                         >
                                                             View Details
                                                         </button>
                                                     </div>
-                                                </div>
-                                            )}
+                                                )}
+                                            </div>
                                         </div>
                                     );
                                 })}
                             </div>
                         </div>
+
+                        {/* Forward Relationships (Outgoing) */}
+                        {allRels.filter(r => r.child_table === selectedTable).length > 0 && (
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-8">
+                                <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
+                                    Outgoing Relationships (FKs)
+                                </div>
+                                <div className="p-5 font-mono text-sm space-y-3">
+                                    {allRels.filter(r => r.child_table === selectedTable).map(r => (
+                                        <div key={r.id} className="flex items-center gap-4 group">
+                                            <div className="text-slate-800 font-bold">{selectedTable}.{r.child_column}</div>
+                                            <div className="text-indigo-400">───────────────►</div>
+                                            <div className="text-slate-500">{r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span></div>
+                                            <button 
+                                                onClick={() => setActiveRel(r)}
+                                                className="opacity-0 group-hover:opacity-100 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100 transition-opacity ml-4"
+                                            >
+                                                View Details
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Reverse Relationships (Incoming) */}
                         {allRels.filter(r => r.parent_table === selectedTable).length > 0 && (
