@@ -196,6 +196,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 try {
                                     await apiFetch('/api/v2/relationships/bulk-update', {
                                         method: 'POST',
+                                        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
                                         body: JSON.stringify({ action: 'refresh_discovery' })
                                     });
                                     window.location.reload();
