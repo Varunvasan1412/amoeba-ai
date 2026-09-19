@@ -1,11 +1,19 @@
+import time
 from sqlalchemy import create_engine, inspect
 from typing import Dict, List, Any
+
+_schema_cache = {}
 
 def discover_full_schema(connection_url: str) -> Dict[str, Any]:
     """
     Enhanced discovery for v2.
     Returns table columns AND foreign key relationships for safe joins.
+    Results are cached for 10 minutes to dramatically speed up UI navigation.
     """
+    current_time = time.time()
+    if connection_url in _schema_cache and current_time - _schema_cache[connection_url]['time'] < 600:
+        return _schema_cache[connection_url]['data']
+        
     try:
         engine = create_engine(connection_url)
         inspector = inspect(engine)
@@ -41,6 +49,7 @@ def discover_full_schema(connection_url: str) -> Dict[str, Any]:
                 "foreign_keys": fks
             }
             
+        _schema_cache[connection_url] = {'time': time.time(), 'data': schema_data}
         return schema_data
     except Exception as e:
         print(f"❌ Enhanced Discovery Failed: {e}")
