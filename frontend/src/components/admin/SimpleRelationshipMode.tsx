@@ -225,10 +225,10 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                 {isPk && <Key size={14} className="text-amber-500" />}
                                                 {!isPk && outRel && <LinkIcon size={14} className="text-indigo-400" />}
                                             </div>
-                                            <div className="flex-1 flex items-center">
-                                                <div className="w-48 flex items-center">
-                                                    <span className={`${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{col.name}</span>
-                                                    <span className="text-slate-400 text-xs ml-3">{col.type}</span>
+                                            <div className="flex-1 flex flex-col xl:flex-row xl:items-center gap-2 xl:gap-0">
+                                                <div className="min-w-[200px] flex items-center pr-4">
+                                                    <span className={`truncate max-w-[160px] ${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`} title={col.name}>{col.name}</span>
+                                                    <span className="text-slate-400 text-xs ml-3 shrink-0">{col.type}</span>
                                                 </div>
                                                 {/* Visual Connection mapping */}
                                                 {outRel && (
@@ -239,7 +239,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                             onClick={(e) => { e.stopPropagation(); setActiveRel(outRel); }}
                                                             className="ml-3 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100 opacity-0 group-hover:opacity-100 transition-opacity"
                                                         >
-                                                            View Details
+                                                            Manage
                                                         </button>
                                                     </div>
                                                 )}
@@ -343,19 +343,21 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 </div>
                                 <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {allRels.filter(r => r.child_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group relative p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
-                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
-                                                {selectedTable}.{r.child_column}
-                                            </div>
-                                            <div className="text-indigo-400 my-2 flex justify-center">
-                                                <ArrowDown size={16} />
-                                            </div>
-                                            <div className="text-slate-500 truncate" title={`${r.parent_table}.${r.parent_column}`}>
-                                                {r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span>
+                                        <div key={r.id} className="group flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                            <div className="flex-1 flex flex-col justify-center">
+                                                <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
+                                                    {selectedTable}.{r.child_column}
+                                                </div>
+                                                <div className="text-indigo-400 my-2 flex justify-center">
+                                                    <ArrowDown size={16} />
+                                                </div>
+                                                <div className="text-slate-500 truncate" title={`${r.parent_table}.${r.parent_column}`}>
+                                                    {r.parent_table}.<span className="font-bold text-slate-700">{r.parent_column}</span>
+                                                </div>
                                             </div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm"
+                                                className="mt-4 w-full py-2 text-xs bg-white text-indigo-600 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm transition-colors"
                                             >
                                                 Manage
                                             </button>
@@ -373,19 +375,21 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                 </div>
                                 <div className="p-6 font-mono text-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     {allRels.filter(r => r.parent_table === selectedTable).map(r => (
-                                        <div key={r.id} className="group relative p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
-                                            <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
-                                                {r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span>
-                                            </div>
-                                            <div className="text-indigo-400 my-2 flex justify-center">
-                                                <ArrowDown size={16} />
-                                            </div>
-                                            <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.parent_column}`}>
-                                                {selectedTable}.{r.parent_column}
+                                        <div key={r.id} className="group flex flex-col p-5 border border-slate-100 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors shadow-sm">
+                                            <div className="flex-1 flex flex-col justify-center">
+                                                <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
+                                                    {r.child_table}.<span className="font-bold text-slate-700">{r.child_column}</span>
+                                                </div>
+                                                <div className="text-indigo-400 my-2 flex justify-center">
+                                                    <ArrowDown size={16} />
+                                                </div>
+                                                <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.parent_column}`}>
+                                                    {selectedTable}.{r.parent_column}
+                                                </div>
                                             </div>
                                             <button 
                                                 onClick={() => setActiveRel(r)}
-                                                className="absolute top-3 right-3 text-xs bg-white text-indigo-600 px-3 py-1 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm"
+                                                className="mt-4 w-full py-2 text-xs bg-white text-indigo-600 rounded-lg border border-indigo-200 font-sans font-bold cursor-pointer hover:bg-indigo-50 shadow-sm transition-colors"
                                             >
                                                 Manage
                                             </button>
