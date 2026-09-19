@@ -324,9 +324,6 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                         </div>
                     )}
                 </div>
-                        </div>
-                    )}
-                </div>
             </div>
 
             {/* Bottom Section: Full Width Relationships */}
