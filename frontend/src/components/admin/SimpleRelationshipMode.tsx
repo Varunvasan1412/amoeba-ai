@@ -185,8 +185,31 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
             </div>
 
             {/* Health Summary */}
-            <div>
-                <h2 className="text-xl font-black text-slate-800 mb-4 flex items-center gap-2"><Activity size={20} className="text-blue-500"/> Relationship Health</h2>
+            <div className="mt-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                    <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                        <Activity size={20} className="text-blue-500"/> Relationship Health
+                    </h2>
+                    <button 
+                        onClick={async () => {
+                            if (window.confirm("Scan database for new relationships?")) {
+                                try {
+                                    await apiFetch('/api/v2/relationships/bulk-update', {
+                                        method: 'POST',
+                                        body: JSON.stringify({ action: 'refresh_discovery' })
+                                    });
+                                    window.location.reload();
+                                } catch (e) {
+                                    toast.error("Failed to scan database");
+                                }
+                            }
+                        }}
+                        className="flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all shadow-md"
+                    >
+                        <Zap size={14} />
+                        SCAN DATABASE
+                    </button>
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col items-center justify-center">
                         <span className="text-3xl font-black text-slate-800">{health.discovered}</span>
