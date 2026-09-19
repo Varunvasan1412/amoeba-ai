@@ -260,7 +260,7 @@ export default function RelationshipGovernance() {
               <SimpleRelationshipMode 
                 allRels={allRels}
                 appConcepts={appConcepts}
-                apiKey={apiKey}
+                apiKey={apiKey || ''}
                 onRefresh={fetchData}
               />
           )}

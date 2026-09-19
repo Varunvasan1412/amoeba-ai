@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { CheckCircle, AlertTriangle, XCircle, Check, X, Search, Database, Key, Link as LinkIcon, Zap, ArrowRight, Loader2 } from 'lucide-react';
+import { Check, X, Search, Database, Key, Link as LinkIcon, ArrowRight, Loader2, ChevronRight, XCircle } from 'lucide-react';
 import { apiFetch } from '../../utils/api';
 import { toast } from 'react-toastify';
 import { SearchableDropdown } from './SearchableDropdown';
