@@ -91,7 +91,7 @@ async def get_physical_schema(
     
     loop = asyncio.get_running_loop()
     # Mask credentials for sync driver
-    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite")
+    sync_url = client.database_url.replace("postgresql+asyncpg", "postgresql").replace("sqlite+aiosqlite", "sqlite").replace("mysql+aiomysql", "mysql+pymysql").replace("mysql+asyncmy", "mysql+pymysql")
     
     try:
         schema_data = await loop.run_in_executor(None, discover_full_schema, sync_url)

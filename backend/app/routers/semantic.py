@@ -62,7 +62,7 @@ class SemanticMappingResponse(BaseModel):
     ui_label: str
     database_table: str
     base_query: Optional[str] = None
-    source_file: Optional[str]
+    source_file: Optional[str] = None
     is_doubtful: bool
 
 class SQLExtractRequest(BaseModel):

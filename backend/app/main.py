@@ -102,6 +102,29 @@ async def redis_connection_error_handler(request: Request, exc: redis.exceptions
     logger.error(f"Rate Limit Storage Error: {exc}. Returning 500 fallback.")
     return JSONResponse(status_code=500, content={"detail": "Internal Server Error (Storage Connection)"})
 
+from fastapi.exceptions import ResponseValidationError
+
+@app.exception_handler(ResponseValidationError)
+async def validation_exception_handler(request: Request, exc: ResponseValidationError):
+    import logging
+    logger = logging.getLogger("app")
+    logger.error(f"Response Validation Error: {exc.errors()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Response Validation Error", "errors": exc.errors()},
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback, logging
+    logger = logging.getLogger("app")
+    logger.error(f"Global Exception: {exc}")
+    # We return JSON so the frontend can display the actual error instead of a plain text Nginx/Starlette 500
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Global Exception", "error": str(exc), "trace": traceback.format_exc()}
+    )
+
 app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
