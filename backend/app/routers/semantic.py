@@ -200,8 +200,8 @@ async def get_ui_table_mappings(
         if not m.id: continue
         response.append(SemanticMappingResponse(
             id=m.id,
-            ui_label=m.ui_label,
-            database_table=m.database_table,
+            ui_label=m.ui_label or "",
+            database_table=m.database_table or "",
             base_query=m.base_query,
             source_file=m.source_file,
             is_doubtful=True if not m.base_query else False
