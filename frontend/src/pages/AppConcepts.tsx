@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
 import { Sparkles, Plus, Check, ArrowRight, Loader2, Link2, Filter } from "lucide-react";

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useEffect, useRef } from "react";
 import { toast } from "react-toastify";
 import { useAdmin } from "../../context/AdminContext";

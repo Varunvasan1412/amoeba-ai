@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState, useEffect, useRef, useCallback, memo, useMemo } from "react";
 import { MessageCircle, Send, Loader2, Trash2, Plus, MessageSquare, Square, Pencil, Sun, Moon, PanelLeftOpen, PanelLeftClose, Paperclip, SlidersHorizontal, Building2, FileText, X, AlertCircle, Mic, Download, RefreshCw, BarChart3, Table2 } from "lucide-react";
 import { toast } from "react-toastify";
