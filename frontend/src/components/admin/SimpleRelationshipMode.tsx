@@ -211,7 +211,7 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                             <div className="px-5 py-3 border-b border-slate-100 bg-slate-50 font-bold text-slate-700 text-sm flex items-center gap-2">
                                 Schema & Active Relationships
                             </div>
-                            <div className="p-5 font-mono text-sm">
+                            <div className="p-5 font-mono text-sm overflow-x-auto">
                                 <div className="text-slate-800 font-bold mb-3">{selectedTable}</div>
                                 {schema[selectedTable].columns.map((col, idx) => {
                                     const isPk = schema[selectedTable].primary_keys.includes(col.name);
@@ -220,21 +220,21 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                     const outRel = allRels.find(r => r.child_table === selectedTable && r.child_column === col.name);
                                     
                                     return (
-                                        <div key={idx} className="flex items-start mb-2 group relative">
+                                        <div key={idx} className="flex items-start mb-2 group relative min-w-max">
                                             <div className="w-8 shrink-0 flex justify-end pr-2 text-slate-400">
                                                 {isPk && <Key size={14} className="text-amber-500" />}
                                                 {!isPk && outRel && <LinkIcon size={14} className="text-indigo-400" />}
                                             </div>
-                                            <div className="flex-1 flex flex-col xl:flex-row xl:items-center gap-2 xl:gap-0">
-                                                <div className="min-w-[200px] flex items-center pr-4">
-                                                    <span className={`truncate max-w-[160px] ${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`} title={col.name}>{col.name}</span>
+                                            <div className="flex-1 flex items-center gap-4">
+                                                <div className="flex items-center">
+                                                    <span className={`${isPk || outRel ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{col.name}</span>
                                                     <span className="text-slate-400 text-xs ml-3 shrink-0">{col.type}</span>
                                                 </div>
                                                 {/* Visual Connection mapping */}
                                                 {outRel && (
-                                                    <div className="flex items-center text-indigo-500 gap-2 opacity-70 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                                    <div className="flex items-center text-indigo-500 gap-2 opacity-70 group-hover:opacity-100 transition-opacity whitespace-nowrap ml-4">
                                                         <span className="text-indigo-400">──►</span>
-                                                        <span className="font-bold text-indigo-700 truncate max-w-[150px]" title={`${outRel.parent_table}.${outRel.parent_column}`}>{outRel.parent_table}.{outRel.parent_column}</span>
+                                                        <span className="font-bold text-indigo-700">{outRel.parent_table}.{outRel.parent_column}</span>
                                                         <button 
                                                             onClick={(e) => { e.stopPropagation(); setActiveRel(outRel); }}
                                                             className="ml-3 text-xs bg-indigo-50 text-indigo-600 px-2 py-1 rounded border border-indigo-100 font-sans cursor-pointer hover:bg-indigo-100 opacity-0 group-hover:opacity-100 transition-opacity"
