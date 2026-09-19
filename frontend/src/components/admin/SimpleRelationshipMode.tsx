@@ -82,7 +82,8 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                 setActiveRel(null);
                 onRefresh();
             } else {
-                toast.error("Failed to update status");
+                const data = await res.json();
+                toast.error(data.detail || "Failed to update status");
             }
         } catch (e: any) {
             toast.error(e.message);
@@ -92,14 +93,23 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
     const handleBulkUpdateStatus = async (status: string) => {
         if (selectedRelIds.size === 0) return;
         try {
-            const promises = Array.from(selectedRelIds).map(id => 
+            const results = await Promise.all(Array.from(selectedRelIds).map(id => 
                 apiFetch(`${import.meta.env.VITE_API_URL || ''}/api/v2/relationships/${id}/status`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
                     body: JSON.stringify({ status })
                 })
-            );
-            await Promise.all(promises);
+            ));
+            
+            const failed = results.filter(r => !r.ok);
+            if (failed.length > 0) {
+                const firstFailed = failed[0];
+                const data = await firstFailed.json();
+                toast.error(data.detail || 'Failed to update some relationships');
+                onRefresh();
+                return;
+            }
+
             toast.success(`Marked ${selectedRelIds.size} relationships as ${status}`);
             setSelectedRelIds(new Set());
             onRefresh();
@@ -399,10 +409,10 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                     }}
                                                 />
                                             </div>
-                                            <div className="absolute top-3 right-4">
-                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 flex items-center gap-1"><Check size={12}/> Approved</span>}
-                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-1"><X size={12}/> Rejected</span>}
-                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">Pending</span>}
+                                            <div className="absolute top-3 right-4 shadow-sm">
+                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-emerald-500 px-2 py-0.5 rounded-full flex items-center gap-1"><Check size={12}/> Approved</span>}
+                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-red-500 px-2 py-0.5 rounded-full flex items-center gap-1"><X size={12}/> Rejected</span>}
+                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-amber-500 px-2 py-0.5 rounded-full">Pending</span>}
                                             </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-800 font-bold truncate" title={`${selectedTable}.${r.child_column}`}>
@@ -459,10 +469,10 @@ export const SimpleRelationshipMode: React.FC<Props> = ({ allRels, appConcepts, 
                                                     }}
                                                 />
                                             </div>
-                                            <div className="absolute top-3 right-4">
-                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100 flex items-center gap-1"><Check size={12}/> Approved</span>}
-                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100 flex items-center gap-1"><X size={12}/> Rejected</span>}
-                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">Pending</span>}
+                                            <div className="absolute top-3 right-4 shadow-sm">
+                                                {r.approval_status === 'approved' && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-emerald-500 px-2 py-0.5 rounded-full flex items-center gap-1"><Check size={12}/> Approved</span>}
+                                                {r.approval_status === 'rejected' && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-red-500 px-2 py-0.5 rounded-full flex items-center gap-1"><X size={12}/> Rejected</span>}
+                                                {(!r.approval_status || r.approval_status === 'pending') && <span className="text-[10px] font-bold uppercase tracking-wider text-white bg-amber-500 px-2 py-0.5 rounded-full">Pending</span>}
                                             </div>
                                             <div className="flex-1 flex flex-col justify-center">
                                                 <div className="text-slate-500 truncate" title={`${r.child_table}.${r.child_column}`}>
