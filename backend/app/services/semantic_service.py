@@ -227,10 +227,32 @@ async def bulk_upsert_semantics(session: AsyncSession, client_id: int, mappings:
 
     await session.commit()
     
+    # AUTO-BRIDGE: Ensure every table touched also has a SemanticMapping entry.
+    # This bridges Advanced Mode (column-level SemanticMetadata) with Simple Mode (table-level SemanticMapping).
+    # Without this, Relationships page shows "Unmapped Concept" even after deploying the semantic layer.
+    from app.models.semantic_mapping import SemanticMapping
+    tables_touched = list(set(m["table_name"] for m in mappings))
+    for tname in tables_touched:
+        existing_mapping = (await session.execute(
+            select(SemanticMapping).where(
+                SemanticMapping.client_id == client_id,
+                SemanticMapping.database_table == tname
+            )
+        )).scalars().first()
+        if not existing_mapping:
+            new_mapping = SemanticMapping(
+                client_id=client_id,
+                ui_label=tname.replace("_", " ").title(),
+                database_table=tname,
+                source_file="auto_bridge"
+            )
+            session.add(new_mapping)
+    await session.commit()
+    
     log_audit(client_id, "semantic_update", {
         "created": created_count,
         "updated": updated_count,
-        "tables_touched": list(set(m["table_name"] for m in mappings))
+        "tables_touched": tables_touched
     })
     
     return {"status": "success", "created": created_count, "updated": updated_count}

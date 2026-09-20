@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
-import { Sparkles, Plus, Check, ArrowRight, Loader2, Link2, Filter } from "lucide-react";
+import { Sparkles, Plus, Check, ArrowRight, Loader2, Link2, Filter, Search, Database } from "lucide-react";
 import { apiFetch } from "../utils/api";
 
 interface Concept {
@@ -21,7 +21,11 @@ export default function AppConcepts() {
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [step, setStep] = useState(1);
   const [newConcept, setNewConcept] = useState<Concept>({ ui_label: "", database_table: "" });
-  const [suggestedSources, setSuggestedSources] = useState<{name: string, description: string}[]>([]);
+  
+  // Real tables from database
+  const [allTables, setAllTables] = useState<{name: string, columns: string[]}[]>([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const [tableSearch, setTableSearch] = useState("");
   
   const [conditionField, setConditionField] = useState("");
   const [conditionValue, setConditionValue] = useState("");
@@ -30,6 +34,19 @@ export default function AppConcepts() {
 
   useEffect(() => {
     fetchConcepts();
+  }, [clientId]);
+
+  // Fetch real tables from the client's connected database
+  useEffect(() => {
+    if (!clientId) return;
+    setLoadingTables(true);
+    apiFetch(`${API_BASE}/clients/${clientId}/tables`.replace(/\/\//g, '/').replace(':/', '://'), {
+      headers: { "X-API-Key": apiKey || "" }
+    })
+    .then(res => res.ok ? res.json() : { tables: [] })
+    .then(data => setAllTables(data.tables || []))
+    .catch(err => console.error("Failed to fetch tables:", err))
+    .finally(() => setLoadingTables(false));
   }, [clientId]);
 
   const fetchConcepts = async () => {
@@ -57,7 +74,6 @@ export default function AppConcepts() {
       });
       const data = await res.json();
       if (data.suggested_concepts && data.suggested_concepts.length > 0) {
-        // Mocking the injection for now, in a real app this would present a review screen
         alert(`Found ${data.suggested_concepts.length} concepts! (e.g. ${data.suggested_concepts[0].concept_name})`);
       }
     } catch (e) {
@@ -68,17 +84,13 @@ export default function AppConcepts() {
 
   const handleNextStep = () => {
     if (step === 1) {
-      const suggestedTableName = newConcept.ui_label.toLowerCase().replace(/[^a-z0-9_]/g, '');
-      setSuggestedSources([
-        { name: suggestedTableName, description: `Primary table match for ${newConcept.ui_label}` },
-        { name: `${suggestedTableName}_records`, description: "Alternative matching table" }
-      ]);
+      // Pre-fill search with the concept name to help user find matching table
+      setTableSearch(newConcept.ui_label.toLowerCase());
     }
     setStep(step + 1);
   };
 
   const handleSaveConcept = async () => {
-    // Compile condition
     let finalConcept = { ...newConcept };
     if (conditionField && conditionValue) {
       finalConcept.default_filter = `${conditionField} = '${conditionValue}'`;
@@ -103,7 +115,24 @@ export default function AppConcepts() {
     }
   };
 
+  // Sort tables: exact/partial matches first, then alphabetical
+  const getSortedTables = () => {
+    const search = tableSearch.toLowerCase().trim();
+    if (!search) return allTables;
+    
+    const exact = allTables.filter(t => t.name.toLowerCase() === search);
+    const startsWith = allTables.filter(t => t.name.toLowerCase().startsWith(search) && t.name.toLowerCase() !== search);
+    const contains = allTables.filter(t => t.name.toLowerCase().includes(search) && !t.name.toLowerCase().startsWith(search));
+    const rest = allTables.filter(t => !t.name.toLowerCase().includes(search));
+    return [...exact, ...startsWith, ...contains, ...rest];
+  };
+
+  // Already-mapped table names for filtering
+  const mappedTableNames = new Set(concepts.map(c => c.database_table));
+
   if (isWizardOpen) {
+    const filteredTables = getSortedTables().filter(t => !mappedTableNames.has(t.name));
+    
     return (
       <div className="p-8 max-w-4xl mx-auto">
         <div className="mb-8">
@@ -125,27 +154,67 @@ export default function AppConcepts() {
               <h3 className="text-lg font-medium">What do you call this in your application?</h3>
               <input 
                 type="text" 
-                placeholder="e.g. Quotation" 
+                placeholder="e.g. Vendor, City, Quotation" 
                 className="w-full p-3 border border-slate-300 rounded-lg"
                 value={newConcept.ui_label}
                 onChange={e => setNewConcept({...newConcept, ui_label: e.target.value})}
               />
-              <button onClick={handleNextStep} className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700">Continue</button>
+              <button onClick={handleNextStep} disabled={!newConcept.ui_label.trim()} className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">Continue</button>
             </div>
           )}
 
           {step === 2 && (
             <div className="space-y-4">
-              <h3 className="text-lg font-medium">We found possible information for "{newConcept.ui_label}"</h3>
-              <div className="space-y-3">
-                {suggestedSources.map(src => (
-                  <div key={src.name} className={`p-4 border rounded-lg cursor-pointer ${newConcept.database_table === src.name ? 'border-indigo-600 bg-indigo-50' : 'border-slate-200 hover:border-indigo-300'}`} onClick={() => setNewConcept({...newConcept, database_table: src.name})}>
-                    <div className="font-bold text-slate-800">Option: {src.name}</div>
-                    <div className="text-sm text-slate-500">{src.description}</div>
-                  </div>
-                ))}
+              <h3 className="text-lg font-medium">Which database table stores "{newConcept.ui_label}" data?</h3>
+              <p className="text-sm text-slate-500">Select the real table from your connected database.</p>
+              
+              {/* Search bar */}
+              <div className="relative">
+                <Search className="absolute left-3 top-3 w-4 h-4 text-slate-400" />
+                <input 
+                  type="text"
+                  placeholder="Search tables..."
+                  className="w-full pl-10 p-3 border border-slate-300 rounded-lg"
+                  value={tableSearch}
+                  onChange={e => setTableSearch(e.target.value)}
+                />
               </div>
-              <button onClick={handleNextStep} disabled={!newConcept.database_table} className="bg-indigo-600 text-white px-6 py-2 rounded-lg disabled:opacity-50">Continue</button>
+
+              {loadingTables ? (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                  <span className="ml-2 text-slate-500">Loading tables from your database...</span>
+                </div>
+              ) : filteredTables.length === 0 ? (
+                <div className="text-center py-8 text-slate-500">
+                  <Database className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                  <p>No matching tables found. Make sure your database is connected.</p>
+                </div>
+              ) : (
+                <div className="max-h-64 overflow-y-auto space-y-2 border border-slate-200 rounded-lg p-2">
+                  {filteredTables.map(table => (
+                    <div 
+                      key={table.name} 
+                      className={`p-3 border rounded-lg cursor-pointer transition-all ${
+                        newConcept.database_table === table.name 
+                          ? 'border-indigo-600 bg-indigo-50 shadow-sm' 
+                          : 'border-slate-200 hover:border-indigo-300 hover:bg-slate-50'
+                      }`} 
+                      onClick={() => setNewConcept({...newConcept, database_table: table.name})}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="font-semibold text-slate-800">{table.name}</div>
+                        <span className="text-xs text-slate-400">{table.columns?.length || 0} columns</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex space-x-3">
+                <button onClick={() => setStep(1)} className="text-slate-500 hover:text-slate-700 px-4 py-2">Back</button>
+                <button onClick={handleNextStep} disabled={!newConcept.database_table} className="bg-indigo-600 text-white px-6 py-2 rounded-lg disabled:opacity-50">Continue</button>
+              </div>
             </div>
           )}
 

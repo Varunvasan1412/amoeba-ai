@@ -62,6 +62,22 @@ async def migrate():
         except Exception as e:
             print(f"Error migrating clientconfig: {e}")
 
+        # Table 'semanticmapping'
+        try:
+            print("Checking 'semanticmapping' table columns...")
+            cols = await conn.run_sync(get_cols, 'semanticmapping')
+            
+            if cols and "synonyms" not in cols:
+                print("Adding 'synonyms' to semanticmapping...")
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN synonyms VARCHAR"))
+                
+            if cols and "relationships" not in cols:
+                print("Adding 'relationships' to semanticmapping...")
+                await conn.execute(text("ALTER TABLE semanticmapping ADD COLUMN relationships VARCHAR"))
+                
+        except Exception as e:
+            print(f"Error migrating semanticmapping: {e}")
+
     print("✅ Migration Complete.")
 
 if __name__ == "__main__":
