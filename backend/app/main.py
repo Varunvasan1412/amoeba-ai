@@ -214,6 +214,41 @@ def download_connector():
             return FileResponse(p, filename="universal_connector.py", media_type="text/x-python")
     return JSONResponse(status_code=404, content={"detail": "Connector script not found"})
 
+@app.get("/api/diag/client-status")
+async def diag_client_status(api_key: str = ""):
+    """Diagnostic: check client config flags by API key."""
+    if not api_key:
+        return JSONResponse(status_code=400, content={"detail": "api_key required"})
+    from app.models.client_config import ClientConfig
+    async with async_session() as session:
+        result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+        client = result.scalars().first()
+        if not client:
+            return JSONResponse(status_code=404, content={"detail": "Client not found for this API key"})
+        return {
+            "id": client.id,
+            "client_name": client.client_name,
+            "assistant_enabled": client.assistant_enabled,
+            "operations_enabled": client.operations_enabled,
+            "onboarding_completed": client.onboarding_completed,
+            "schema_rag_enabled": client.schema_rag_enabled,
+        }
+
+@app.post("/api/diag/enable-assistant")
+async def diag_enable_assistant(api_key: str = ""):
+    """Diagnostic: enable assistant mode for a client by API key."""
+    if not api_key:
+        return JSONResponse(status_code=400, content={"detail": "api_key required"})
+    from app.models.client_config import ClientConfig
+    async with async_session() as session:
+        result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+        client = result.scalars().first()
+        if not client:
+            return JSONResponse(status_code=404, content={"detail": "Client not found"})
+        client.assistant_enabled = True
+        await session.commit()
+        return {"status": "ok", "client_id": client.id, "assistant_enabled": True}
+
 @app.get("/")
 def read_root():
     return {"status": "Amoeba AI is active"}

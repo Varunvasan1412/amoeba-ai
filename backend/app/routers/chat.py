@@ -403,6 +403,7 @@ async def websocket_endpoint(
     api_key: str = Query(None)
 ):
     await websocket.accept()
+    print(f"🔌 WebSocket connection accepted. api_key={'present' if api_key else 'missing'}")
     
     # Initialize variables for cleanup/error handling
     active_tasks: Dict[str, asyncio.Task] = {}
@@ -417,11 +418,13 @@ async def websocket_endpoint(
                 result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
                 client = result.scalars().first()
                 if not client:
+                    print(f"🔴 WebSocket: Invalid API key, closing with 4003")
                     await websocket.close(code=4003)
                     return
                 current_db_url.set(client.db_connection_url)
                 client_id = client.id
                 client_context_id = str(client.id)
+                print(f"🟢 WebSocket: Authenticated client {client_id} ({client.client_name})")
             else:
                 # Fallback / Dev Mode
                 result = await session.execute(select(ClientConfig).order_by(ClientConfig.id.asc()))
@@ -436,10 +439,10 @@ async def websocket_endpoint(
                     client_id = 0
                     client_context_id = "default"
 
-            # ASSISTANT MODE CHECK
-            if client and hasattr(client, 'assistant_enabled') and not client.assistant_enabled:
-                print(f"🚫 Connection rejected: Assistant Mode is disabled for Client {client_id}")
-                await websocket.close(code=1008, reason="Assistant Mode is disabled.")
+            # ASSISTANT MODE CHECK (only reject if explicitly set to False)
+            if client and hasattr(client, 'assistant_enabled') and client.assistant_enabled is False:
+                print(f"🚫 Connection rejected: Assistant Mode is explicitly disabled for Client {client_id} ({client.client_name}).")
+                await websocket.close(code=1008, reason="Assistant Mode is disabled for this account.")
                 return
 
             # 2. MESSAGE LOOP

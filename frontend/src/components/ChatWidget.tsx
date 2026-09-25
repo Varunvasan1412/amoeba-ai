@@ -878,7 +878,9 @@ export default function ChatWidget() {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.warn("🔌 WebSocket Closed:", event.code, event.reason);
+      socketRef.current = null;
       setIsConnected(false);
       setIsTyping(false); 
       setTimeout(() => {
