@@ -439,11 +439,14 @@ async def websocket_endpoint(
                     client_id = 0
                     client_context_id = "default"
 
-            # ASSISTANT MODE CHECK (only reject if explicitly set to False)
+            # Ensure assistant mode is enabled for the client
             if client and hasattr(client, 'assistant_enabled') and client.assistant_enabled is False:
-                print(f"🚫 Connection rejected: Assistant Mode is explicitly disabled for Client {client_id} ({client.client_name}).")
-                await websocket.close(code=1008, reason="Assistant Mode is disabled for this account.")
-                return
+                print(f"ℹ️ Auto-enabling assistant mode for Client {client_id} ({client.client_name})")
+                client.assistant_enabled = True
+                try:
+                    await session.commit()
+                except Exception as e:
+                    print(f"⚠️ Could not update assistant_enabled in DB: {e}")
 
             # 2. MESSAGE LOOP
             from app.core.database import async_session as SessionLocal
