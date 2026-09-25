@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
 import { Sparkles, Plus, Check, ArrowRight, Loader2, Link2, Filter, Search, Database } from "lucide-react";
-import { apiFetch } from "../utils/api";
+import { apiFetch } from "../utils/api";  
 
 interface Concept {
   id?: number;
