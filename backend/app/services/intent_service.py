@@ -563,46 +563,53 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             best_sm = None
             best_sm_score = 0
             for sm in sm_all:
-                sm_label_norm = normalize_entity_name(sm.ui_label.lower().strip())
-                sm_label_clean = sm.ui_label.lower().strip()
-                sm_core_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - NON_ENTITY_WORDS
-                
-                # Direct exact or substring match
-                if sm_label_norm == norm_query or sm_label_clean == clean_q:
-                    score = 40 + len(sm_label_clean)
-                elif sm_label_clean in clean_q or clean_q in sm_label_clean:
-                    score = 25 + len(sm_label_clean)
-                else:
-                    overlap = q_toks.intersection(sm_core_toks)
-                    score = len(overlap) * 8 if overlap else 0
-                
-                # Precision Penalty: Penalize extra distinguishing tokens not requested in query
-                unmatched_sm_tokens = sm_core_toks - q_toks
-                score -= len(unmatched_sm_tokens) * 10
-                
-                # Tab distinction bonus: if both query and label specify pending or completed, boost score
-                if ("pending" in clean_q and "pending" in sm_label_clean) or ("completed" in clean_q and "completed" in sm_label_clean):
-                    score += 20
-                elif ("pending" in clean_q and "completed" in sm_label_clean) or ("completed" in clean_q and "pending" in sm_label_clean):
-                    score -= 30 # Penalize opposite tab
+                # Support comma-separated aliases in ui_label (e.g. "Quotations, Quotes, Sales Quotation")
+                raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+                for alias in raw_aliases:
+                    sm_label_norm = normalize_entity_name(alias.lower().strip())
+                    sm_label_clean = alias.lower().strip()
+                    sm_core_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - NON_ENTITY_WORDS
+                    stemmed_alias_toks = {_stem_token(t) for t in sm_core_toks}
                     
-                # Report vs History/Logs/Attendance discriminator
-                if "report" in clean_q and "report" in sm_label_clean:
-                    score += 25
-                elif "report" in clean_q and any(k in sm_label_clean for k in ["history", "log", "attendance", "loglist", "logs"]):
-                    score -= 35
-                elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and any(k in sm_label_clean for k in ["history", "log", "attendance", "logs"]):
-                    score += 25
-                elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and "report" in sm_label_clean:
-                    score -= 35
+                    # Direct exact or substring match on alias
+                    score = 0
+                    if sm_label_norm == norm_query or sm_label_clean == clean_q or (stemmed_alias_toks and stemmed_alias_toks == stemmed_q_toks):
+                        score = 50 + len(sm_label_clean)
+                    elif sm_label_clean in clean_q or clean_q in sm_label_clean:
+                        score = 30 + len(sm_label_clean)
+                    elif stemmed_q_toks and stemmed_alias_toks and (stemmed_q_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_q_toks)):
+                        score = 25 + len(sm_label_clean)
+                    else:
+                        overlap = q_toks.intersection(sm_core_toks)
+                        score = len(overlap) * 10 if overlap else 0
+                    
+                    # Precision Penalty: Penalize extra distinguishing tokens not requested in query
+                    unmatched_sm_tokens = sm_core_toks - q_toks
+                    score -= len(unmatched_sm_tokens) * 5
+                    
+                    # Tab distinction bonus: if both query and label specify pending or completed, boost score
+                    if ("pending" in clean_q and "pending" in sm_label_clean) or ("completed" in clean_q and "completed" in sm_label_clean):
+                        score += 20
+                    elif ("pending" in clean_q and "completed" in sm_label_clean) or ("completed" in clean_q and "pending" in sm_label_clean):
+                        score -= 30 # Penalize opposite tab
+                        
+                    # Report vs History/Logs/Attendance discriminator
+                    if "report" in clean_q and "report" in sm_label_clean:
+                        score += 25
+                    elif "report" in clean_q and any(k in sm_label_clean for k in ["history", "log", "attendance", "loglist", "logs"]):
+                        score -= 35
+                    elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and any(k in sm_label_clean for k in ["history", "log", "attendance", "logs"]):
+                        score += 25
+                    elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and "report" in sm_label_clean:
+                        score -= 35
 
-                if score > best_sm_score and score >= 8:
-                    best_sm_score = score
-                    best_sm = sm
-                    
+                    if score > best_sm_score and score >= 8:
+                        best_sm_score = score
+                        best_sm = sm
+                        
             if best_sm:
                 detected_entity = best_sm.database_table
-                detected_label = best_sm.ui_label
+                detected_label = best_sm.ui_label.split(",")[0].strip()
                 detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                 print(f"🎯 [INTENT] Codebase Semantic Mapping Match (TOP PRIORITY): '{best_sm.ui_label}' -> {best_sm.database_table} (Score: {best_sm_score})")
 
@@ -679,8 +686,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         # and the ERP has multiple distinct screens sharing that root concept:
         # Prompt the user to clarify which screen they want rather than guessing.
         # =========================================================================
-        qualifiers = TAB_DISCRIMINATORS | {"list", "report", "create", "view", "edit", "add", "history", "approval", "inspection"}
-        has_qualifier = any(q in clean_q.split() for q in qualifiers)
+        qualifiers = TAB_DISCRIMINATORS | {"list", "report", "create", "view", "edit", "add", "history", "approval", "inspection", "table", "show", "get", "fetch", "display", "records", "data"}
+        has_qualifier = any(q in query_lower.split() for q in qualifiers) or any(q in clean_q.split() for q in qualifiers)
         
         if not detected_entity and len(clean_words) == 1 and not has_qualifier:
             root_term = clean_words[0].lower()
