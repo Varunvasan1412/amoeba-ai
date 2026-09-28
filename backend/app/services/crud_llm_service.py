@@ -66,8 +66,29 @@ class CrudLlmService:
                 
             return json.loads(content.strip())
         except Exception as e:
-            logger.error(f"Failed to generate/parse JSON from LLM: {e}")
-            return None
+            err_str = str(e).lower()
+            if "429" in err_str or "rate_limit" in err_str or "tokens per min" in err_str:
+                logger.warning("⚠️ OpenAI 429 TPM Rate Limit reached. Auto-retrying with gpt-4o-mini...")
+                try:
+                    from langchain_openai import ChatOpenAI
+                    from app.core.config import settings
+                    fallback_llm = ChatOpenAI(
+                        model="gpt-4o-mini",
+                        api_key=settings.OPENAI_API_KEY,
+                        temperature=0.0
+                    )
+                    ai_msg = await fallback_llm.ainvoke(messages)
+                    content = ai_msg.content.strip()
+                    if content.startswith("```json"): content = content[7:]
+                    if content.startswith("```"): content = content[3:]
+                    if content.endswith("```"): content = content[:-3]
+                    return json.loads(content.strip())
+                except Exception as fb_err:
+                    logger.error(f"Fallback to gpt-4o-mini also failed: {fb_err}")
+                    return None
+            else:
+                logger.error(f"Failed to generate/parse JSON from LLM: {e}")
+                return None
 
     @staticmethod
     async def extract_filters(client_id: int, session: AsyncSession, action: str, table_name: str, concept: str, user_query: str) -> Dict[str, Any]:

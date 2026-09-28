@@ -86,7 +86,22 @@ async def get_assistant_response(user_input: str, client_id: int, session: Async
         pending_actions = []
         
         # Increased timeout to 300s for slow local models during background builds
-        ai_msg = await asyncio.wait_for(llm.ainvoke(messages), timeout=300.0)
+        try:
+            ai_msg = await asyncio.wait_for(llm.ainvoke(messages), timeout=300.0)
+        except Exception as inv_err:
+            err_str = str(inv_err).lower()
+            if "429" in err_str or "rate_limit" in err_str or "tokens per min" in err_str:
+                print("⚠️ [Assistant] 429 TPM Rate Limit reached. Retrying with gpt-4o-mini...", flush=True)
+                from langchain_openai import ChatOpenAI
+                from app.core.config import settings
+                fallback_llm = ChatOpenAI(
+                    model="gpt-4o-mini",
+                    api_key=settings.OPENAI_API_KEY,
+                    temperature=0.0
+                )
+                ai_msg = await asyncio.wait_for(fallback_llm.ainvoke(messages), timeout=300.0)
+            else:
+                raise inv_err
         
         duration = asyncio.get_event_loop().time() - start_time
         print(f"✅ [Assistant] Response received in {duration:.2f}s", flush=True)
