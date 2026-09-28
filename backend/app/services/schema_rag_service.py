@@ -276,13 +276,20 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
                 "display_title": target_table or "Unknown"
             }
     else:
-        schema_context = "\n\n".join(prioritized_schemas + other_schemas)
+        # Cap other_schemas to prioritized + max 12 related tables to avoid massive token payloads
+        schema_context = "\n\n".join(prioritized_schemas + other_schemas[:12])
 
     # 2. Build LLM Prompt
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
+    from app.core.config import settings
     
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    # Check client's configured model or default to gpt-4o-mini for fast high-volume queries
+    target_model = getattr(client_config, "llm_model", None) or "gpt-4o-mini"
+    if target_model in ["gpt-5.6-luna", "gpt-6-luna", "default", ""] or not target_model.startswith("gpt-"):
+        target_model = "gpt-4o-mini"
+        
+    llm = ChatOpenAI(model=target_model, api_key=settings.OPENAI_API_KEY, temperature=0)
     
     system_prompt = f"""You are an expert SQL Data Analyst for a MySQL/MariaDB database.
     Your job is to convert the user's natural language question into a VALID, READ-ONLY raw SQL query.
@@ -343,8 +350,23 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         HumanMessage(content=user_query)
     ]
     
-    # 3. Generate SQL
-    response = await llm.ainvoke(messages)
+    # 3. Generate SQL with 429 rate limit fallback
+    try:
+        response = await llm.ainvoke(messages)
+    except Exception as llm_err:
+        err_str = str(llm_err).lower()
+        if "429" in err_str or "rate_limit" in err_str or "tokens" in err_str:
+            print(f"⚠️ [SCHEMA RAG] 429 TPM Rate limit hit on {target_model}. Auto-falling back to gpt-4o-mini...", flush=True)
+            fallback_llm = ChatOpenAI(model="gpt-4o-mini", api_key=settings.OPENAI_API_KEY, temperature=0)
+            # Re-truncate schema context even smaller to guarantee fit within rate limits
+            trimmed_schema = "\n\n".join(prioritized_schemas[:6])
+            trimmed_system_prompt = system_prompt.split("SCHEMA CONTEXT FOR THIS DATABASE:")[0] + f"SCHEMA CONTEXT FOR THIS DATABASE:\n{trimmed_schema}"
+            response = await fallback_llm.ainvoke([
+                SystemMessage(content=trimmed_system_prompt),
+                HumanMessage(content=user_query)
+            ])
+        else:
+            raise llm_err
     raw_content = response.content.strip()
     
     # Extract thought block and message block for debugging/UI
