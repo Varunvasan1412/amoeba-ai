@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useAdmin } from "../context/AdminContext";
 import { Sparkles, Plus, Check, ArrowRight, Loader2, Link2, Filter, Search, Database } from "lucide-react";
 import { apiFetch } from "../utils/api";  
+import { toast } from "react-toastify";  
 
 interface Concept {
   id?: number;
@@ -97,7 +98,7 @@ export default function AppConcepts() {
     }
 
     try {
-      await apiFetch(`${API_BASE}/v2/semantic/mapping`, {
+      const res = await apiFetch(`${API_BASE}/v2/semantic/mappings?client_id=${clientId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-Key": apiKey || "" },
         body: JSON.stringify({
@@ -107,11 +108,18 @@ export default function AppConcepts() {
           default_filter: finalConcept.default_filter
         })
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        toast.error(errData.detail || "Failed to save concept");
+        return;
+      }
+      toast.success(`Concept "${finalConcept.ui_label}" saved successfully!`);
       setIsWizardOpen(false);
       setStep(1);
       fetchConcepts();
     } catch (e) {
       console.error(e);
+      toast.error("Error connecting to server to save concept");
     }
   };
 

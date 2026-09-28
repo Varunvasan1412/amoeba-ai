@@ -63,7 +63,8 @@ class SemanticMappingResponse(BaseModel):
     database_table: str
     base_query: Optional[str] = None
     source_file: Optional[str] = None
-    is_doubtful: bool
+    default_filter: Optional[str] = None
+    is_doubtful: bool = False
 
 class SQLExtractRequest(BaseModel):
     php_code: str
@@ -72,6 +73,7 @@ class SemanticMappingUpdate(BaseModel):
     database_table: str
 
 class SemanticMappingCreate(BaseModel):
+    client_id: Optional[int] = None
     ui_label: str
     database_table: str
     base_query: Optional[str] = None
@@ -204,6 +206,7 @@ async def get_ui_table_mappings(
             database_table=m.database_table or "",
             base_query=m.base_query,
             source_file=m.source_file,
+            default_filter=m.default_filter,
             is_doubtful=True if not m.base_query else False
         ))
     return response
@@ -229,17 +232,22 @@ async def update_ui_table_mapping(
     return {"status": "success"}
 
 @router.post("/v2/semantic/mappings", response_model=SemanticMappingResponse)
+@router.post("/v2/semantic/mapping", response_model=SemanticMappingResponse)
 async def create_ui_table_mapping(
-    client_id: int,
     payload: SemanticMappingCreate,
+    client_id: Optional[int] = None,
     session: AsyncSession = Depends(get_session),
     admin = Depends(get_current_active_admin)
 ):
     """
     Manually create a new UI-to-Table Semantic Mapping.
     """
+    target_client_id = client_id or payload.client_id
+    if not target_client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
+
     new_m = SemanticMapping(
-        client_id=client_id,
+        client_id=target_client_id,
         ui_label=payload.ui_label.strip(),
         database_table=payload.database_table.strip(),
         base_query=payload.base_query,
@@ -256,6 +264,7 @@ async def create_ui_table_mapping(
         database_table=new_m.database_table,
         base_query=new_m.base_query,
         source_file=new_m.source_file,
+        default_filter=new_m.default_filter,
         is_doubtful=False
     )
 
