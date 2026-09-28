@@ -182,12 +182,29 @@ async def init_db():
 
         # 3. Update 'field_metadata' table
         try:
-            res = await conn.execute(text(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'field_metadata' AND column_name = 'is_primary_date'"
-            ))
-            if not res.fetchone():
-                await conn.execute(text("ALTER TABLE field_metadata ADD COLUMN is_primary_date BOOLEAN DEFAULT FALSE"))
-                print("  ✅ Added 'is_primary_date' to field_metadata")
+            field_cols = [
+                ("storage_type", "VARCHAR DEFAULT 'string'"),
+                ("is_primary_date", "BOOLEAN DEFAULT FALSE"),
+                ("synonyms", "TEXT"),
+                ("required", "BOOLEAN DEFAULT FALSE"),
+                ("readonly", "BOOLEAN DEFAULT FALSE"),
+                ("is_visible", "BOOLEAN DEFAULT TRUE"),
+                ("default_value", "VARCHAR"),
+                ("data_source_table", "VARCHAR"),
+                ("value_column", "VARCHAR"),
+                ("display_column", "VARCHAR"),
+            ]
+            for col_name, col_type in field_cols:
+                try:
+                    async with conn.begin_nested():
+                        res = await conn.execute(text(
+                            f"SELECT column_name FROM information_schema.columns WHERE table_name = 'field_metadata' AND column_name = '{col_name}'"
+                        ))
+                        if not res.fetchone():
+                            await conn.execute(text(f"ALTER TABLE field_metadata ADD COLUMN {col_name} {col_type}"))
+                            print(f"  ✅ Added '{col_name}' to field_metadata")
+                except Exception as inner_e:
+                    print(f"  Notice checking/adding {col_name} in field_metadata: {inner_e}")
         except Exception as e:
             print(f"FieldMetadata migration notice: {e}")
 

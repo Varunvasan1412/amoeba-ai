@@ -82,12 +82,16 @@ async def get_table_field_metadata(
     table_name: str,
     session: AsyncSession = Depends(get_session)
 ):
-    stmt = select(FieldMetadata).where(
-        FieldMetadata.client_id == client_id,
-        FieldMetadata.table_name == table_name
-    ).order_by(FieldMetadata.column_name)
-    result = await session.execute(stmt)
-    return result.scalars().all()
+    try:
+        stmt = select(FieldMetadata).where(
+            FieldMetadata.client_id == client_id,
+            FieldMetadata.table_name == table_name
+        ).order_by(FieldMetadata.column_name)
+        result = await session.execute(stmt)
+        return result.scalars().all()
+    except Exception as e:
+        print(f"⚠️ Notice fetching field metadata for {table_name}: {e}")
+        return []
 
 @router.put("/{metadata_id}", response_model=FieldMetadata)
 async def update_field_metadata(
