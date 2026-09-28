@@ -781,11 +781,14 @@ async def websocket_endpoint(
                                         if 0 <= idx < len(saved_opts):
                                             chosen_opt = saved_opts[idx]
                                     else:
-                                        for opt in saved_opts:
-                                            opt_lbl = opt.get("label", "") if isinstance(opt, dict) else str(opt)
-                                            if opt_lbl.lower() in user_trimmed.lower() or user_trimmed.lower() in opt_lbl.lower():
-                                                chosen_opt = opt
-                                                break
+                                        action_verbs = {"list", "show", "view", "get", "fetch", "display", "table", "data", "records", "open", "create", "delete", "edit"}
+                                        user_words = set(re.findall(r'[a-zA-Z0-9]+', user_trimmed.lower()))
+                                        if not (user_words & action_verbs):
+                                            for opt in saved_opts:
+                                                opt_lbl = opt.get("label", "") if isinstance(opt, dict) else str(opt)
+                                                if opt_lbl.lower() == user_trimmed.lower() or opt_lbl.lower() in user_trimmed.lower():
+                                                    chosen_opt = opt
+                                                    break
 
                                     if chosen_opt:
                                         await local_session.delete(active_choice_state)
@@ -1089,43 +1092,45 @@ async def websocket_endpoint(
                                                 best_score = -999
                                                 
                                                 for sm in all_sms:
-                                                    sm_lbl = sm.ui_label.lower().strip()
-                                                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
-                                                    
-                                                    score = 0
-                                                    if sm_lbl == fn_low or sm_lbl == user_q_low:
-                                                        score += 100
-                                                    elif sm_lbl in user_q_low or user_q_low in sm_lbl:
-                                                        score += 50
-                                                    
-                                                    # Core token overlap
-                                                    overlap = query_tokens.intersection(sm_toks)
-                                                    score += len(overlap) * 20
-                                                    
-                                                    # Penalize extra non-matching tokens
-                                                    diff = sm_toks - query_tokens
-                                                    score -= len(diff) * 5
-                                                    
-                                                    # Tab discriminator bonus/penalty
-                                                    for td in ["pending", "completed", "active", "inactive"]:
-                                                        if td in user_q_low and td in sm_lbl:
-                                                            score += 30
-                                                        elif td in user_q_low and td not in sm_lbl and any(other_td in sm_lbl for other_td in ["pending", "completed", "active", "inactive"]):
-                                                            score -= 40
-                                                            
-                                                    # Report vs History/Attendance/Log discriminator bonus/penalty
-                                                    if "report" in user_q_low and "report" in sm_lbl:
-                                                        score += 35
-                                                    elif "report" in user_q_low and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
-                                                        score -= 45
-                                                    elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
-                                                        score += 35
-                                                    elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and "report" in sm_lbl:
-                                                        score -= 45
-                                                            
-                                                    if score > best_score and score >= 20:
-                                                        best_score = score
-                                                        best_sm = sm
+                                                    raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+                                                    for alias in raw_aliases:
+                                                        sm_lbl = alias.lower().strip()
+                                                        sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+                                                        
+                                                        score = 0
+                                                        if sm_lbl == fn_low or sm_lbl == user_q_low:
+                                                            score += 100
+                                                        elif sm_lbl in user_q_low or user_q_low in sm_lbl:
+                                                            score += 50
+                                                        
+                                                        # Core token overlap
+                                                        overlap = query_tokens.intersection(sm_toks)
+                                                        score += len(overlap) * 20
+                                                        
+                                                        # Penalize extra non-matching tokens
+                                                        diff = sm_toks - query_tokens
+                                                        score -= len(diff) * 5
+                                                        
+                                                        # Tab discriminator bonus/penalty
+                                                        for td in ["pending", "completed", "active", "inactive"]:
+                                                            if td in user_q_low and td in sm_lbl:
+                                                                score += 30
+                                                            elif td in user_q_low and td not in sm_lbl and any(other_td in sm_lbl for other_td in ["pending", "completed", "active", "inactive"]):
+                                                                score -= 40
+                                                                
+                                                        # Report vs History/Attendance/Log discriminator bonus/penalty
+                                                        if "report" in user_q_low and "report" in sm_lbl:
+                                                            score += 35
+                                                        elif "report" in user_q_low and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
+                                                            score -= 45
+                                                        elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
+                                                            score += 35
+                                                        elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and "report" in sm_lbl:
+                                                            score -= 45
+                                                                
+                                                        if score > best_score and score >= 15:
+                                                            best_score = score
+                                                            best_sm = sm
 
                                                 if best_sm and best_sm.base_query:
                                                     # If strict mode is enabled, do not execute unverified automated crawler guesses
