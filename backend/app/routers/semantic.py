@@ -70,7 +70,11 @@ class SQLExtractRequest(BaseModel):
     php_code: str
 
 class SemanticMappingUpdate(BaseModel):
-    database_table: str
+    database_table: Optional[str] = None
+    ui_label: Optional[str] = None
+    base_query: Optional[str] = None
+    default_filter: Optional[str] = None
+    ui_columns: Optional[str] = None
 
 class SemanticMappingCreate(BaseModel):
     client_id: Optional[int] = None
@@ -220,16 +224,27 @@ async def update_ui_table_mapping(
     admin = Depends(get_current_active_admin)
 ):
     """
-    Update the database_table for a specific Semantic Mapping.
+    Update fields for a specific Semantic Mapping.
     """
     mapping = await session.get(SemanticMapping, mapping_id)
     if not mapping or mapping.client_id != client_id:
         raise HTTPException(status_code=404, detail="Mapping not found")
         
-    mapping.database_table = payload.database_table
+    if payload.database_table is not None:
+        mapping.database_table = payload.database_table
+    if payload.ui_label is not None:
+        mapping.ui_label = payload.ui_label
+    if payload.default_filter is not None:
+        mapping.default_filter = payload.default_filter
+    if payload.base_query is not None:
+        mapping.base_query = payload.base_query
+    if payload.ui_columns is not None:
+        mapping.ui_columns = payload.ui_columns
+        
     session.add(mapping)
     await session.commit()
-    return {"status": "success"}
+    await session.refresh(mapping)
+    return mapping
 
 @router.post("/v2/semantic/mappings", response_model=SemanticMappingResponse)
 @router.post("/v2/semantic/mapping", response_model=SemanticMappingResponse)
