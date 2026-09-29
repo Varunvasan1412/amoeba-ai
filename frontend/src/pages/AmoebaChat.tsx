@@ -254,9 +254,14 @@ const MessageBubble = memo(({ msg, index, onSelect, onSubmitForm, onSwitchMode, 
                             <table className={`min-w-full border-collapse text-xs ${darkMode ? 'border-gray-600' : 'border-gray-300'}`}>
                                 <thead className={darkMode ? 'bg-gray-700' : 'bg-gray-100'}>
                                     <tr>
-                                        {headers.map((h: string) => (
-                                            <th key={h} className={`px-3 py-2 text-left font-semibold border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`}>{h}</th>
-                                        ))}
+                                        {headers.map((h: string) => {
+                                            const formattedHeader = h.includes(' ') || /[A-Z]/.test(h)
+                                                ? h 
+                                                : h.replace(/^_+|_+$/g, '').split(/[._]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+                                            return (
+                                                <th key={h} className={`px-3 py-2 text-left font-semibold border whitespace-nowrap ${darkMode ? 'border-gray-600 text-gray-200' : 'border-gray-300 text-gray-700'}`}>{formattedHeader}</th>
+                                            );
+                                        })}
                                     </tr>
                                 </thead>
                                 <tbody>
