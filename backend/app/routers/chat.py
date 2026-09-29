@@ -1132,7 +1132,19 @@ async def websocket_endpoint(
                                                             best_score = score
                                                             best_sm = sm
 
-                                                if best_sm and best_sm.base_query:
+                                                # Check if the query is a plain list request or a specific/analytical question
+                                                has_analytical_intent = any(kw in user_q_low for kw in [
+                                                    "how many", "count", "total", "sum", "average", "avg", "min", "max", "percentage", "trend", "breakdown", "who", "which"
+                                                ])
+                                                lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', (best_sm.ui_label if best_sm else "").lower()))
+                                                generic_list_tokens = {
+                                                    "list", "show", "view", "get", "fetch", "all", "table", "records", "data", "entries", "rows",
+                                                    "the", "a", "an", "of", "in", "for", "please", "display", "give", "me"
+                                                }
+                                                extra_filter_tokens = query_tokens - lbl_tokens - generic_list_tokens
+                                                is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 2)
+
+                                                if best_sm and best_sm.base_query and not is_specific_or_analytical:
                                                     # If strict mode is enabled, do not execute unverified automated crawler guesses
                                                     if client_config and client_config.governance_mode == "strict" and best_sm.source_file and ("backup" in best_sm.source_file.lower() or not best_sm.source_file.startswith("manual")):
                                                         print(f"⚠️ STRICT MODE: Bypassing unverified fast controller mapping '{best_sm.ui_label}'", flush=True)
