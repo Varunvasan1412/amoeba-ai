@@ -258,7 +258,7 @@ const SemanticMappingsPage: React.FC = () => {
               </label>
               <textarea 
                 rows={4}
-                placeholder="SELECT eh.enquiry_number AS `Quotation No`, DATE_FORMAT(eh.enquiry_date, '%d-%m-%Y') AS `Quotation Date`, c.name AS `Customer Name`, c.mobile AS `Mobile`, e.name AS `Employee`, es.name AS `Current Stage` FROM enquiry_header eh LEFT JOIN customer c ON eh.customer_id = c.id LEFT JOIN employee e ON eh.employee_id = e.id LEFT JOIN enquiry_status es ON eh.enquiry_status_id = es.id WHERE eh.log_status = 1 ORDER BY eh.id DESC"
+                placeholder="SELECT eh.enquiry_number AS quotation_no, DATE_FORMAT(eh.enquiry_date, '%d-%m-%Y') AS quotation_date, c.name AS customer_name, c.mobile_number1 AS mobile, COALESCE(e.name, '') AS employee, CASE WHEN eh.enquiry_status_id = 1 THEN 'Pending' ELSE 'Converted' END AS current_stage FROM enquiry_header eh LEFT JOIN customer c ON eh.customer_id = c.id LEFT JOIN employee e ON eh.employee_id = e.id WHERE eh.log_status = 1 ORDER BY eh.id DESC"
                 value={newBaseQuery}
                 onChange={(e) => setNewBaseQuery(e.target.value)}
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xs font-mono bg-slate-50 leading-relaxed"
@@ -339,7 +339,7 @@ const SemanticMappingsPage: React.FC = () => {
                 </label>
                 <textarea 
                   rows={5}
-                  placeholder="SELECT eh.enquiry_number AS `Quotation No`, DATE_FORMAT(eh.enquiry_date, '%d-%m-%Y') AS `Quotation Date`, c.name AS `Customer Name`, c.mobile AS `Mobile`, e.name AS `Employee`, es.name AS `Current Stage` FROM enquiry_header eh LEFT JOIN customer c ON eh.customer_id = c.id LEFT JOIN employee e ON eh.employee_id = e.id LEFT JOIN enquiry_status es ON eh.enquiry_status_id = es.id WHERE eh.log_status = 1 ORDER BY eh.id DESC"
+                  placeholder="SELECT eh.enquiry_number AS quotation_no, DATE_FORMAT(eh.enquiry_date, '%d-%m-%Y') AS quotation_date, c.name AS customer_name, c.mobile_number1 AS mobile, COALESCE(e.name, '') AS employee, CASE WHEN eh.enquiry_status_id = 1 THEN 'Pending' ELSE 'Converted' END AS current_stage FROM enquiry_header eh LEFT JOIN customer c ON eh.customer_id = c.id LEFT JOIN employee e ON eh.employee_id = e.id WHERE eh.log_status = 1 ORDER BY eh.id DESC"
                   value={editBaseQuery}
                   onChange={(e) => setEditBaseQuery(e.target.value)}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-xs font-mono bg-slate-50 leading-relaxed"
