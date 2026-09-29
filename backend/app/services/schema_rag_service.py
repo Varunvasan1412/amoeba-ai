@@ -38,6 +38,40 @@ async def get_relevant_schemas(query: str, client_id: int, session: AsyncSession
         print(f"Warning: Vector search failed: {e}")
         return []
 
+def repair_missing_joins(sql: str) -> str:
+    """Inspects if table aliases used in SELECT or WHERE clauses are missing their JOIN definitions, and auto-injects them."""
+    sql_upper = sql.upper()
+    
+    # 1. Alias 'e' (employee)
+    if re.search(r'\be\.[a-zA-Z0-9_]+', sql, re.IGNORECASE) and not re.search(r'\bJOIN\s+`?employee`?\s+e\b|\bJOIN\s+`?employee`?\b', sql, re.IGNORECASE):
+        if "FROM ENQUIRY_HEADER" in sql_upper or "FROM `ENQUIRY_HEADER`" in sql_upper:
+            if "WHERE" in sql_upper:
+                where_idx = sql_upper.find("WHERE")
+                sql = sql[:where_idx] + "LEFT JOIN employee e ON eh.employee_id = e.id " + sql[where_idx:]
+            elif "ORDER BY" in sql_upper:
+                order_idx = sql_upper.find("ORDER BY")
+                sql = sql[:order_idx] + "LEFT JOIN employee e ON eh.employee_id = e.id " + sql[order_idx:]
+            elif "LIMIT" in sql_upper:
+                limit_idx = sql_upper.find("LIMIT")
+                sql = sql[:limit_idx] + "LEFT JOIN employee e ON eh.employee_id = e.id " + sql[limit_idx:]
+            else:
+                sql = sql + " LEFT JOIN employee e ON eh.employee_id = e.id"
+
+    # 2. Alias 'c' (customer)
+    if re.search(r'\bc\.[a-zA-Z0-9_]+', sql, re.IGNORECASE) and not re.search(r'\bJOIN\s+`?customer`?\s+c\b|\bJOIN\s+`?customer`?\b', sql, re.IGNORECASE):
+        if "FROM ENQUIRY_HEADER" in sql_upper or "FROM `ENQUIRY_HEADER`" in sql_upper:
+            if "WHERE" in sql_upper:
+                where_idx = sql_upper.find("WHERE")
+                sql = sql[:where_idx] + "LEFT JOIN customer c ON eh.customer_id = c.id " + sql[where_idx:]
+
+    # 3. Alias 'ci' (city)
+    if re.search(r'\bci\.[a-zA-Z0-9_]+', sql, re.IGNORECASE) and not re.search(r'\bJOIN\s+`?city`?\s+ci\b|\bJOIN\s+`?city`?\b', sql, re.IGNORECASE):
+        if "WHERE" in sql_upper:
+            where_idx = sql_upper.find("WHERE")
+            sql = sql[:where_idx] + "LEFT JOIN city ci ON c.city_id = ci.id " + sql[where_idx:]
+
+    return sql
+
 async def query_legacy_db_with_schema(user_query: str, target_table: str, client_id: int, session: AsyncSession) -> Dict[str, Any]:
     """
     Uses Schema RAG to accurately translate a natural language query into a raw SQL query.
@@ -403,6 +437,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     if sql_query.endswith("```"):
         sql_query = sql_query[:-3].strip()
         
+    sql_query = repair_missing_joins(sql_query)
+    print(f"🧠 [SCHEMA RAG] Generated SQL: {sql_query}")
     print(f"🧠 [SCHEMA RAG] Generated SQL: {sql_query}")
     
     # 4. Execute SQL
@@ -417,6 +453,30 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
             token = current_db_url.set(client_config.db_connection_url)
             try:
                 records = await execute_sql_query(sql_query, table_filters=table_filters)
+                if isinstance(records, str) and "Error" in records:
+                    print(f"⚠️ [SCHEMA RAG] SQL Error ({records}). Auto-fixing query...", flush=True)
+                    fix_prompt = f"""The previous query failed with this SQL error:
+Error: {records}
+Query that failed:
+{sql_query}
+
+User Question: {user_query}
+
+Fix the SQL query to resolve this error. Ensure all table aliases in the SELECT clause (like e. for employee, c. for customer) are properly LEFT JOINed in the FROM clause. Output ONLY the corrected raw SQL SELECT statement."""
+                    try:
+                        fix_res = await llm.ainvoke([
+                            SystemMessage(content=system_prompt),
+                            HumanMessage(content=fix_prompt)
+                        ])
+                        fixed_sql = fix_res.content.strip()
+                        if "<thought>" in fixed_sql and "</thought>" in fixed_sql:
+                            fixed_sql = fixed_sql.split("</thought>")[1].strip()
+                        fixed_sql = fixed_sql.replace("```sql", "").replace("```", "").strip()
+                        fixed_sql = repair_missing_joins(fixed_sql)
+                        sql_query = fixed_sql
+                        records = await execute_sql_query(sql_query, table_filters=table_filters)
+                    except Exception as fix_err:
+                        print(f"⚠️ Auto-fix retry failed: {fix_err}")
             finally:
                 current_db_url.reset(token)
                 
