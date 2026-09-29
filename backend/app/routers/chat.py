@@ -459,7 +459,7 @@ async def execute_read_pipeline(
         "the", "a", "an", "of", "in", "for", "please", "display", "give", "me"
     }
     extra_filter_tokens = query_tokens - lbl_tokens - generic_list_tokens
-    is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 2)
+    is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 1)
 
     # 1. Fast Base Query (Only for plain list table requests)
     if best_sm and best_sm.base_query and not is_specific_or_analytical:

@@ -345,6 +345,9 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
         - If a user asks for a business term that is mapped in the FIELD MAPPINGS block, you MUST use the corresponding physical column in your SELECT, WHERE, and JOIN clauses.
         - NEVER blindly guess physical column names for business terms if a mapping exists.
         - If the user uses a business term that is NOT in the FIELD MAPPINGS block but refers to an obvious standard column (like `created_at` for dates), you may use it. But for custom fields, rely on the dictionary.
+    18. **LOCATION & ADDRESS SEARCHING**:
+        - When a user filters by a location, area, or place (e.g. "located in GDGF", "in Chennai", "from Perundurai"):
+        - Check BOTH the joined `city.name` AND the freeform address text fields on customer/vendor tables: `(c.city_id IN (SELECT id FROM city WHERE name LIKE '%<loc>%') OR c.address1 LIKE '%<loc>%' OR c.address2 LIKE '%<loc>%' OR c.address3 LIKE '%<loc>%')`. This ensures matches even when the location is written inside street/address fields.
 
     {semantic_context}
 
