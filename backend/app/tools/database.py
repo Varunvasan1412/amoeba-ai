@@ -38,13 +38,21 @@ def enforce_structural_filters(sql: str, table_filters: dict) -> str:
     if not table_filters:
         return sql
         
+    db_url_str = str(current_db_url.get() or "").lower()
+    dialect = "mysql" if "mysql" in db_url_str else ("sqlite" if "sqlite" in db_url_str else "postgres")
+    
     try:
         import sqlglot
         from sqlglot import exp
-        # Parse the SQL using PostgreSQL dialect. If syntax is invalid, it fails closed.
-        ast = sqlglot.parse_one(sql, read="postgres")
+        ast = sqlglot.parse_one(sql, read=dialect)
     except Exception as e:
-        raise ValueError(f"Failed to parse SQL. Execution rejected for safety: {e}")
+        try:
+            import sqlglot
+            from sqlglot import exp
+            ast = sqlglot.parse_one(sql, read="mysql")
+            dialect = "mysql"
+        except Exception:
+            raise ValueError(f"Failed to parse SQL. Execution rejected for safety: {e}")
 
     # 1. Identify all CTE aliases so we don't treat them as physical tables
     cte_names = {cte.alias for cte in ast.find_all(exp.CTE)}
@@ -70,7 +78,7 @@ def enforce_structural_filters(sql: str, table_filters: dict) -> str:
             full_table_name = f"{node.db}.{table_name}" if node.db else table_name
             
             # Create the protected subquery: (SELECT * FROM table WHERE condition)
-            subq = sqlglot.parse_one(f"(SELECT * FROM {full_table_name} WHERE {condition})")
+            subq = sqlglot.parse_one(f"(SELECT * FROM {full_table_name} WHERE {condition})", read=dialect)
             
             # Subqueries in FROM/JOIN must have an alias.
             # If the original table had an alias, preserve it. Otherwise, use the table name.
@@ -80,8 +88,8 @@ def enforce_structural_filters(sql: str, table_filters: dict) -> str:
             # Replace the original table node with the aliased protected subquery
             node.replace(aliased_subq)
 
-    # Re-serialize back to SQL using PostgreSQL dialect
-    return ast.sql(dialect="postgres")
+    # Re-serialize back to SQL using dialect
+    return ast.sql(dialect=dialect)
 
 
 async def execute_sql_query(query: str, table_filters: dict = None):
