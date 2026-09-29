@@ -8,11 +8,16 @@ from app.models.schema_metadata import SchemaMetadata
 from app.models.client_config import ClientConfig
 from app.tools.database import execute_sql_query
 
+from app.core.config import settings
+
 async def get_relevant_schemas(query: str, client_id: int, session: AsyncSession) -> List[str]:
     """Retrieve the top 3 relevant table schemas for a given natural language query using pgvector."""
+    openai_key = os.getenv("OPENAI_API_KEY") or getattr(settings, "OPENAI_API_KEY", None)
+    if not openai_key:
+        return []
     try:
         from langchain_openai import OpenAIEmbeddings
-        embedder = OpenAIEmbeddings(model="text-embedding-3-small")
+        embedder = OpenAIEmbeddings(model="text-embedding-3-small", api_key=openai_key)
         query_vec = await embedder.aembed_query(query)
     except Exception as e:
         print(f"Warning: Failed to load embedder for schema RAG: {e}")
@@ -40,7 +45,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     2. Asks LLM to generate SQL using that exact schema
     3. Executes the SQL safely
     """
-    if not os.getenv("OPENAI_API_KEY"):
+    openai_key = os.getenv("OPENAI_API_KEY") or getattr(settings, "OPENAI_API_KEY", None)
+    if not openai_key:
         raise Exception("OpenAI API Key required for Schema RAG Engine.")
         
     client_config = await session.get(ClientConfig, client_id)
@@ -289,7 +295,8 @@ async def query_legacy_db_with_schema(user_query: str, target_table: str, client
     if target_model in ["gpt-5.6-luna", "gpt-6-luna", "default", ""] or not target_model.startswith("gpt-"):
         target_model = "gpt-4o-mini"
         
-    llm = ChatOpenAI(model=target_model, api_key=settings.OPENAI_API_KEY, temperature=0)
+    openai_key = os.getenv("OPENAI_API_KEY") or getattr(settings, "OPENAI_API_KEY", None)
+    llm = ChatOpenAI(model=target_model, api_key=openai_key, temperature=0)
     
     system_prompt = f"""You are an expert SQL Data Analyst for a MySQL/MariaDB database.
     Your job is to convert the user's natural language question into a VALID, READ-ONLY raw SQL query.

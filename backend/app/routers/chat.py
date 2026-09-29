@@ -396,6 +396,227 @@ async def get_history(
         print(f"❌ Error fetching history: {e}")
         return []
 
+async def execute_read_pipeline(
+    table_name: str,
+    friendly_name: str,
+    user_text: str,
+    client_id: int,
+    s_id: str,
+    local_session: AsyncSession,
+    websocket: WebSocket
+):
+    from app.models.semantic_mapping import SemanticMapping
+    from app.models.client_config import ClientConfig
+    from app.tools.database import execute_sql_query
+    from app.core.context import current_db_url
+    from app.services.intent_service import NON_ENTITY_WORDS
+    
+    print(f"🔧 [INTELLIGENT READ] Processing '{friendly_name}' (table: {table_name}) for query: '{user_text}'", flush=True)
+
+    client_config = await local_session.get(ClientConfig, int(client_id))
+    if client_config and client_config.db_connection_url:
+        current_db_url.set(client_config.db_connection_url)
+
+    sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == int(client_id))
+    all_sms = (await local_session.execute(sm_stmt)).scalars().all()
+    
+    user_q_low = user_text.lower().strip()
+    fn_low = friendly_name.lower().strip()
+    query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
+    
+    best_sm = None
+    best_score = -999
+    
+    for sm in all_sms:
+        raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+        for alias in raw_aliases:
+            sm_lbl = alias.lower().strip()
+            sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+            
+            score = 0
+            if sm_lbl == fn_low or sm_lbl == user_q_low:
+                score += 100
+            elif sm_lbl in user_q_low or user_q_low in sm_lbl:
+                score += 50
+            
+            overlap = query_tokens.intersection(sm_toks)
+            score += len(overlap) * 20
+            diff = sm_toks - query_tokens
+            score -= len(diff) * 5
+            
+            if score > best_score and score >= 15:
+                best_score = score
+                best_sm = sm
+
+    # Check if the query is a plain list request or a specific/analytical question
+    has_analytical_intent = any(kw in user_q_low for kw in [
+        "how many", "count", "total", "sum", "average", "avg", "min", "max", "percentage", "trend", "breakdown", "who", "which"
+    ])
+    lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', (best_sm.ui_label if best_sm else "").lower()))
+    generic_list_tokens = {
+        "list", "show", "view", "get", "fetch", "all", "table", "records", "data", "entries", "rows",
+        "the", "a", "an", "of", "in", "for", "please", "display", "give", "me"
+    }
+    extra_filter_tokens = query_tokens - lbl_tokens - generic_list_tokens
+    is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 2)
+
+    # 1. Fast Base Query (Only for plain list table requests)
+    if best_sm and best_sm.base_query and not is_specific_or_analytical:
+        try:
+            print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{best_sm.ui_label}'", flush=True)
+            raw_records = await execute_sql_query(best_sm.base_query)
+            result = sanitize_for_json(raw_records)
+            display_title = best_sm.ui_label
+            actions_list = []
+            if isinstance(result, (list, tuple)) and result:
+                headers = list(result[0].keys())
+                actions_list.append({
+                    "type": "data_table",
+                    "payload": {
+                        "title": display_title,
+                        "headers": headers,
+                        "rows": list(result),
+                        "total": len(result)
+                    }
+                })
+                response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
+            elif isinstance(result, (list, tuple)):
+                response_text = f"No records found for **{display_title}**."
+            else:
+                raise ValueError(f"base_query error: {result}")
+            
+            ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+            local_session.add(ai_msg)
+            await local_session.commit()
+            await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+            await websocket.send_json({"type": "done", "session_id": s_id})
+            return
+        except Exception as fast_err:
+            print(f"⚠️ Fast base_query skipped/failed ({fast_err}), falling back to Schema RAG", flush=True)
+
+    # 2. Schema RAG (Intelligent Relational SQL Generation)
+    try:
+        from app.services.schema_rag_service import query_legacy_db_with_schema
+        print(f"🧠 [SCHEMA RAG] Querying database with schema for: {user_text}", flush=True)
+        target_tbl = (best_sm.database_table if best_sm else table_name) or table_name
+        rag_result = await query_legacy_db_with_schema(user_text, target_tbl, int(client_id), local_session)
+        
+        result = sanitize_for_json(rag_result["records"])
+        sql_used = rag_result.get("generated_sql", "")
+        display_title = rag_result.get("display_title") or (best_sm.ui_label if best_sm else friendly_name)
+        if display_title and "_" in display_title and display_title.islower():
+            display_title = display_title.replace("_", " ").title()
+
+        actions_list = []
+        is_error_result = isinstance(result, (list, tuple)) and result and any("Error" in r for r in result if isinstance(r, dict))
+
+        if is_error_result:
+            err_msg = rag_result.get("user_message") or result[0].get("Error")
+            response_text = f"⚠️ {err_msg}"
+        elif isinstance(result, (list, tuple)) and result:
+            # Check if this is a single aggregate row (e.g. {"count": 1} or {"COUNT(*)": 1})
+            first_row = result[0]
+            if len(result) == 1 and isinstance(first_row, dict) and len(first_row) == 1 and any(agg_k in list(first_row.keys())[0].lower() for agg_k in ["count", "total", "sum", "avg", "average", "value"]):
+                agg_k = list(first_row.keys())[0]
+                agg_v = list(first_row.values())[0]
+                agg_label = agg_k.replace("_", " ").title()
+                msg_text = rag_result.get("user_message", "")
+                if msg_text and not msg_text.lower().startswith("i cannot show"):
+                    response_text = f"{msg_text}\n\n**{display_title}** — {agg_label}: **{agg_v}**"
+                else:
+                    response_text = f"**{display_title}** — {agg_label}: **{agg_v}**"
+            else:
+                headers = list(result[0].keys())
+                actions_list.append({
+                    "type": "data_table",
+                    "payload": {
+                        "title": display_title,
+                        "headers": headers,
+                        "rows": list(result),
+                        "total": len(result)
+                    }
+                })
+                msg_text = rag_result.get("user_message", "")
+                if msg_text and not msg_text.lower().startswith("i cannot show"):
+                    response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{display_title}**."
+                else:
+                    response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
+        elif isinstance(result, (list, tuple)):
+            msg_text = rag_result.get("user_message", "")
+            debug_block = f"\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>" if sql_used else ""
+            if msg_text and not msg_text.lower().startswith("i cannot show"):
+                response_text = f"{msg_text}{debug_block}"
+            else:
+                response_text = f"No records found for your query.{debug_block}"
+        else:
+            response_text = f"Result from **{display_title}**: {result}"
+
+        ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+        local_session.add(ai_msg)
+        await local_session.commit()
+        await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+        await websocket.send_json({"type": "done", "session_id": s_id})
+        return
+    except Exception as rag_err:
+        print(f"⚠️ [SCHEMA RAG] Encountered error ({rag_err}), falling back to deterministic reader", flush=True)
+
+    # 3. Deterministic Fallback
+    from app.services.crud_service import CRUDService
+    from app.tools.dates import normalize_date_range
+
+    query_lower = user_text.lower()
+    is_aggregation = any(kw in query_lower for kw in ["how many", "count", "total", "number of", "sum of", "average"])
+    filters = {}
+    if is_aggregation:
+        if any(kw in query_lower for kw in ["sum of", "total amount", "total value"]):
+            filters["aggregate"] = "sum"
+        elif "average" in query_lower:
+            filters["aggregate"] = "avg"
+        else:
+            filters["aggregate"] = "count"
+
+    result = await CRUDService.read_records(
+        table_name=table_name, filters=filters if filters else None,
+        limit=100, client_id=int(client_id), user_query=user_text
+    )
+    result = sanitize_for_json(result)
+    date_start, date_end = normalize_date_range(user_text)
+    date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**" if date_start else ""
+    clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
+    actions_list = []
+    if isinstance(result, dict) and "aggregate" in result:
+        response_text = f"**{clean_friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
+    elif isinstance(result, dict) and "records" in result:
+        records = result["records"]
+        if records:
+            response_text = f"Found **{len(records)}** record(s) in **{clean_friendly_name}**.{date_info}"
+            headers = list(records[0].keys()) if records else []
+            actions_list.append({
+                "type": "data_table",
+                "payload": {"title": clean_friendly_name, "headers": headers, "rows": records, "total": len(records)}
+            })
+        else:
+            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
+    elif isinstance(result, list):
+        if result:
+            response_text = f"Found **{len(result)}** record(s) in **{clean_friendly_name}**.{date_info}"
+            headers = list(result[0].keys()) if result else []
+            actions_list.append({
+                "type": "data_table",
+                "payload": {"title": clean_friendly_name, "headers": headers, "rows": result, "total": len(result)}
+            })
+        else:
+            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
+    else:
+        response_text = f"Result from **{clean_friendly_name}**: {result}{date_info}"
+
+    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
+    local_session.add(ai_msg)
+    await local_session.commit()
+    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+    await websocket.send_json({"type": "done", "session_id": s_id})
+
+
 # --- WEBSOCKET CHAT ---
 @router.websocket("/ws/chat")
 async def websocket_endpoint(
@@ -1060,315 +1281,11 @@ async def websocket_endpoint(
                                             return
                                             
                                         if crud_text and crud_text.startswith("__DELEGATE_READ__"):
-                                            # ===== DETERMINISTIC READ: BYPASS LLM ENTIRELY =====
                                             parts = crud_text.split(":")
                                             table_name = parts[1] if len(parts) > 1 else ""
                                             friendly_name = parts[2] if len(parts) > 2 else table_name
-                                            
-                                            print(f"🔧 [DETERMINISTIC READ] Processing table: {table_name}")
-                                            
-                                            # --- FAST CONTROLLER BASE QUERY CHECK ---
-                                            # If this read request matches a verified semantic mapping with an exact base_query,
-                                            # execute it directly for maximum speed and 100% ERP screen parity.
-                                            try:
-                                                from app.models.semantic_mapping import SemanticMapping
-                                                from app.models.client_config import ClientConfig
-                                                from app.tools.database import execute_sql_query
-                                                from app.core.context import current_db_url
-                                                from app.services.intent_service import NON_ENTITY_WORDS
-                                                
-                                                client_config = await local_session.get(ClientConfig, int(client_id))
-                                                if client_config and client_config.db_connection_url:
-                                                    current_db_url.set(client_config.db_connection_url)
-
-                                                sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == int(client_id))
-                                                all_sms = (await local_session.execute(sm_stmt)).scalars().all()
-                                                
-                                                user_q_low = user_text.lower().strip()
-                                                fn_low = friendly_name.lower().strip()
-                                                query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
-                                                
-                                                best_sm = None
-                                                best_score = -999
-                                                
-                                                for sm in all_sms:
-                                                    raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
-                                                    for alias in raw_aliases:
-                                                        sm_lbl = alias.lower().strip()
-                                                        sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
-                                                        
-                                                        score = 0
-                                                        if sm_lbl == fn_low or sm_lbl == user_q_low:
-                                                            score += 100
-                                                        elif sm_lbl in user_q_low or user_q_low in sm_lbl:
-                                                            score += 50
-                                                        
-                                                        # Core token overlap
-                                                        overlap = query_tokens.intersection(sm_toks)
-                                                        score += len(overlap) * 20
-                                                        
-                                                        # Penalize extra non-matching tokens
-                                                        diff = sm_toks - query_tokens
-                                                        score -= len(diff) * 5
-                                                        
-                                                        # Tab discriminator bonus/penalty
-                                                        for td in ["pending", "completed", "active", "inactive"]:
-                                                            if td in user_q_low and td in sm_lbl:
-                                                                score += 30
-                                                            elif td in user_q_low and td not in sm_lbl and any(other_td in sm_lbl for other_td in ["pending", "completed", "active", "inactive"]):
-                                                                score -= 40
-                                                                
-                                                        # Report vs History/Attendance/Log discriminator bonus/penalty
-                                                        if "report" in user_q_low and "report" in sm_lbl:
-                                                            score += 35
-                                                        elif "report" in user_q_low and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
-                                                            score -= 45
-                                                        elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and any(k in sm_lbl for k in ["history", "log", "attendance", "logs"]):
-                                                            score += 35
-                                                        elif any(k in user_q_low for k in ["history", "log", "attendance", "logs"]) and "report" in sm_lbl:
-                                                            score -= 45
-                                                                
-                                                        if score > best_score and score >= 15:
-                                                            best_score = score
-                                                            best_sm = sm
-
-                                                # Check if the query is a plain list request or a specific/analytical question
-                                                has_analytical_intent = any(kw in user_q_low for kw in [
-                                                    "how many", "count", "total", "sum", "average", "avg", "min", "max", "percentage", "trend", "breakdown", "who", "which"
-                                                ])
-                                                lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', (best_sm.ui_label if best_sm else "").lower()))
-                                                generic_list_tokens = {
-                                                    "list", "show", "view", "get", "fetch", "all", "table", "records", "data", "entries", "rows",
-                                                    "the", "a", "an", "of", "in", "for", "please", "display", "give", "me"
-                                                }
-                                                extra_filter_tokens = query_tokens - lbl_tokens - generic_list_tokens
-                                                is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 2)
-
-                                                if best_sm and best_sm.base_query and not is_specific_or_analytical:
-                                                    # If strict mode is enabled, do not execute unverified automated crawler guesses
-                                                    if client_config and client_config.governance_mode == "strict" and best_sm.source_file and ("backup" in best_sm.source_file.lower() or not best_sm.source_file.startswith("manual")):
-                                                        print(f"⚠️ STRICT MODE: Bypassing unverified fast controller mapping '{best_sm.ui_label}'", flush=True)
-                                                        best_sm = None
-                                                    else:
-                                                        print(f"⚡ [FAST CONTROLLER QUERY] Executing verified base_query for '{best_sm.ui_label}' (Score: {best_score})", flush=True)
-                                                        raw_records = await execute_sql_query(best_sm.base_query)
-                                                        result = sanitize_for_json(raw_records)
-                                                        display_title = best_sm.ui_label
-                                                        actions_list = []
-                                                        if isinstance(result, (list, tuple)) and result:
-                                                            headers = list(result[0].keys())
-                                                            actions_list.append({
-                                                                "type": "data_table",
-                                                                "payload": {
-                                                                    "title": display_title,
-                                                                    "headers": headers,
-                                                                    "rows": list(result),
-                                                                    "total": len(result)
-                                                                }
-                                                            })
-                                                            response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
-                                                        elif isinstance(result, (list, tuple)):
-                                                            response_text = f"No records found for **{display_title}**."
-                                                        else:
-                                                            # Result is an error string (e.g. "Database Error: table doesn't exist")
-                                                            # Do NOT return - fall through to Schema RAG for intelligent table resolution
-                                                            print(f"⚠️ [FAST CONTROLLER] base_query returned error for '{display_title}': {result}", flush=True)
-                                                            raise ValueError(f"base_query failed: {result}")
-                                                        
-                                                        ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
-                                                        local_session.add(ai_msg)
-                                                        await local_session.commit()
-                                                        await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
-                                                        await websocket.send_json({"type": "done", "session_id": s_id})
-                                                        return
-                                            except Exception as fast_err:
-                                                print(f"⚠️ Fast base_query execution skipped/failed ({fast_err}), falling back", flush=True)
-
-                                            try:
-                                                from app.models.client_config import ClientConfig
-                                                client_config = await local_session.get(ClientConfig, int(client_id))
-                                                if client_config and client_config.schema_rag_enabled:
-                                                    print(f"🧠 [SCHEMA RAG] Intercepting read request for {table_name}")
-                                                    from app.services.schema_rag_service import query_legacy_db_with_schema
-                                                    rag_result = await query_legacy_db_with_schema(user_text, table_name, int(client_id), local_session)
-                                                    
-                                                    result = sanitize_for_json(rag_result["records"])
-                                                    sql_used = rag_result["generated_sql"]
-                                                    
-                                                    thought_process = rag_result.get("thought_process", "")
-                                                    thought_msg = f"\n\n**AI Thought Process:**\n_{thought_process}_" if thought_process else ""
-                                                    
-                                                    actions_list = []
-                                                    display_title = rag_result.get("display_title") or friendly_name
-                                                    if display_title and "_" in display_title and display_title.islower():
-                                                        display_title = display_title.replace("_", " ").title()
-
-                                                    # Check if result is an Error object from strict mode or execution failure
-                                                    is_error_result = isinstance(result, (list, tuple)) and result and any("Error" in r for r in result if isinstance(r, dict))
-
-                                                    if is_error_result:
-                                                        err_msg = rag_result.get("user_message") or result[0].get("Error")
-                                                        response_text = f"⚠️ {err_msg}"
-                                                        actions_list = []
-                                                    elif isinstance(result, (list, tuple)) and result:
-                                                        headers = list(result[0].keys())
-                                                        actions_list.append({
-                                                            "type": "data_table", 
-                                                            "payload": {
-                                                                "title": display_title, 
-                                                                "headers": headers, 
-                                                                "rows": list(result), 
-                                                                "total": len(result)
-                                                            }
-                                                        })
-                                                        
-                                                        msg_text = rag_result.get("user_message", "")
-                                                        if msg_text and not msg_text.lower().startswith("i cannot show"):
-                                                            response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{display_title}**."
-                                                        else:
-                                                            response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
-                                                    elif isinstance(result, (list, tuple)):
-                                                        msg_text = rag_result.get("user_message", "")
-                                                        debug_block = f"\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>" if sql_used else ""
-                                                        if msg_text and not msg_text.lower().startswith("i cannot show"):
-                                                            response_text = f"{msg_text}{debug_block}"
-                                                        else:
-                                                            response_text = f"No records found for your query.{debug_block}"
-                                                    elif isinstance(result, str):
-                                                        response_text = f"Database returned a response:\n{result}"
-                                                    else:
-                                                        response_text = f"Query executed. Result type: {type(result)}.\n\n```sql\n{sql_used}\n```"
-                                                        
-                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
-                                                    local_session.add(ai_msg)
-                                                    await local_session.commit()
-                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
-                                                    await websocket.send_json({"type": "done", "session_id": s_id})
-                                                    return
-                                                    
-                                                from app.services.crud_service import CRUDService
-                                                from app.tools.dates import normalize_date_range
-                                                
-                                                # Step 1: Parse aggregation intent from user query
-                                                query_lower = user_text.lower()
-                                                is_aggregation = any(kw in query_lower for kw in [
-                                                    "how many", "count", "total", "number of", "sum of", "average"
-                                                ])
-                                                
-                                                filters = {}
-                                                if is_aggregation:
-                                                    if any(kw in query_lower for kw in ["sum of", "total amount", "total value"]):
-                                                        filters["aggregate"] = "sum"
-                                                    elif "average" in query_lower:
-                                                        filters["aggregate"] = "avg"
-                                                    else:
-                                                        filters["aggregate"] = "count"
-                                                
-                                                # Step 2: Execute the CRUD read (date filtering is handled internally by CRUDService)
-                                                result = await CRUDService.read_records(
-                                                    table_name=table_name,
-                                                    filters=filters if filters else None,
-                                                    limit=100,
-                                                    client_id=int(client_id),
-                                                    user_query=user_text
-                                                )
-                                                
-                                                # Sanitize for JSON (Convert Decimals to floats!)
-                                                result = sanitize_for_json(result)
-                                                
-                                                # Step 3: Parse date range for transparency in the response
-                                                date_start, date_end = normalize_date_range(user_text)
-                                                date_info = ""
-                                                if date_start:
-                                                    date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**"
-                                                
-                                                # Step 4: Format the response
-                                                clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
-                                                actions_list = []
-                                                if isinstance(result, dict) and "aggregate" in result:
-                                                    # Aggregation result
-                                                    agg_type = result["aggregate"]
-                                                    value = result["value"]
-                                                    response_text = f"**{clean_friendly_name}** — {agg_type.upper()}: **{value}**{date_info}"
-                                                elif isinstance(result, dict) and "grouped_results" in result:
-                                                    # Grouped aggregation
-                                                    response_text = f"**{clean_friendly_name}** — Grouped Results:{date_info}"
-                                                    grouped = result["grouped_results"]
-                                                    g_headers = list(grouped[0].keys()) if (isinstance(grouped, list) and grouped and isinstance(grouped[0], dict)) else []
-                                                    actions_list.append({
-                                                        "type": "data_table",
-                                                        "payload": {
-                                                            "title": clean_friendly_name,
-                                                            "headers": g_headers,
-                                                            "rows": grouped if isinstance(grouped, list) else [],
-                                                            "total": len(grouped) if isinstance(grouped, list) else 0
-                                                        }
-                                                    })
-                                                elif isinstance(result, dict) and "records" in result:
-                                                    # Records with warnings
-                                                    records = result["records"]
-                                                    if records:
-                                                        response_text = f"Found **{len(records)}** record(s) in **{clean_friendly_name}**.{date_info}"
-                                                        headers = list(records[0].keys()) if records else []
-                                                        actions_list.append({
-                                                            "type": "data_table", 
-                                                            "payload": {
-                                                                "title": clean_friendly_name, 
-                                                                "headers": headers,
-                                                                "rows": records,
-                                                                "total": len(records),
-                                                                "query_payload": {
-                                                                    "table_name": table_name,
-                                                                    "filters": filters if filters else None,
-                                                                    "user_query": user_text,
-                                                                    "client_id": int(client_id)
-                                                                }
-                                                            }
-                                                        })
-                                                    else:
-                                                        response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
-                                                elif isinstance(result, list):
-                                                    if result:
-                                                        response_text = f"Found **{len(result)}** record(s) in **{clean_friendly_name}**.{date_info}"
-                                                        headers = list(result[0].keys()) if result else []
-                                                        actions_list.append({
-                                                            "type": "data_table", 
-                                                            "payload": {
-                                                                "title": clean_friendly_name, 
-                                                                "headers": headers,
-                                                                "rows": result,
-                                                                "total": len(result),
-                                                                "query_payload": {
-                                                                    "table_name": table_name,
-                                                                    "filters": filters if filters else None,
-                                                                    "user_query": user_text,
-                                                                    "client_id": int(client_id)
-                                                                }
-                                                            }
-                                                        })
-                                                    else:
-                                                        response_text = f"No records found in **{friendly_name}** for the specified criteria.{date_info}"
-                                                else:
-                                                    response_text = f"Result from **{friendly_name}**: {result}{date_info}"
-                                                
-                                                print(f"✅ [DETERMINISTIC READ] Result: {response_text[:100]}...")
-                                                
-                                                ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
-                                                local_session.add(ai_msg)
-                                                await local_session.commit()
-                                                await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
-                                                await websocket.send_json({"type": "done", "session_id": s_id})
-                                                return
-                                                
-                                            except Exception as read_err:
-                                                print(f"❌ [DETERMINISTIC READ] Error: {read_err}")
-                                                error_text = f"Sorry, I encountered an error reading from {friendly_name}: {str(read_err)}"
-                                                ai_msg = ChatMessage(role="ai", content=error_text, actions=[], client_id=client_id, session_id=s_id)
-                                                local_session.add(ai_msg)
-                                                await local_session.commit()
-                                                await websocket.send_json({"text": error_text, "actions": [], "type": "chat_response"})
-                                                await websocket.send_json({"type": "done", "session_id": s_id})
-                                                return
+                                            await execute_read_pipeline(table_name, friendly_name, user_text, int(client_id), s_id, local_session, websocket)
+                                            return
 
                                         elif crud_text:
                                             # De-duplicate actions
@@ -1416,80 +1333,8 @@ async def websocket_endpoint(
                                                 parts = crud_text.split(":")
                                                 table_name = parts[1] if len(parts) > 1 else ""
                                                 friendly_name = parts[2] if len(parts) > 2 else table_name
-                                                
-                                                try:
-                                                    from app.services.crud_service import CRUDService
-                                                    from app.tools.dates import normalize_date_range
-                                                    
-                                                    query_lower = user_text.lower()
-                                                    is_aggregation = any(kw in query_lower for kw in ["how many", "count", "total", "number of", "sum of", "average"])
-                                                    
-                                                    filters = {}
-                                                    if is_aggregation:
-                                                        if any(kw in query_lower for kw in ["sum of", "total amount", "total value"]):
-                                                            filters["aggregate"] = "sum"
-                                                        elif "average" in query_lower:
-                                                            filters["aggregate"] = "avg"
-                                                        else:
-                                                            filters["aggregate"] = "count"
-                                                    
-                                                    result = await CRUDService.read_records(
-                                                        table_name=table_name, filters=filters if filters else None,
-                                                        limit=100, client_id=int(client_id), user_query=user_text
-                                                    )
-                                                    
-                                                    # Sanitize for JSON
-                                                    result = sanitize_for_json(result)
-                                                    
-                                                    date_start, date_end = normalize_date_range(user_text)
-                                                    date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**" if date_start else ""
-                                                    
-                                                    clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
-                                                    actions_list = []
-                                                    if isinstance(result, dict) and "aggregate" in result:
-                                                        response_text = f"**{clean_friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
-                                                    elif isinstance(result, dict) and "records" in result:
-                                                        records = result["records"]
-                                                        if records:
-                                                            response_text = f"Found **{len(records)}** record(s) in **{clean_friendly_name}**.{date_info}"
-                                                            headers = list(records[0].keys()) if records else []
-                                                            actions_list.append({
-                                                                "type": "data_table", 
-                                                                "payload": {
-                                                                    "title": clean_friendly_name, 
-                                                                    "headers": headers,
-                                                                    "rows": records,
-                                                                    "total": len(records)
-                                                                }
-                                                            })
-                                                        else:
-                                                            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
-                                                    elif isinstance(result, list):
-                                                        if result:
-                                                            response_text = f"Found **{len(result)}** record(s) in **{clean_friendly_name}**.{date_info}"
-                                                            headers = list(result[0].keys()) if result else []
-                                                            actions_list.append({
-                                                                "type": "data_table", 
-                                                                "payload": {
-                                                                    "title": clean_friendly_name, 
-                                                                    "headers": headers,
-                                                                    "rows": result,
-                                                                    "total": len(result)
-                                                                }
-                                                            })
-                                                        else:
-                                                            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
-                                                    else:
-                                                        response_text = f"Result from **{clean_friendly_name}**: {result}{date_info}"
-                                                    
-                                                    ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
-                                                    local_session.add(ai_msg)
-                                                    await local_session.commit()
-                                                    await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
-                                                    await websocket.send_json({"type": "done", "session_id": s_id})
-                                                    return
-                                                except Exception as read_err:
-                                                    print(f"❌ [ASSISTANT READ] Error: {read_err}")
+                                                await execute_read_pipeline(table_name, friendly_name, user_text, int(client_id), s_id, local_session, websocket)
+                                                return
                                         
                                         # For non-read CRUD intents, redirect to Operations
                                         if crud_intent.get("intent") != "read":
