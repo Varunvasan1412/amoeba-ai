@@ -1,6 +1,7 @@
 # Amoeba AI v1 FIXED — Do not extend without version bump
 
 import json
+import re
 import asyncio
 import decimal
 from datetime import datetime, date
