@@ -189,6 +189,12 @@ def _resolve_column(
     if term_lower in table_meta.synonym_to_column:
         return table_meta.synonym_to_column[term_lower]
 
+    # 3b. Foreign key suffix check: "city" -> "city_id", "status" -> "status_id"
+    if f"{term_lower}_id" in table_meta.columns:
+        return f"{term_lower}_id"
+    if f"{term_normalized}_id" in table_meta.columns:
+        return f"{term_normalized}_id"
+
     # 4. Fuzzy match — check if normalized form matches a column
     for col_name in table_meta.columns:
         col_normalized = re.sub(r'[^a-z0-9]', '_', col_name.lower())

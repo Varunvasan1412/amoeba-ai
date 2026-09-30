@@ -97,20 +97,39 @@ class EntitySelector:
         t_raw = target.lower().strip()
         if not q or not t: return 0.0
         
+        # 1. Exact match
         if q == t or q == t_raw: return 1.0
-        if t.startswith(q) or q.startswith(t) or t_raw.startswith(q) or q.startswith(t_raw): return 0.95
-        if t in q or t_raw in q: return 0.90
-        if q in t or q in t_raw: return 0.85
 
-        # Check token-level containment
-        q_tokens = set(re.findall(r'[a-zA-Z0-9]+', q))
-        q_norm_tokens = {normalize_entity_name(tok) for tok in q_tokens}
-        if t in q_tokens or t in q_norm_tokens or t_raw in q_tokens or t_raw in q_norm_tokens:
-            return 0.90
+        # 2. Extract primary subject clause before prepositions (with, by, grouped by, where, in, for)
+        subject_parts = re.split(r'\b(with|grouped\s+by|group\s+by|by|where|in|for)\b', q, flags=re.IGNORECASE)
+        subject_clause = subject_parts[0].strip() if subject_parts else q
+        
+        if subject_clause:
+            subj_tokens = set(re.findall(r'[a-zA-Z0-9]+', subject_clause))
+            subj_norm_tokens = {normalize_entity_name(tok) for tok in subj_tokens}
+            
+            # If target matches subject clause exactly
+            if t == subject_clause or t_raw == subject_clause:
+                return 0.99
+            if subject_clause.startswith(t) or subject_clause.startswith(t_raw):
+                return 0.96
+            if t in subject_clause or t_raw in subject_clause or t in subj_tokens or t in subj_norm_tokens or t_raw in subj_tokens:
+                return 0.94
+
+        # If this target only appears in the secondary clause (after 'with', 'by', etc.), penalize it
+        if len(subject_parts) > 1:
+            sec_clause = " ".join(subject_parts[1:])
+            sec_tokens = set(re.findall(r'[a-zA-Z0-9]+', sec_clause))
+            if t in sec_tokens or t_raw in sec_tokens:
+                return 0.35  # Secondary entity penalty
+
+        if t.startswith(q) or q.startswith(t) or t_raw.startswith(q) or q.startswith(t_raw): return 0.85
+        if t in q or t_raw in q: return 0.70
+        if q in t or q in t_raw: return 0.65
         
         if len(q) > 3 and len(t) > 3:
             ratio = difflib.SequenceMatcher(None, q, t).ratio()
-            if ratio > 0.7: return ratio
+            if ratio > 0.7: return ratio * 0.8
             
         return 0.0
 
