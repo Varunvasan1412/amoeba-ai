@@ -426,32 +426,38 @@ async def execute_read_pipeline(
     query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
     
     best_sm = None
-    best_score = -999
-    
-    for sm in all_sms:
-        raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
-        for alias in raw_aliases:
-            sm_lbl = alias.lower().strip()
-            sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
-            
-            score = 0
-            if sm_lbl == fn_low or sm_lbl == user_q_low:
-                score += 100
-            elif sm_lbl in user_q_low or user_q_low in sm_lbl:
-                score += 50
-            
-            overlap = query_tokens.intersection(sm_toks)
-            score += len(overlap) * 20
-            diff = sm_toks - query_tokens
-            score -= len(diff) * 5
-            
-            if score > best_score and score >= 15:
-                best_score = score
+    if table_name and table_name != "unknown_entity":
+        for sm in all_sms:
+            if sm.database_table.lower() == table_name.lower():
                 best_sm = sm
+                break
+
+    if not best_sm:
+        best_score = -999
+        for sm in all_sms:
+            raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+            for alias in raw_aliases:
+                sm_lbl = alias.lower().strip()
+                sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+                
+                score = 0
+                if sm_lbl == fn_low or sm_lbl == user_q_low:
+                    score += 100
+                elif sm_lbl in user_q_low or user_q_low in sm_lbl:
+                    score += 50
+                
+                overlap = query_tokens.intersection(sm_toks)
+                score += len(overlap) * 20
+                diff = sm_toks - query_tokens
+                score -= len(diff) * 5
+                
+                if score > best_score and score >= 15:
+                    best_score = score
+                    best_sm = sm
 
     # Check if the query is a plain list request or a specific/analytical question
     has_analytical_intent = any(kw in user_q_low for kw in [
-        "how many", "count", "total", "sum", "average", "avg", "min", "max", "percentage", "trend", "breakdown", "who", "which"
+        "how many", "count", "total", "sum", "average", "avg", "min", "max", "percentage", "trend", "breakdown", "who", "which", "grouped by", "group by", "by"
     ])
     lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', (best_sm.ui_label if best_sm else "").lower()))
     generic_list_tokens = {
@@ -495,7 +501,7 @@ async def execute_read_pipeline(
         except Exception as fast_err:
             print(f"⚠️ Fast base_query skipped/failed ({fast_err}), falling back to Schema RAG", flush=True)
 
-    target_tbl = (best_sm.database_table if best_sm else table_name) or table_name
+    target_tbl = table_name if (table_name and table_name != "unknown_entity") else (best_sm.database_table if best_sm else table_name)
 
     async def _send_query_result(q_result: dict, engine_name: str) -> bool:
         result = sanitize_for_json(q_result.get("records", []))

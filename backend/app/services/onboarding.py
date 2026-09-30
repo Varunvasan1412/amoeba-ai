@@ -68,8 +68,16 @@ def discover_tables(connection_url: str):
             return cached_data
     
     try:
-        # Create engine with explicit timeout
-        engine = create_engine(connection_url, connect_args={"connect_timeout": 10})
+        # Convert async driver URLs to sync drivers for SQLAlchemy inspect
+        sync_url = connection_url or ""
+        if sync_url.startswith("postgresql+asyncpg://"): sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        elif sync_url.startswith("postgresql://"): sync_url = sync_url.replace("postgresql://", "postgresql+psycopg2://")
+        elif sync_url.startswith("mysql+aiomysql://"): sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+        elif sync_url.startswith("mysql://"): sync_url = sync_url.replace("mysql://", "mysql+pymysql://")
+        elif sync_url.startswith("sqlite+aiosqlite://"): sync_url = sync_url.replace("sqlite+aiosqlite://", "sqlite://")
+
+        connect_args = {"connect_timeout": 10} if not sync_url.startswith("sqlite") else {}
+        engine = create_engine(sync_url, connect_args=connect_args)
         inspector = inspect(engine)
         
         schema_info = []
