@@ -301,11 +301,13 @@ def _keyword_fallback(user_query: str, target_table: Optional[str] = None) -> Ex
         limit = int(limit_match.group(1))
 
     # Detect sort
-    sort_order = None
-    if any(kw in query_lower for kw in ["latest", "recent", "newest", "last"]):
-        sort_order = "desc"
-    elif any(kw in query_lower for kw in ["oldest", "first", "earliest"]):
-        sort_order = "asc"
+    # Detect group_by
+    group_by = None
+    gb_match = re.search(r'\b(?:grouped\s+by|group\s+by|by|per)\s+([a-zA-Z0-9_]+)\b', query_lower)
+    if gb_match:
+        cand_gb = gb_match.group(1).lower().strip()
+        if cand_gb not in ("all", "the", "a", "an", "and", "or", "desc", "asc", "date", "created_at"):
+            group_by = cand_gb
 
     return ExtractedParams(
         table=target_table or "",
@@ -316,5 +318,6 @@ def _keyword_fallback(user_query: str, target_table: Optional[str] = None) -> Ex
         sort_order=sort_order,
         aggregate_column=aggregate_column,
         limit=limit,
+        group_by=group_by,
         confidence=0.5  # Low confidence for keyword fallback
     )

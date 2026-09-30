@@ -444,15 +444,30 @@ async def build_query(
         # Add group_by column to SELECT if present
         if extracted.group_by:
             gb_col = _resolve_column(extracted.group_by, table_meta)
+            gb_target_alias = base_alias
+            gb_label = extracted.group_by.replace("_", " ").title()
+
+            if not gb_col:
+                for j in joins:
+                    j_meta = joined_metas.get(j["table"])
+                    if j_meta:
+                        j_gb = _resolve_column(extracted.group_by, j_meta)
+                        if j_gb:
+                            gb_col = j_gb
+                            gb_target_alias = q(j["table"])
+                            j_label = j_meta.columns.get(j_gb, {}).get("label", j_gb)
+                            gb_label = j_label.replace("_", " ").title()
+                            break
+
             if gb_col:
                 # Check if there's an enum mapping for this column
-                if gb_col in table_meta.enum_mappings:
+                if gb_target_alias == base_alias and gb_col in table_meta.enum_mappings:
                     case_when = _build_enum_case_when(
                         f"{base_alias}.{q(gb_col)}", table_meta.enum_mappings[gb_col]
                     )
-                    select_parts.insert(0, f"{case_when} AS {q(gb_col)}")
+                    select_parts.insert(0, f"{case_when} AS {q(gb_label)}")
                 else:
-                    select_parts.insert(0, f"{base_alias}.{q(gb_col)}")
+                    select_parts.insert(0, f"{gb_target_alias}.{q(gb_col)} AS {q(gb_label)}")
     else:
         # LIST action — determine which columns to show
         if extracted.columns:
@@ -658,9 +673,21 @@ async def build_query(
     group_clause = ""
     if extracted.group_by and action in ("count", "sum", "avg", "min", "max"):
         gb_col = _resolve_column(extracted.group_by, table_meta)
+        gb_target_alias = base_alias
+        if not gb_col:
+            for j in joins:
+                j_meta = joined_metas.get(j["table"])
+                if j_meta:
+                    j_gb = _resolve_column(extracted.group_by, j_meta)
+                    if j_gb:
+                        gb_col = j_gb
+                        gb_target_alias = q(j["table"])
+                        break
+
         if gb_col:
-            # If there's an enum mapping, group by the column directly (not the CASE expression)
-            group_clause = f"GROUP BY {base_alias}.{q(gb_col)}"
+            group_clause = f"GROUP BY {gb_target_alias}.{q(gb_col)}"
+            if not order_clause:
+                order_clause = "ORDER BY COUNT(*) DESC"
 
     # ─── 8. Build LIMIT ─────────────────────────────────────────────────────
     limit_clause = ""

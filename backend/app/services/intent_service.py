@@ -562,6 +562,12 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             "status": "disambiguation"
                         }
 
+            # Extract primary subject clause before prepositions (by, grouped by, with, where, having)
+            subject_parts = re.split(r'\b(grouped\s+by|by|with|where|having)\b', clean_q, flags=re.IGNORECASE)
+            subject_clause = subject_parts[0].strip() if subject_parts else clean_q
+            subject_toks = set(re.findall(r'[a-zA-Z0-9]+', subject_clause)) - NON_ENTITY_WORDS
+            stemmed_subj_toks = {_stem_token(t) for t in subject_toks}
+
             best_sm = None
             best_sm_score = 0
             for sm in sm_all:
@@ -575,16 +581,23 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     
                     # Direct exact or substring match on alias
                     score = 0
-                    if sm_label_norm == norm_query or sm_label_clean == clean_q or (stemmed_alias_toks and stemmed_alias_toks == stemmed_q_toks):
+                    # Check match against primary subject clause FIRST
+                    if sm_label_clean in subject_clause or (stemmed_alias_toks and stemmed_subj_toks and (stemmed_subj_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_subj_toks))):
                         score = 50 + len(sm_label_clean)
+                    elif sm_label_norm == norm_query or sm_label_clean == clean_q or (stemmed_alias_toks and stemmed_alias_toks == stemmed_q_toks):
+                        score = 40 + len(sm_label_clean)
                     elif sm_label_clean in clean_q or clean_q in sm_label_clean:
-                        score = 30 + len(sm_label_clean)
-                    elif stemmed_q_toks and stemmed_alias_toks and (stemmed_q_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_q_toks)):
                         score = 25 + len(sm_label_clean)
+                    elif stemmed_q_toks and stemmed_alias_toks and (stemmed_q_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_q_toks)):
+                        score = 20 + len(sm_label_clean)
                     else:
                         overlap = q_toks.intersection(sm_core_toks)
                         score = len(overlap) * 10 if overlap else 0
                     
+                    # If this alias ONLY appears after 'by', 'grouped by', or 'with', penalize as secondary attribute
+                    if len(subject_parts) > 1 and not (sm_label_clean in subject_clause or (stemmed_alias_toks and stemmed_subj_toks and stemmed_alias_toks.intersection(stemmed_subj_toks))):
+                        score -= 30
+
                     # Precision Penalty: Penalize extra distinguishing tokens not requested in query
                     unmatched_sm_tokens = sm_core_toks - q_toks
                     score -= len(unmatched_sm_tokens) * 5
