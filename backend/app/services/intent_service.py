@@ -562,11 +562,19 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             "status": "disambiguation"
                         }
 
-            # Extract primary subject clause before prepositions (by, grouped by, with, where, having)
-            subject_parts = re.split(r'\b(grouped\s+by|by|with|where|having)\b', clean_q, flags=re.IGNORECASE)
-            subject_clause = subject_parts[0].strip() if subject_parts else clean_q
-            subject_toks = set(re.findall(r'[a-zA-Z0-9]+', subject_clause)) - NON_ENTITY_WORDS
-            stemmed_subj_toks = {_stem_token(t) for t in subject_toks}
+            # Extract primary subject clause before prepositions in BOTH raw and normalized form
+            raw_q_clean = query_lower
+            for kw in INTENT_MAP.get(detected_intent, []):
+                raw_q_clean = re.sub(rf"\b{kw}\b", "", raw_q_clean).strip()
+            raw_q_clean = strip_date_phrases(raw_q_clean)
+
+            raw_parts = re.split(r'\b(grouped\s+by|group\s+by|by|with|where|having|in|for)\b', raw_q_clean, flags=re.IGNORECASE)
+            raw_subject = raw_parts[0].strip() if raw_parts else raw_q_clean
+            raw_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', raw_subject)) - NON_ENTITY_WORDS}
+
+            norm_parts = re.split(r'\b(grouped\s+by|group\s+by|by|with|where|having|in|for)\b', clean_q, flags=re.IGNORECASE)
+            norm_subject = norm_parts[0].strip() if norm_parts else clean_q
+            norm_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', norm_subject)) - NON_ENTITY_WORDS}
 
             best_sm = None
             best_sm_score = 0
@@ -574,51 +582,37 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 # Support comma-separated aliases in ui_label (e.g. "Quotations, Quotes, Sales Quotation")
                 raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
                 for alias in raw_aliases:
-                    sm_label_norm = normalize_entity_name(alias.lower().strip())
-                    sm_label_clean = alias.lower().strip()
-                    sm_core_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_label_clean)) - NON_ENTITY_WORDS
-                    stemmed_alias_toks = {_stem_token(t) for t in sm_core_toks}
-                    
-                    # Direct exact or substring match on alias
+                    lbl = alias.lower().strip()
+                    lbl_norm = normalize_entity_name(lbl)
+                    lbl_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', lbl)) - NON_ENTITY_WORDS}
+                    lbl_norm_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', lbl_norm)) - NON_ENTITY_WORDS}
+
                     score = 0
-                    # Check match against primary subject clause FIRST
-                    if sm_label_clean in subject_clause or (stemmed_alias_toks and stemmed_subj_toks and (stemmed_subj_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_subj_toks))):
-                        score = 50 + len(sm_label_clean)
-                    elif sm_label_norm == norm_query or sm_label_clean == clean_q or (stemmed_alias_toks and stemmed_alias_toks == stemmed_q_toks):
-                        score = 40 + len(sm_label_clean)
-                    elif sm_label_clean in clean_q or clean_q in sm_label_clean:
-                        score = 25 + len(sm_label_clean)
-                    elif stemmed_q_toks and stemmed_alias_toks and (stemmed_q_toks.issubset(stemmed_alias_toks) or stemmed_alias_toks.issubset(stemmed_q_toks)):
-                        score = 20 + len(sm_label_clean)
+                    is_subj_match = (
+                        lbl in raw_subject or lbl_norm in norm_subject or
+                        (lbl_toks and raw_subj_toks and (lbl_toks.issubset(raw_subj_toks) or raw_subj_toks.issubset(lbl_toks))) or
+                        (lbl_norm_toks and norm_subj_toks and (lbl_norm_toks.issubset(norm_subj_toks) or norm_subj_toks.issubset(lbl_norm_toks)))
+                    )
+
+                    if is_subj_match:
+                        score = 80 + len(lbl)
+                        # Precision penalty for extra words in label not in subject
+                        unmatched_raw = lbl_toks - raw_subj_toks
+                        unmatched_norm = lbl_norm_toks - norm_subj_toks
+                        score -= min(len(unmatched_raw), len(unmatched_norm)) * 25
                     else:
-                        overlap = q_toks.intersection(sm_core_toks)
-                        score = len(overlap) * 10 if overlap else 0
-                    
-                    # If this alias ONLY appears after 'by', 'grouped by', or 'with', penalize as secondary attribute
-                    if len(subject_parts) > 1 and not (sm_label_clean in subject_clause or (stemmed_alias_toks and stemmed_subj_toks and stemmed_alias_toks.intersection(stemmed_subj_toks))):
+                        if lbl in raw_q_clean or lbl_norm in clean_q:
+                            score = 20 + len(lbl)
+                            if len(raw_parts) > 1:
+                                score -= 35  # Secondary entity penalty
+
+                    # Tab distinction bonus
+                    if ("pending" in clean_q and "pending" in lbl) or ("completed" in clean_q and "completed" in lbl):
+                        score += 20
+                    elif ("pending" in clean_q and "completed" in lbl) or ("completed" in clean_q and "pending" in lbl):
                         score -= 30
 
-                    # Precision Penalty: Penalize extra distinguishing tokens not requested in query
-                    unmatched_sm_tokens = sm_core_toks - q_toks
-                    score -= len(unmatched_sm_tokens) * 5
-                    
-                    # Tab distinction bonus: if both query and label specify pending or completed, boost score
-                    if ("pending" in clean_q and "pending" in sm_label_clean) or ("completed" in clean_q and "completed" in sm_label_clean):
-                        score += 20
-                    elif ("pending" in clean_q and "completed" in sm_label_clean) or ("completed" in clean_q and "pending" in sm_label_clean):
-                        score -= 30 # Penalize opposite tab
-                        
-                    # Report vs History/Logs/Attendance discriminator
-                    if "report" in clean_q and "report" in sm_label_clean:
-                        score += 25
-                    elif "report" in clean_q and any(k in sm_label_clean for k in ["history", "log", "attendance", "loglist", "logs"]):
-                        score -= 35
-                    elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and any(k in sm_label_clean for k in ["history", "log", "attendance", "logs"]):
-                        score += 25
-                    elif any(k in clean_q for k in ["history", "log", "attendance", "logs"]) and "report" in sm_label_clean:
-                        score -= 35
-
-                    if score > best_sm_score and score >= 8:
+                    if score > best_sm_score and score >= 10:
                         best_sm_score = score
                         best_sm = sm
                         
