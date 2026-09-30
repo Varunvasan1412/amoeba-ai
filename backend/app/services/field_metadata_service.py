@@ -26,7 +26,13 @@ async def generate_field_metadata(client_id: int, session: AsyncSession):
         
     try:
         # We use a sync engine for discovery
-        engine = create_engine(client.db_connection_url)
+        sync_url = client.db_connection_url
+        if sync_url.startswith("postgresql+asyncpg://"): sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        elif sync_url.startswith("postgresql://"): sync_url = sync_url.replace("postgresql://", "postgresql+psycopg2://")
+        elif sync_url.startswith("mysql+aiomysql://"): sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+        elif sync_url.startswith("mysql://"): sync_url = sync_url.replace("mysql://", "mysql+pymysql://")
+        elif sync_url.startswith("sqlite+aiosqlite://"): sync_url = sync_url.replace("sqlite+aiosqlite://", "sqlite://")
+        engine = create_engine(sync_url)
         inspector = inspect(engine)
     except Exception as e:
         print(f"❌ Metadata Discovery Error: {e}")
@@ -126,7 +132,13 @@ async def get_field_options(client_id: int, meta: FieldMetadata, session: AsyncS
     try:
         # We use a sync engine here because it's a quick fetch and we're in a service
         # but ideally we'd have a pool of client engines.
-        engine = create_engine(client.db_connection_url)
+        sync_url = client.db_connection_url
+        if sync_url.startswith("postgresql+asyncpg://"): sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        elif sync_url.startswith("postgresql://"): sync_url = sync_url.replace("postgresql://", "postgresql+psycopg2://")
+        elif sync_url.startswith("mysql+aiomysql://"): sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+        elif sync_url.startswith("mysql://"): sync_url = sync_url.replace("mysql://", "mysql+pymysql://")
+        elif sync_url.startswith("sqlite+aiosqlite://"): sync_url = sync_url.replace("sqlite+aiosqlite://", "sqlite://")
+        engine = create_engine(sync_url)
         with engine.connect() as conn:
             # Safely build the query
             query = text(f"SELECT {meta.value_column} AS value, {meta.display_column} AS label FROM {meta.data_source_table} LIMIT 5000")

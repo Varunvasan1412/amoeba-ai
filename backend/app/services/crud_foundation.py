@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -16,17 +16,36 @@ async def _check_authorization(user_id: str, action: str, table: str) -> bool:
     # In a real app, query RBAC tables
     return True
 
-async def get_app_concept_filter(session: AsyncSession, client_id: int, table_name: str) -> str:
-    """Fetches the structural filter for the table from SemanticMapping."""
+async def get_app_concept_filter(session: AsyncSession, client_id: int, table_name: str) -> Optional[str]:
+    """Fetches the structural filter for the table from SemanticMapping, FieldMetadata, or SemanticMetadata."""
     stmt = select(SemanticMapping).where(
         SemanticMapping.client_id == client_id,
         SemanticMapping.database_table == table_name
     )
     res = await session.execute(stmt)
     mapping = res.scalars().first()
-    if mapping and mapping.default_filter:
-        return mapping.default_filter
-    return None
+    if mapping:
+        return mapping.default_filter if mapping.default_filter else "1=1"
+
+    # Fallback check for semantic metadata or field metadata approval
+    from app.models.semantic_metadata import SemanticMetadata
+    sem_stmt = select(SemanticMetadata).where(
+        SemanticMetadata.client_id == client_id,
+        SemanticMetadata.table_name == table_name
+    )
+    sem_res = await session.execute(sem_stmt)
+    if sem_res.scalars().first():
+        return "1=1"
+
+    fm_stmt = select(FieldMetadata).where(
+        FieldMetadata.client_id == client_id,
+        FieldMetadata.table_name == table_name
+    )
+    fm_res = await session.execute(fm_stmt)
+    if fm_res.scalars().first():
+        return "1=1"
+
+    return "1=1" # Allow configured database tables by default
 
 from app.models.client_config import ClientConfig
 
@@ -60,16 +79,33 @@ async def validate_operation(operation: CrudOperation, client_id: int, user_id: 
 
     # 5. Field Validation
     if operation.fields and operation.action.upper() in ["CREATE", "UPDATE"]:
-        # Fetch allowed physical columns from FieldMetadata
+        # Fetch allowed physical columns from FieldMetadata (case-insensitive)
+        from sqlalchemy import func, inspect, create_engine
         stmt = select(FieldMetadata).where(
             FieldMetadata.client_id == client_id,
-            FieldMetadata.table_name == operation.table
+            func.lower(FieldMetadata.table_name) == operation.table.lower()
         )
         res = await session.execute(stmt)
-        allowed_fields = {f.column_name for f in res.scalars().all()}
+        allowed_fields = {f.column_name.lower() for f in res.scalars().all()}
         
+        if not allowed_fields:
+            if client_config:
+                sync_url = client_config.db_connection_url
+                if sync_url.startswith("postgresql+asyncpg://"): sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+                elif sync_url.startswith("postgresql://"): sync_url = sync_url.replace("postgresql://", "postgresql+psycopg2://")
+                elif sync_url.startswith("mysql+aiomysql://"): sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+                elif sync_url.startswith("mysql://"): sync_url = sync_url.replace("mysql://", "mysql+pymysql://")
+                elif sync_url.startswith("sqlite+aiosqlite://"): sync_url = sync_url.replace("sqlite+aiosqlite://", "sqlite://")
+                try:
+                    engine = create_engine(sync_url)
+                    inspector = inspect(engine)
+                    cols = inspector.get_columns(operation.table)
+                    allowed_fields = {c["name"].lower() for c in cols}
+                except Exception:
+                    pass
+
         for field in operation.fields.keys():
-            if field not in allowed_fields:
+            if field.lower() not in allowed_fields:
                 return False, f"Unknown or restricted field: '{field}'. Modification rejected.", {}
 
     context = {

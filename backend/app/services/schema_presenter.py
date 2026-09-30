@@ -22,12 +22,24 @@ class SchemaPresenter:
             return []
 
         # 1. Fetch RAW columns from DB
-        engine = create_engine(client_config.db_connection_url)
+        from app.services.crud_service import CRUDService
+        sync_url = client_config.db_connection_url
+        if sync_url.startswith("postgresql+asyncpg://"): sync_url = sync_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+        elif sync_url.startswith("postgresql://"): sync_url = sync_url.replace("postgresql://", "postgresql+psycopg2://")
+        elif sync_url.startswith("mysql+aiomysql://"): sync_url = sync_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+        elif sync_url.startswith("mysql://"): sync_url = sync_url.replace("mysql://", "mysql+pymysql://")
+        elif sync_url.startswith("sqlite+aiosqlite://"): sync_url = sync_url.replace("sqlite+aiosqlite://", "sqlite://")
+        engine = create_engine(sync_url)
         inspector = inspect(engine)
         try:
-            raw_columns = inspector.get_columns(table_name)
+            real_table = table_name
+            for t in inspector.get_table_names():
+                if t.lower() == table_name.lower():
+                    real_table = t
+                    break
+            raw_columns = inspector.get_columns(real_table)
         except Exception as e:
-            print(f"⚠️ SchemaPresenter Error for table '{table_name}': {e}")
+            print(f"[WARN] SchemaPresenter Error for table '{table_name}': {e}")
             return []
         
         # 2. Fetch Semantic Metadata

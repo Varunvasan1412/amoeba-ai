@@ -495,33 +495,29 @@ async def execute_read_pipeline(
         except Exception as fast_err:
             print(f"⚠️ Fast base_query skipped/failed ({fast_err}), falling back to Schema RAG", flush=True)
 
-    # 2. Schema RAG (Intelligent Relational SQL Generation)
-    try:
-        from app.services.schema_rag_service import query_legacy_db_with_schema
-        print(f"🧠 [SCHEMA RAG] Querying database with schema for: {user_text}", flush=True)
-        target_tbl = (best_sm.database_table if best_sm else table_name) or table_name
-        rag_result = await query_legacy_db_with_schema(user_text, target_tbl, int(client_id), local_session)
-        
-        result = sanitize_for_json(rag_result["records"])
-        sql_used = rag_result.get("generated_sql", "")
-        display_title = rag_result.get("display_title") or (best_sm.ui_label if best_sm else friendly_name)
+    target_tbl = (best_sm.database_table if best_sm else table_name) or table_name
+
+    async def _send_query_result(q_result: dict, engine_name: str) -> bool:
+        result = sanitize_for_json(q_result.get("records", []))
+        sql_used = q_result.get("generated_sql", "")
+        display_title = q_result.get("display_title") or (best_sm.ui_label if best_sm else friendly_name)
         if display_title and "_" in display_title and display_title.islower():
             display_title = display_title.replace("_", " ").title()
 
-        actions_list = []
         is_error_result = isinstance(result, (list, tuple)) and result and any("Error" in r for r in result if isinstance(r, dict))
-
         if is_error_result:
-            err_msg = rag_result.get("user_message") or result[0].get("Error")
-            response_text = f"⚠️ {err_msg}"
-        elif isinstance(result, (list, tuple)) and result:
+            print(f"⚠️ [{engine_name}] Execution returned error result, will fallback", flush=True)
+            return False
+
+        actions_list = []
+        if isinstance(result, (list, tuple)) and result:
             # Check if this is a single aggregate row (e.g. {"count": 1} or {"COUNT(*)": 1})
             first_row = result[0]
             if len(result) == 1 and isinstance(first_row, dict) and len(first_row) == 1 and any(agg_k in list(first_row.keys())[0].lower() for agg_k in ["count", "total", "sum", "avg", "average", "value"]):
                 agg_k = list(first_row.keys())[0]
                 agg_v = list(first_row.values())[0]
                 agg_label = agg_k.replace("_", " ").title()
-                msg_text = rag_result.get("user_message", "")
+                msg_text = q_result.get("user_message", "")
                 if msg_text and not msg_text.lower().startswith("i cannot show"):
                     response_text = f"{msg_text}\n\n**{display_title}** — {agg_label}: **{agg_v}**"
                 else:
@@ -537,18 +533,17 @@ async def execute_read_pipeline(
                         "total": len(result)
                     }
                 })
-                msg_text = rag_result.get("user_message", "")
+                msg_text = q_result.get("user_message", "")
                 if msg_text and not msg_text.lower().startswith("i cannot show"):
                     response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{display_title}**."
                 else:
                     response_text = f"Found **{len(result)}** record(s) in **{display_title}**."
         elif isinstance(result, (list, tuple)):
-            msg_text = rag_result.get("user_message", "")
-            debug_block = f"\n\n<details><summary>Debug AI Query</summary>\n\n```sql\n{sql_used}\n```\n</details>" if sql_used else ""
-            if msg_text and not msg_text.lower().startswith("i cannot show"):
-                response_text = f"{msg_text}{debug_block}"
+            msg_text = q_result.get("user_message", "")
+            if msg_text and not msg_text.lower().startswith("i cannot show") and not msg_text.lower().startswith("query encountered an error"):
+                response_text = msg_text
             else:
-                response_text = f"No records found for your query.{debug_block}"
+                response_text = f"No records found in **{display_title}** matching your criteria."
         else:
             response_text = f"Result from **{display_title}**: {result}"
 
@@ -557,11 +552,29 @@ async def execute_read_pipeline(
         await local_session.commit()
         await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
         await websocket.send_json({"type": "done", "session_id": s_id})
-        return
+        return True
+
+    # 2. Deterministic QueryBuilder (Primary - Zero SQL Hallucination)
+    try:
+        from app.services.query_builder_service import execute_deterministic_query
+        print(f"🎯 [QUERY_BUILDER] Executing deterministic query for: '{user_text}' on table '{target_tbl}'", flush=True)
+        det_result = await execute_deterministic_query(user_text, target_tbl, int(client_id), local_session)
+        if await _send_query_result(det_result, "QUERY_BUILDER"):
+            return
+    except Exception as det_err:
+        print(f"⚠️ [QUERY_BUILDER] Encountered error ({det_err}), falling back to Schema RAG", flush=True)
+
+    # 3. Schema RAG (Fallback for complex relational queries)
+    try:
+        from app.services.schema_rag_service import query_legacy_db_with_schema
+        print(f"🧠 [SCHEMA RAG] Fallback query with schema for: {user_text}", flush=True)
+        rag_result = await query_legacy_db_with_schema(user_text, target_tbl, int(client_id), local_session)
+        if await _send_query_result(rag_result, "SCHEMA_RAG"):
+            return
     except Exception as rag_err:
         print(f"⚠️ [SCHEMA RAG] Encountered error ({rag_err}), falling back to deterministic reader", flush=True)
 
-    # 3. Deterministic Fallback
+    # 4. Deterministic CRUDService Fallback
     from app.services.crud_service import CRUDService
     from app.tools.dates import normalize_date_range
 

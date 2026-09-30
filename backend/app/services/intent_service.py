@@ -75,7 +75,7 @@ NON_ENTITY_WORDS = {
     "total", "count", "sum", "average", "avg", "min", "max", "number", "qty", "quantity", 
     "amount", "value", "rate", "cost", "price", "figure", "figures", "how", "many", "much",
     # Generic entity placeholders & noise words
-    "table", "tables", "record", "records", "data", "row", "rows", "entries", "entry", "item", "items",
+    "table", "tables", "record", "records", "data", "row", "rows", "entries", "entry",
     "list", "lists", "page", "pages", "screen", "screens", "view", "views", "menu", "menus", "tab", "tabs"
 }
 
@@ -135,6 +135,8 @@ def normalize_entity_name(name: Optional[str]) -> str:
     # We do this AFTER singularization so "inquiries" -> "inquiry" -> "enquiry"
     # and "soles" -> "sole" -> "sale"
     name = name.replace("inquiry", "enquiry")
+    name = name.replace("quotation", "enquiry")
+    name = name.replace("quote", "enquiry")
     name = name.replace("sole", "sale")
     name = name.replace("ledger", "report")
         
@@ -246,7 +248,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         print(f"DEBUG [INTENT] entity_query='{entity_query}' norm_query='{norm_query}' intent='{detected_intent}'")
 
         # --- PRONOUN RESOLUTION ---
-        pronouns = ["there", "it", "that", "this", "item", "items", "record", "records", "them", "these", "one", "ones"]
+        pronouns = ["there", "it", "that", "this", "them", "these", "one", "ones"]
         is_pronoun = any(re.search(rf"\b{p}\b", norm_query) for p in pronouns)
         
         last_mentioned_url = None

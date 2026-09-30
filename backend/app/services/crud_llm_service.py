@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 class CrudLlmService:
     @staticmethod
     async def _get_field_metadata(session: AsyncSession, client_id: int, table_name: str) -> List[Dict[str, Any]]:
+        from sqlalchemy import func
         stmt = select(FieldMetadata).where(
             FieldMetadata.client_id == client_id,
-            FieldMetadata.table_name == table_name
+            func.lower(FieldMetadata.table_name) == table_name.lower()
         )
         res = await session.execute(stmt)
         return [

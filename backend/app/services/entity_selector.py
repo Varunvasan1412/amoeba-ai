@@ -92,12 +92,21 @@ class EntitySelector:
     @staticmethod
     def _get_match_score(query: str, target: str) -> float:
         if not target: return 0.0
-        q, t = query.lower().strip(), normalize_entity_name(target.lower().strip())
+        q = query.lower().strip()
+        t = normalize_entity_name(target.lower().strip())
+        t_raw = target.lower().strip()
         if not q or not t: return 0.0
         
-        if q == t: return 1.0
-        if t.startswith(q) or q.startswith(t): return 0.95
-        if q in t or t in q: return 0.85
+        if q == t or q == t_raw: return 1.0
+        if t.startswith(q) or q.startswith(t) or t_raw.startswith(q) or q.startswith(t_raw): return 0.95
+        if t in q or t_raw in q: return 0.90
+        if q in t or q in t_raw: return 0.85
+
+        # Check token-level containment
+        q_tokens = set(re.findall(r'[a-zA-Z0-9]+', q))
+        q_norm_tokens = {normalize_entity_name(tok) for tok in q_tokens}
+        if t in q_tokens or t in q_norm_tokens or t_raw in q_tokens or t_raw in q_norm_tokens:
+            return 0.90
         
         if len(q) > 3 and len(t) > 3:
             ratio = difflib.SequenceMatcher(None, q, t).ratio()
@@ -126,21 +135,41 @@ class EntitySelector:
         table_module_map = {item.table_name: item.module for item in nav_items if item.table_name}
         get_match_score = EntitySelector._get_match_score
 
-        # Priority definitions based on requirements:
-        # 1. Exact Navigation label (Priority 1)
-        # 2. Exact Semantic label (Priority 2)
-        # 3. Exact synonym (Priority 3)
-        # 4. Module-aware match (Priority 4)
-        # 5. Fuzzy match (Priority 5)
-        
         def determine_priority(base_priority: int, score: float, cand_module: Optional[str]) -> int:
-            if score == 1.0:
+            if score >= 0.9:
                 return base_priority
             if context_module and cand_module and context_module.lower() == cand_module.lower():
                 return 4
             return 5
 
-        # --- 1. Match Navigation Labels (Priority 1 logic) ---
+        # --- 1. Match Semantic Mappings (Priority 1) ---
+        from app.models.semantic_mapping import SemanticMapping
+        import json
+        sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == client_id)
+        sm_result = await session.execute(sm_stmt)
+        for sm in sm_result.scalars().all():
+            sm_mod = table_module_map.get(sm.database_table)
+            if context_module and sm_mod and context_module.lower() != sm_mod.lower():
+                continue
+
+            labels_to_check = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
+            if sm.synonyms:
+                try:
+                    syn_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                    if isinstance(syn_list, list):
+                        labels_to_check.extend([s.strip() for s in syn_list if s.strip()])
+                except Exception:
+                    pass
+
+            for lbl in labels_to_check:
+                score = get_match_score(clean_query, lbl)
+                if score > 0:
+                    prio = determine_priority(1, score, sm_mod)
+                    if not any(m["table_name"] == sm.database_table for m in matches):
+                        matches.append({"table_name": sm.database_table, "label": labels_to_check[0], "module": sm_mod, "priority": prio, "score": score, "strategy": "Semantic Mapping"})
+                        break
+
+        # --- 2. Match Navigation Labels (Priority 2) ---
         for item in nav_items:
             if is_crud and not item.table_name: continue
             
@@ -148,13 +177,14 @@ class EntitySelector:
             if context_module and item.module and context_module.lower() != item.module.lower():
                 continue
 
-            score = get_match_score(norm_query, item.label)
+            score = get_match_score(clean_query, item.label)
             if score > 0:
-                prio = determine_priority(1, score, item.module)
+                prio = determine_priority(2, score, item.module)
                 match_key = item.table_name if item.table_name else f"nav_path:{item.path}"
-                matches.append({"table_name": match_key, "label": item.label, "module": item.module, "priority": prio, "score": score, "strategy": "Navigation"})
+                if not any(m["table_name"] == match_key for m in matches):
+                    matches.append({"table_name": match_key, "label": item.label, "module": item.module, "priority": prio, "score": score, "strategy": "Navigation"})
 
-        # --- 2. Match Semantic Metadata (Priority 2 & 3 logic) ---
+        # --- 3. Match Semantic Metadata (Priority 3) ---
         sem_stmt = select(SemanticMetadata).where(
             SemanticMetadata.client_id == client_id,
             (SemanticMetadata.column_name == None) | (SemanticMetadata.column_name == "")
@@ -167,19 +197,21 @@ class EntitySelector:
             if context_module and sem_mod and context_module.lower() != sem_mod.lower():
                 continue
                 
-            score = get_match_score(norm_query, sem.label)
+            score = get_match_score(clean_query, sem.label)
             if score > 0:
-                prio = determine_priority(2, score, sem_mod)
-                matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": score, "strategy": "Semantic Label"})
+                prio = determine_priority(3, score, sem_mod)
+                if not any(m["table_name"] == sem.table_name for m in matches):
+                    matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": score, "strategy": "Semantic Label"})
             
             if sem.synonyms:
                 for syn in sem.synonyms:
-                    syn_score = get_match_score(norm_query, syn)
+                    syn_score = get_match_score(clean_query, syn)
                     if syn_score > 0:
                         prio = determine_priority(3, syn_score, sem_mod)
-                        matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": syn_score, "strategy": "Semantic Synonym"})
+                        if not any(m["table_name"] == sem.table_name for m in matches):
+                            matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": syn_score, "strategy": "Semantic Synonym"})
 
-        # --- 3. Match Raw Table Names (Fallback) ---
+        # --- 4. Match Raw Table Names (Fallback) ---
         for table in available_tables:
             tab_mod = table_module_map.get(table)
             
@@ -187,28 +219,16 @@ class EntitySelector:
             if context_module and tab_mod and context_module.lower() != tab_mod.lower():
                 continue
                 
-            score = get_match_score(norm_query, table)
+            score = get_match_score(clean_query, table)
             if score > 0:
-                prio = determine_priority(5, score, tab_mod) # exact table name match is still a guess compared to explicit labels
+                prio = determine_priority(5, score, tab_mod)
                 if not any(m["table_name"] == table for m in matches):
                     matches.append({"table_name": table, "label": EntitySelector.format_table_label(table), "module": tab_mod, "priority": prio, "score": score, "strategy": "Raw Table"})
 
         # --- Step 5: Handle Missing Entity ---
         if not matches:
-            print(f"❌ [ENTITY_RESOLUTION] No match found for '{query_entity}'. Returning unknown_entity.")
-            import json
-            audit_data = {
-                "query": query_entity,
-                "normalized_query": norm_query,
-                "module": context_module,
-                "candidates": [],
-                "selected_label": "Unknown",
-                "selected_table": "unknown_entity",
-                "resolution_strategy": "Fallback",
-                "score": 0.0
-            }
-            print(f"ENTITY_RESOLUTION_AUDIT:\n{json.dumps(audit_data, indent=2)}")
-            return [{"table_name": "unknown_entity", "label": "Unknown", "module": None}]
+            print(f"[ENTITY_RESOLUTION] No match found for '{query_entity}'.")
+            return []
 
         # --- Ranking & selection ---
         # priority ascending (1 is best), score descending (1.0 is best)

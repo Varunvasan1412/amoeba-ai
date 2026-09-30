@@ -148,7 +148,24 @@ class SmartFormService:
 
             form_fields.append(field)
 
-        # 5. Backup Strategy: Add "UI-Only" fields if DB inspection returned nothing or is partial
+        # 5. Backup Strategy: Add fields from FieldMetadata or UI-Only if DB inspection returned nothing
+        if not form_fields and meta_list:
+            for m in meta_list:
+                if not m.is_visible:
+                    continue
+                opts = []
+                if m.input_type == "dropdown":
+                    opts = await get_field_options(client_id, m, session)
+                form_fields.append({
+                    "field": m.column_name,
+                    "label": m.label or m.column_name.replace("_", " ").title(),
+                    "type": m.input_type or "text",
+                    "storage_type": m.storage_type or "string",
+                    "required": m.required,
+                    "readonly": m.readonly,
+                    "options": opts
+                })
+
         if not form_fields:
             for f_name, ui in ui_map.items():
                 form_fields.append({
@@ -159,7 +176,7 @@ class SmartFormService:
                     "storage_type": "string"
                 })
 
-        print(f"🧠 [SMART FORM] Generated {len(form_fields)} fields for {table_name} (Merged Sources)")
+        print(f"[SMART FORM] Generated {len(form_fields)} fields for {table_name} (Merged Sources)")
 
         return {
             "table_name": table_name,

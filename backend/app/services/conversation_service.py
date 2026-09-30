@@ -31,7 +31,7 @@ async def get_active_conversation(session: AsyncSession, client_id: int, session
 
 async def get_friendly_entity_label(client_id: int, table_name: str, session: AsyncSession, module: Optional[str] = None) -> str:
     """
-    Resolves table_name → user-friendly label with special Module context awareness.
+    Resolves table_name  user-friendly label with special Module context awareness.
     Priority: Navigation label (context match) > Navigation label (any) > Raw table label.
     """
     from app.models.navigation import NavigationItem
@@ -98,7 +98,7 @@ async def get_friendly_entity_label(client_id: int, table_name: str, session: As
     else:
         final_label = base_label
 
-    print(f"🧠 [CRUD RESPONSE] module={module}, table_label={base_label} → final={final_label}")
+    print(f" [CRUD RESPONSE] module={module}, table_label={base_label}  final={final_label}")
     return final_label
 
 async def process_conversation(
@@ -112,7 +112,7 @@ async def process_conversation(
     # 0. System Filter (Hide Pings)
     import re
     if re.search(r'\bping\b', user_input, re.I):
-        print(f"🛑 [CRUD CONV] Filtered system ping: {user_input}")
+        print(f" [CRUD CONV] Filtered system ping: {user_input}")
         return "__SYSTEM_IGNORE__", []
 
     state = await get_active_conversation(db_session, client_id, session_id)
@@ -126,16 +126,16 @@ async def process_conversation(
     
     # Robust cleanup for corrupted state
     if state and "ping" in (state.entity_name or "").lower():
-        print(f"🗑️ [CRUD CONV] Cleaning up corrupted state with entity: {state.entity_name}")
+        print(f" [CRUD CONV] Cleaning up corrupted state with entity: {state.entity_name}")
         await db_session.delete(state)
         await db_session.commit()
         state = None
     
-    print(f"🔄 [CRUD CONV] Process: input='{user_input[:50]}', has_state={state is not None}, intent_status={intent_data.get('status') if intent_data else 'None'}")
+    print(f" [CRUD CONV] Process: input='{user_input[:50]}', has_state={state is not None}, intent_status={intent_data.get('status') if intent_data else 'None'}")
     
     # CASE 0: GLOBAL CANCEL
     if user_input.strip().lower() in ["cancel", "exit", "quit", "stop", "nevermind", "abort"]:
-        print("🛑 [CRUD CONV] Global Cancel triggered.")
+        print(" [CRUD CONV] Global Cancel triggered.")
         if state:
             await db_session.delete(state)
             await db_session.commit()
@@ -145,14 +145,14 @@ async def process_conversation(
     if intent_data:
         curr_intent = intent_data.get("intent", "unknown")
         curr_status = intent_data.get("status", "resolved")
-        print(f"✨ [CRUD CONV] New Intent: {curr_intent} (Status: {curr_status})")
+        print(f" [CRUD CONV] New Intent: {curr_intent} (Status: {curr_status})")
         
         pronouns = ["it", "this", "that", "item", "items", "record", "records", "them", "these", "one", "ones"]
         is_pronoun = intent_data.get("use_context") or (intent_data.get("entity") in pronouns)
 
         # If a new intent is detected, we drop the old state UNLESS it's a pronoun
         if state and not is_pronoun:
-            print(f"   🗑️ Clearing existing flow: {state.intent} {state.entity_name}")
+            print(f"    Clearing existing flow: {state.intent} {state.entity_name}")
             await db_session.delete(state)
             await db_session.commit()
             state = None
@@ -160,12 +160,12 @@ async def process_conversation(
         # Resolve pronoun using context
         if is_pronoun:
              if state and state.entity_name:
-                 print(f"🔄 [CRUD CONV] Resolving pronoun context: {state.entity_name} ({state.module})")
+                 print(f" [CRUD CONV] Resolving pronoun context: {state.entity_name} ({state.module})")
                  intent_data["entity"] = state.entity_name
                  intent_data["module"] = state.module
                  intent_data["status"] = "resolved"
              else:
-                 print("⚠️ [CRUD CONV] Pronoun detected but NO active state found. Reverting to unresolved.")
+                 print(" [CRUD CONV] Pronoun detected but NO active state found. Reverting to unresolved.")
                  intent_data["status"] = "unresolved_entity"
                  intent_data["entity"] = user_input # Fallback to original text for ambiguity flow
 
@@ -185,7 +185,7 @@ async def process_conversation(
             if matches:
                 if len(matches) == 1:
                     # Single match: auto-select and proceed to flow
-                    print(f"✅ [CRUD CONV] Auto-selected single entity: {matches[0]['table_name']} (Module: {matches[0].get('module')})")
+                    print(f" [CRUD CONV] Auto-selected single entity: {matches[0]['table_name']} (Module: {matches[0].get('module')})")
                     state = ConversationState(
                         client_id=client_id, session_id=session_id,
                         intent=intent, entity_name=matches[0]["table_name"],
@@ -241,17 +241,17 @@ async def process_conversation(
              engine = create_engine(client_config.db_connection_url)
              inspector = inspect(engine)
              if not inspector.has_table(state.entity_name):
-                 print(f"❌ [CRUD CONV] Table Validation Failed: {state.entity_name}")
+                 print(f" [CRUD CONV] Table Validation Failed: {state.entity_name}")
                  error_msg = f"I'm sorry, the table '{state.entity_name}' does not exist in your database. Please try a different request."
                  await db_session.delete(state)
                  await db_session.commit()
                  return error_msg, []
         except Exception as e:
-             print(f"⚠️ Validation Check Error: {e}")
+             print(f" Validation Check Error: {e}")
 
     # CASE 2: HANDLE AMBIGUITY RESOLUTION STEP
     if state.current_step == "resolve_ambiguity":
-        print(f"🎯 [CRUD CONV] Resolving Ambiguity -> Input corresponds to entity selection: {user_input}")
+        print(f" [CRUD CONV] Resolving Ambiguity -> Input corresponds to entity selection: {user_input}")
         
         # FIX: Check if the user selected a NAVIGATION PATH instead of a TABLE
         if user_input.startswith("nav_path:"):
@@ -312,49 +312,109 @@ async def process_conversation(
     return "I'm not sure how to handle that CRUD operation.", []
 
 async def handle_create_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
+    client_config = await db_session.get(ClientConfig, state.client_id)
+    if not client_config or not client_config.operations_enabled:
+        if getattr(state, "id", None):
+            try:
+                await db_session.delete(state)
+                await db_session.commit()
+            except Exception:
+                pass
+        return "Operations Mode is disabled. Modifying data is not permitted.", []
+
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "create"})
     
+    SYSTEM_COLUMNS = {
+        "id", "created_at", "updated_at", "created_by", "updated_by", 
+        "log_status", "status", "registration_date", "code", "extra_amount"
+    }
+
     if state.current_step in ["start", "collect_fields"]:
+        parsed_form = None
+        trimmed_input = user_input.strip() if user_input else ""
+        if trimmed_input.startswith("{") and trimmed_input.endswith("}"):
+            try:
+                parsed_form = json.loads(trimmed_input)
+            except Exception:
+                parsed_form = None
+
         full_query = user_input if state.current_step == "start" else state.collected_data.get("original_request", "") + ". " + user_input
         try:
-            crud_op = await CrudLlmService.generate_crud_operation(
-                client_id=state.client_id,
-                session=db_session,
-                action="CREATE",
-                table_name=state.entity_name,
-                concept=friendly_name,
-                user_query=full_query
-            )
+            if parsed_form and isinstance(parsed_form, dict):
+                crud_fields = state.collected_data.get("extracted_fields", {}) if state.collected_data else {}
+                crud_fields.update(parsed_form)
+                crud_op = CrudOperation(
+                    action="CREATE",
+                    table=state.entity_name,
+                    record_id=None,
+                    fields=crud_fields
+                )
+            else:
+                crud_op = await CrudLlmService.generate_crud_operation(
+                    client_id=state.client_id,
+                    session=db_session,
+                    action="CREATE",
+                    table_name=state.entity_name,
+                    concept=friendly_name,
+                    user_query=full_query
+                )
             
             field_metadata = await CrudLlmService._get_field_metadata(db_session, state.client_id, state.entity_name)
             missing_required_fields = []
             
             for f in field_metadata:
+                col_name = f["column_name"]
+                if col_name.lower() in SYSTEM_COLUMNS:
+                    continue
                 if f.get("is_required"):
-                    col_name = f["column_name"]
                     val = crud_op.fields.get(col_name)
                     if val is None or str(val).strip() == "":
                         if f.get("default_value") is not None:
                             crud_op.fields[col_name] = f["default_value"]
                         else:
-                            missing_required_fields.append(col_name.replace('_', ' ').title())
+                            missing_required_fields.append(col_name)
                             
-            if missing_required_fields:
-                missing_str = ", ".join(missing_required_fields)
-                state.current_step = "collect_fields"
-                if not state.collected_data: state.collected_data = {}
-                state.collected_data["original_request"] = full_query
-                db_session.add(state)
-                await db_session.commit()
-                return f"To create this {friendly_name}, I need a bit more information. Please provide: {missing_str}.", []
+            if not parsed_form:
+                # Generate interactive SmartForm card with pre-filled fields
+                form_structure = await SmartFormService.generate_form(
+                    client_id=state.client_id,
+                    table_name=state.entity_name,
+                    session=db_session,
+                    module=state.module
+                )
+                if form_structure and "fields" in form_structure and len(form_structure["fields"]) > 0:
+                    # Filter out system columns from the form
+                    form_structure["fields"] = [
+                        ff for ff in form_structure["fields"] 
+                        if ff.get("field", "").lower() not in SYSTEM_COLUMNS
+                    ]
+                    # Pre-fill fields already extracted from the user's prompt
+                    for ff in form_structure["fields"]:
+                        f_key = ff.get("field", "")
+                        for k, v in crud_op.fields.items():
+                            if k.lower() == f_key.lower() and v is not None:
+                                ff["initial_value"] = v
+                                break
+
+                    state.current_step = "collect_fields"
+                    if not state.collected_data: state.collected_data = {}
+                    state.collected_data["original_request"] = full_query
+                    state.collected_data["extracted_fields"] = crud_op.fields
+                    db_session.add(state)
+                    await db_session.commit()
+                    return f"Please complete the form below to create **{friendly_name}**:", [{"type": "form", "payload": form_structure}]
             
             is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
             if not is_valid:
                 # Flow reset on validation fail
-                await db_session.delete(state)
-                await db_session.commit()
+                if getattr(state, "id", None):
+                    try:
+                        await db_session.delete(state)
+                        await db_session.commit()
+                    except Exception:
+                        pass
                 return f"Validation failed: {err}", []
                 
             op_id = str(uuid.uuid4())
@@ -368,8 +428,9 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
             
             display_fields = {}
             for k, v in crud_op.fields.items():
-                friendly_k = k.replace('_', ' ').title()
-                display_fields[friendly_k] = v
+                if v is not None and str(v).strip() != "":
+                    friendly_k = k.replace('_', ' ').title()
+                    display_fields[friendly_k] = v
 
             payload = {
                 "action": "CREATE",
@@ -377,11 +438,18 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
                 "fields": display_fields,
                 "operation_id": op_id
             }
-            return f"Please confirm the creation of the new {friendly_name}.", [{"type": "crud_confirmation", "payload": payload}]
+            return f"Please confirm the creation of the new **{friendly_name}**.", [
+                {"type": "confirmation", "payload": payload},
+                {"type": "crud_confirmation", "payload": payload}
+            ]
         except Exception as e:
             traceback.print_exc()
-            await db_session.delete(state)
-            await db_session.commit()
+            if getattr(state, "id", None):
+                try:
+                    await db_session.delete(state)
+                    await db_session.commit()
+                except Exception:
+                    pass
             return f"Error preparing CREATE operation: {e}", []
             
     elif state.current_step == "confirm":
@@ -646,7 +714,7 @@ async def _stage_delete(record: dict, state: ConversationState, db_session: Asyn
             "fields": {},
             "operation_id": op_id
         }
-        return f"🚨 Are you absolutely sure you want to DELETE {record_label}?", [{"type": "crud_confirmation", "payload": payload}]
+        return f" Are you absolutely sure you want to DELETE {record_label}?", [{"type": "crud_confirmation", "payload": payload}]
     except Exception as e:
         traceback.print_exc()
         await db_session.delete(state)
