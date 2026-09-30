@@ -118,29 +118,34 @@ class SmartFormService:
                 if meta.input_type == "dropdown":
                     field["options"] = await get_field_options(client_id, meta, session)
 
-            # Strategy C: If it's a dropdown but no options yet, try to auto-find via Governance
-            if field.get("type") == "dropdown" and not field.get("options"):
+            # Strategy C: If it's a dropdown or foreign key (_id) but has no options yet, auto-fetch
+            if (field.get("type") == "dropdown" or col_lower.endswith("_id")) and not field.get("options"):
+                source_table = None
+                source_column = "id"
+                display_col = None
+
                 if col_lower in rel_map:
                     direction, rel = rel_map[col_lower]
-                    
-                    # Extract source info based on direction
                     source_table = rel.child_table if direction == "parent" else rel.parent_table
                     source_column = rel.child_column if direction == "parent" else rel.parent_column
+                    display_col = rel.selected_columns[0] if rel.selected_columns else None
 
-                    # Create a "virtual" metadata object for get_field_options
-                    virtual_meta = FieldMetadata(
-                        client_id=client_id,
-                        table_name=table_name,
-                        column_name=col_name,
-                        label=field["label"],
-                        input_type="dropdown",
-                        storage_type="integer", 
-                        data_source_table=source_table,
-                        value_column=source_column,
-                        display_column=rel.selected_columns[0] if rel.selected_columns else source_column
-                    )
+                virtual_meta = FieldMetadata(
+                    client_id=client_id,
+                    table_name=table_name,
+                    column_name=col_name,
+                    label=field["label"],
+                    input_type="dropdown",
+                    storage_type="integer", 
+                    data_source_table=source_table,
+                    value_column=source_column,
+                    display_column=display_col
+                )
+                opts = await get_field_options(client_id, virtual_meta, session)
+                if opts:
+                    field["type"] = "dropdown"
                     field["storage_type"] = "integer"
-                    field["options"] = await get_field_options(client_id, virtual_meta, session)
+                    field["options"] = opts
             
             # Ensure storage_type exists even if no metadata found (default from SchemaPresenter or string)
             if "storage_type" not in field:
