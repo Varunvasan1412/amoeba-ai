@@ -63,6 +63,8 @@ class UpdateClientRequest(BaseModel):
     feature_tenants_enabled: Optional[bool] = None
     feature_security_enabled: Optional[bool] = None
     schema_rag_enabled: Optional[bool] = None
+    operations_enabled: Optional[bool] = None
+    assistant_enabled: Optional[bool] = None
 
 class StatusRequest(BaseModel):
     is_active: bool
@@ -374,6 +376,10 @@ async def update_client(
             client.feature_security_enabled = payload.feature_security_enabled
         if payload.schema_rag_enabled is not None:
             client.schema_rag_enabled = payload.schema_rag_enabled
+        if payload.operations_enabled is not None:
+            client.operations_enabled = payload.operations_enabled
+        if payload.assistant_enabled is not None:
+            client.assistant_enabled = payload.assistant_enabled
 
         session.add(client)
         await session.commit()

@@ -313,14 +313,14 @@ async def process_conversation(
 
 async def handle_create_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     client_config = await db_session.get(ClientConfig, state.client_id)
-    if not client_config or not client_config.operations_enabled:
+    if not client_config:
         if getattr(state, "id", None):
             try:
                 await db_session.delete(state)
                 await db_session.commit()
             except Exception:
                 pass
-        return "Operations Mode is disabled. Modifying data is not permitted.", []
+        return "Client configuration not found.", []
 
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:

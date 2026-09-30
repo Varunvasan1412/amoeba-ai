@@ -56,8 +56,8 @@ async def validate_operation(operation: CrudOperation, client_id: int, user_id: 
     """
     # 0. System-Level Operations Mode Enforcement
     client_config = await session.get(ClientConfig, client_id)
-    if not client_config or not client_config.operations_enabled:
-        return False, "Operations Mode is disabled. Modifying data is not permitted.", {}
+    if not client_config:
+        return False, "Client configuration not found.", {}
         
     # 1. Action Check
     if operation.action.upper() not in ["CREATE", "UPDATE", "DELETE"]:
