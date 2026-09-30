@@ -476,10 +476,39 @@ async def handle_read_flow(user_input: str, state: ConversationState, db_session
     return f"__DELEGATE_READ__:{state.entity_name}:{friendly_name}", []
 
 async def handle_update_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
+    client_config = await db_session.get(ClientConfig, state.client_id)
+    if not client_config:
+        if getattr(state, "id", None):
+            try:
+                await db_session.delete(state)
+                await db_session.commit()
+            except Exception:
+                pass
+        return "Client configuration not found.", []
+
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)
     if state.module:
         log_event(state.client_id, action="CONTEXT_MODULE_USED", entity=friendly_name, table_name=state.entity_name, details={"module": state.module, "intent": "update"})
     
+    parsed_form = None
+    trimmed_input = user_input.strip() if user_input else ""
+    if trimmed_input.startswith("{") and trimmed_input.endswith("}"):
+        try:
+            parsed_form = json.loads(trimmed_input)
+        except Exception:
+            parsed_form = None
+
+    if state.current_step == "collect_update_fields" and parsed_form:
+        record_id = state.collected_data.get("record_id")
+        record = state.collected_data.get("record_data", {})
+        crud_op = CrudOperation(
+            action="UPDATE",
+            table=state.entity_name,
+            record_id=record_id,
+            fields=parsed_form
+        )
+        return await _confirm_update(crud_op, record, state, db_session, friendly_name)
+
     if state.current_step == "start":
         filters = await CrudLlmService.extract_filters(state.client_id, db_session, "UPDATE", state.entity_name, friendly_name, user_input)
         
@@ -492,8 +521,12 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
         records = result.get("records", result) if isinstance(result, dict) else result
         
         if not records:
-            await db_session.delete(state)
-            await db_session.commit()
+            if getattr(state, "id", None):
+                try:
+                    await db_session.delete(state)
+                    await db_session.commit()
+                except Exception:
+                    pass
             return f"I couldn't find any {friendly_name} matching that description. Please try again with different keywords.", []
             
         if len(records) > 1:
@@ -541,8 +574,12 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
         if user_input.strip().lower() in ["yes", "confirm", "ok", "proceed", "update"]:
             return "Please use the Confirm button in the UI above to safely execute this operation.", []
         else:
-            await db_session.delete(state)
-            await db_session.commit()
+            if getattr(state, "id", None):
+                try:
+                    await db_session.delete(state)
+                    await db_session.commit()
+                except Exception:
+                    pass
             return "Update cancelled.", []
             
     return "Update flow in unexpected state.", []
@@ -561,29 +598,95 @@ async def _stage_update(record: dict, user_query: str, state: ConversationState,
             record_data=record
         )
         
-        is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
-        if not is_valid:
-            await db_session.delete(state)
-            await db_session.commit()
-            return f"Validation failed: {err}", []
+        # Generate SmartForm pre-loaded with the current record data
+        form_structure = await SmartFormService.generate_form(
+            client_id=state.client_id,
+            table_name=state.entity_name,
+            session=db_session,
+            module=state.module
+        )
+        
+        SYSTEM_COLUMNS = {
+            "id", "created_at", "updated_at", "created_by", "updated_by", 
+            "log_status", "status", "registration_date", "code", "extra_amount"
+        }
+
+        if form_structure and "fields" in form_structure and len(form_structure["fields"]) > 0:
+            form_structure["fields"] = [
+                ff for ff in form_structure["fields"]
+                if ff.get("field", "").lower() not in SYSTEM_COLUMNS
+            ]
+            form_structure["label"] = f"Edit {friendly_name}"
             
-        op_id = str(uuid.uuid4())
-        if not state.collected_data: state.collected_data = {}
-        state.collected_data["operation_id"] = op_id
-        state.collected_data["operation_data"] = crud_op.model_dump()
-        state.collected_data["ui_label"] = friendly_name
+            # Pre-populate all fields from existing record
+            for ff in form_structure["fields"]:
+                f_key = ff.get("field", "")
+                # Find matching key in record
+                for rk, rv in record.items():
+                    if rk.lower() == f_key.lower() and rv is not None:
+                        ff["initial_value"] = rv
+                        break
+                # Apply new value from user prompt if extracted
+                for uk, uv in crud_op.fields.items():
+                    if uk.lower() == f_key.lower() and uv is not None:
+                        ff["initial_value"] = uv
+                        break
+
+            state.current_step = "collect_update_fields"
+            if not state.collected_data: state.collected_data = {}
+            state.collected_data["record_id"] = record_id
+            state.collected_data["record_data"] = record
+            state.collected_data["crud_fields"] = crud_op.fields
+            state.collected_data["original_request"] = user_query
+            db_session.add(state)
+            await db_session.commit()
+
+            label_parts = [str(v) for k, v in record.items() if v and isinstance(v, str) and k != "id"][:2]
+            record_label = f"{friendly_name} (" + " | ".join(label_parts) + ")" if label_parts else f"{friendly_name} #{record_id}"
+
+            return f"Here is the current information for **{record_label}**. Review or edit the fields below to update:", [{"type": "form", "payload": form_structure}]
+
+        # Fallback to direct confirmation if no form structure available
+        return await _confirm_update(crud_op, record, state, db_session, friendly_name)
+    except Exception as e:
+        traceback.print_exc()
+        if getattr(state, "id", None):
+            try:
+                await db_session.delete(state)
+                await db_session.commit()
+            except Exception:
+                pass
+        return f"Error preparing UPDATE operation: {e}", []
+
+async def _confirm_update(crud_op: CrudOperation, record: dict, state: ConversationState, db_session: AsyncSession, friendly_name: str) -> Tuple[str, List[Any]]:
+    record_id = crud_op.record_id or record.get("id") or list(record.values())[0]
+    is_valid, err, context = await validate_operation(crud_op, state.client_id, "SYSTEM", db_session)
+    if not is_valid:
+        if getattr(state, "id", None):
+            try:
+                await db_session.delete(state)
+                await db_session.commit()
+            except Exception:
+                pass
+        return f"Validation failed: {err}", []
         
-        label_parts = [str(v) for k, v in record.items() if v and isinstance(v, str) and k != "id"][:2]
-        record_label = f"{friendly_name} (" + " | ".join(label_parts) + ")" if label_parts else f"{friendly_name} #{record_id}"
-        state.collected_data["record_label"] = record_label
-        
-        state.current_step = "confirm"
-        db_session.add(state)
-        await db_session.commit()
-        
-        # Build business-friendly fields output
-        display_fields = {}
-        for k, v in crud_op.fields.items():
+    op_id = str(uuid.uuid4())
+    if not state.collected_data: state.collected_data = {}
+    state.collected_data["operation_id"] = op_id
+    state.collected_data["operation_data"] = crud_op.model_dump()
+    state.collected_data["ui_label"] = friendly_name
+    
+    label_parts = [str(v) for k, v in record.items() if v and isinstance(v, str) and k != "id"][:2]
+    record_label = f"{friendly_name} (" + " | ".join(label_parts) + ")" if label_parts else f"{friendly_name} #{record_id}"
+    state.collected_data["record_label"] = record_label
+    
+    state.current_step = "confirm"
+    db_session.add(state)
+    await db_session.commit()
+    
+    display_fields = {}
+    for k, v in crud_op.fields.items():
+        if v is not None and str(v).strip() != "":
             friendly_k = k.replace('_', ' ').title()
             old_val = record.get(k)
             if old_val is not None and str(old_val) != str(v):
@@ -591,19 +694,17 @@ async def _stage_update(record: dict, user_query: str, state: ConversationState,
             else:
                 display_fields[friendly_k] = v
 
-        payload = {
-            "action": "UPDATE",
-            "entity_label": friendly_name,
-            "record_label": record_label,
-            "fields": display_fields,
-            "operation_id": op_id
-        }
-        return f"Please confirm the updates for {record_label}.", [{"type": "crud_confirmation", "payload": payload}]
-    except Exception as e:
-        traceback.print_exc()
-        await db_session.delete(state)
-        await db_session.commit()
-        return f"Error preparing UPDATE operation: {e}", []
+    payload = {
+        "action": "UPDATE",
+        "entity_label": friendly_name,
+        "record_label": record_label,
+        "fields": display_fields,
+        "operation_id": op_id
+    }
+    return f"Please confirm the updates for **{record_label}**.", [
+        {"type": "confirmation", "payload": payload},
+        {"type": "crud_confirmation", "payload": payload}
+    ]
 
 async def handle_delete_flow(user_input: str, state: ConversationState, db_session: AsyncSession) -> Tuple[str, List[Any]]:
     friendly_name = await get_friendly_entity_label(state.client_id, state.entity_name, db_session, module=state.module)

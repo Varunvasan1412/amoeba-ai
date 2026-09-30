@@ -533,6 +533,15 @@ async def execute_read_pipeline(
                         "total": len(result)
                     }
                 })
+                # Attach engine insight metadata
+                actions_list.append({
+                    "type": "query_insight",
+                    "payload": {
+                        "engine": "deterministic" if source == "QUERY_BUILDER" else "rag",
+                        "engine_label": "⚡ Deterministic Engine" if source == "QUERY_BUILDER" else "🧠 Semantic RAG",
+                        "table": display_title
+                    }
+                })
                 msg_text = q_result.get("user_message", "")
                 if msg_text and not msg_text.lower().startswith("i cannot show"):
                     response_text = f"{msg_text}\n\nFound **{len(result)}** record(s) in **{display_title}**."
@@ -550,7 +559,12 @@ async def execute_read_pipeline(
         ai_msg = ChatMessage(role="ai", content=response_text, actions=actions_list, client_id=client_id, session_id=s_id)
         local_session.add(ai_msg)
         await local_session.commit()
-        await websocket.send_json({"text": response_text, "actions": actions_list, "type": "chat_response"})
+        await websocket.send_json({
+            "text": response_text, 
+            "actions": actions_list, 
+            "type": "chat_response",
+            "engine": "deterministic" if source == "QUERY_BUILDER" else "rag"
+        })
         await websocket.send_json({"type": "done", "session_id": s_id})
         return True
 
