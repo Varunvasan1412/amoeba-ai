@@ -175,13 +175,13 @@ RULES:
 1. Output ONLY valid JSON matching the schema below. No markdown, no explanations.
 2. Use the FIELD MAPPINGS to convert business terms to physical column names in filters.
 3. For "action": use "list" for listing records, "count" for counting, "sum"/"avg"/"min"/"max" for aggregations.
-4. For "filters": convert user conditions into key-value pairs using physical column names.
+4. For "filters": ONLY include actual filtering criteria where a specific VALUE is provided by the user.
+   - Example: "quotations by John in Mumbai" -> filters: {{"customer_id": "John", "city_id": "Mumbai"}}
+   - Example: "where status is pending" -> filters: {{"status": 1}}
    - Date filters should use "date_from" and "date_to" keys with YYYY-MM-DD format.
-   - Status/enum filters should use the INTEGER value from ENUM MAPPINGS (e.g. status: 1 for Active).
-   - Text filters should use the value as-is (the query builder will handle LIKE matching).
-5. For "columns": list the physical column names the user wants to see. Use null for default columns.
-6. For "aggregate_column": only set this for sum/avg/min/max actions — the physical column to aggregate.
-7. For "group_by": set this if the user wants grouped aggregation (e.g., "total by month", "count per customer").
+5. CRITICAL: "with <field1> and <field2>" (e.g. "with customer and city") means the user wants to see those COLUMNS in the output! Put them in "columns": ["customer_id", "city_id"] and leave "filters": {{}}! Do NOT filter by city or customer unless a specific name/value is given!
+6. CRITICAL: "by <field>" or "grouped by <field>" or "per <field>" (e.g. "count customers by city") means GROUP BY aggregation! Put "group_by": "city_id", "action": "count", and leave "filters": {{}}!
+7. For "aggregate_column": only set this for sum/avg/min/max actions — the physical column to aggregate.
 8. The system has already guessed the target table is: '{target_table or "unknown"}'. Verify this against the available tables.
 9. For "limit": extract if user says "top 5", "last 10", etc. Default to null (system will apply default limit).
 10. For date parsing:

@@ -418,6 +418,20 @@ async def build_query(
         if semantic_mapping.default_filter:
             table_filters[table_name] = semantic_mapping.default_filter
 
+    # ─── 1b. Sanitize Filters vs Requested Columns ───────────────────────────
+    # If a filter has value identical to its key (e.g. {"city": "city"}, {"customer": "customer"}),
+    # it was a requested column to display, NOT a WHERE value filter!
+    clean_filters = {}
+    for fk, fv in filters.items():
+        if isinstance(fv, str) and fv.lower().strip() in (fk.lower().strip(), f"{fk.lower().strip()}_id", fk.lower().replace("_id", "")):
+            if extracted.columns is None:
+                extracted.columns = []
+            if fk not in extracted.columns:
+                extracted.columns.append(fk)
+        else:
+            clean_filters[fk] = fv
+    filters = clean_filters
+
     # ─── 2. Build JOINs ─────────────────────────────────────────────────────
     joins = await _build_joins(table_name, client_id, session)
 
@@ -430,24 +444,24 @@ async def build_query(
     select_parts = []
     base_alias = q(table_name)
 
-    if action in ("count",):
-        select_parts.append(f"COUNT(*) AS `count`")
-    elif action in ("sum", "avg", "min", "max"):
-        agg_col = extracted.aggregate_column
-        if agg_col:
-            resolved_col = _resolve_column(agg_col, table_meta)
-            if resolved_col:
-                agg_func = action.upper()
-                select_parts.append(f"{agg_func}({base_alias}.{q(resolved_col)}) AS `{action}`")
+    if action in ("count", "sum", "avg", "min", "max"):
+        if action == "count":
+            select_parts.append(f"COUNT(*) AS `Total`")
+        elif action in ("sum", "avg", "min", "max"):
+            agg_col = extracted.aggregate_column
+            if agg_col:
+                resolved_col = _resolve_column(agg_col, table_meta)
+                if resolved_col:
+                    agg_func = action.upper()
+                    select_parts.append(f"{agg_func}({base_alias}.{q(resolved_col)}) AS `{action}`")
+                else:
+                    select_parts.append(f"COUNT(*) AS `Total`")
+                    action = "count"
             else:
-                # Couldn't resolve — fallback to COUNT
-                select_parts.append(f"COUNT(*) AS `count`")
+                select_parts.append(f"COUNT(*) AS `Total`")
                 action = "count"
-        else:
-            select_parts.append(f"COUNT(*) AS `count`")
-            action = "count"
 
-        # Add group_by column to SELECT if present
+        # Add group_by column to SELECT if present (for count, sum, avg, etc.)
         if extracted.group_by:
             gb_col = _resolve_column(extracted.group_by, table_meta)
             gb_target_alias = base_alias
