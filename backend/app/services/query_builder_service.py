@@ -392,11 +392,12 @@ async def build_query(
     filters = extracted.filters or {}
 
     # Detect database dialect from connection URL
-    db_url_str = str(current_db_url.get() or "").lower()
+    client_config = await session.get(ClientConfig, client_id)
+    db_url_str = str((client_config.db_connection_url if client_config else "") or current_db_url.get() or "").lower()
     dialect = "mysql" if "mysql" in db_url_str else "postgres"
     q = lambda name: _quote_identifier(name, dialect)
 
-    print(f"[QUERY_BUILDER] Building {action} query for table={table_name}, filters={filters}", flush=True)
+    print(f"[QUERY_BUILDER] Building {action} query for table={table_name}, dialect={dialect}, filters={filters}", flush=True)
 
     # ─── 1. Load Metadata ────────────────────────────────────────────────────
     table_meta = await _load_table_metadata(table_name, client_id, session)
@@ -791,43 +792,35 @@ async def execute_deterministic_query(
     
     This makes it a drop-in replacement in execute_read_pipeline.
     """
-    from app.services.param_extractor import extract_params
-    from app.tools.database import execute_sql_query
+    # Step 1: Set database context token
+    client_config = await session.get(ClientConfig, client_id)
+    if not client_config or not client_config.db_connection_url:
+        raise Exception("No client database connection configured.")
 
-    # Step 1: Extract structured parameters
-    extracted = await extract_params(user_query, client_id, session, target_table)
-    print(f"[DETERMINISTIC] Extracted: table={extracted.table} action={extracted.action} filters={extracted.filters}", flush=True)
-
-    # Step 2: Build deterministic SQL
-    query_result = await build_query(extracted, client_id, session)
-    print(f"[DETERMINISTIC] Built SQL: {query_result.sql}", flush=True)
-
-    # Step 3: Execute the SQL
-    records = []
+    token = current_db_url.set(client_config.db_connection_url)
     try:
-        client_config = await session.get(ClientConfig, client_id)
-        if not client_config or not client_config.db_connection_url:
-            raise Exception("No client database connection configured.")
+        # Step 2: Extract structured parameters
+        extracted = await extract_params(user_query, client_id, session, target_table)
+        print(f"[DETERMINISTIC] Extracted: table={extracted.table} action={extracted.action} filters={extracted.filters}", flush=True)
 
-        token = current_db_url.set(client_config.db_connection_url)
-        try:
-            records = await execute_sql_query(query_result.sql, table_filters=query_result.table_filters)
-        finally:
-            current_db_url.reset(token)
+        # Step 3: Build deterministic SQL
+        query_result = await build_query(extracted, client_id, session)
+        print(f"[DETERMINISTIC] Built SQL: {query_result.sql}", flush=True)
 
-        if isinstance(records, str) and "Error" in records:
-            print(f"[DETERMINISTIC] SQL execution error: {records}", flush=True)
-            return {
-                "generated_sql": query_result.sql,
-                "records": [{"Error": records}],
-                "thought_process": f"Deterministic query failed: {records}",
-                "user_message": f"Query encountered an error. The system will retry with the legacy engine.",
-                "display_title": query_result.display_title
-            }
+        # Step 4: Execute the SQL
+        records = await execute_sql_query(query_result.sql, table_filters=query_result.table_filters)
+    finally:
+        current_db_url.reset(token)
 
-    except Exception as e:
-        print(f"[DETERMINISTIC] Execution failed: {e}", flush=True)
-        raise  # Let the caller handle fallback to schema_rag
+    if isinstance(records, str) and "Error" in records:
+        print(f"[DETERMINISTIC] SQL execution error: {records}", flush=True)
+        return {
+            "generated_sql": query_result.sql,
+            "records": [{"Error": records}],
+            "thought_process": f"Deterministic query failed: {records}",
+            "user_message": f"Query encountered an error. The system will retry with the legacy engine.",
+            "display_title": query_result.display_title
+        }
 
     # Build user-friendly message for aggregations
     user_message = ""
