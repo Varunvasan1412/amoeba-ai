@@ -330,11 +330,7 @@ class CRUDService:
                     res = await session.execute(stmt)
                     relationships = res.scalars().all()
             
-            # FORCED CLIENT_ID ENFORCEMENT
-            if client_id:
-                if filters is None: filters = {}
-                filters["client_id"] = client_id
-
+            # Execute read on client database
             records, skipped = await builder.execute_read(table_name, filters, limit, relationships=relationships)
             
             execution_time_ms = int((time.time() - start_time) * 1000)

@@ -80,31 +80,19 @@ def apply_smart_filters(
     # 1. APPLY DATE & LIMIT FILTERS (Existing logic)
     filters, start_date, end_date = apply_date_filter_internal(user_query, table_name, client_id, filters)
 
-    # 2. APPLY SMART SUBSTRING FILTERS
-    # If the user query has "contains [word]" or similar intent, and NO text filter exists yet
+    # 2. APPLY SMART SUBSTRING FILTERS (Only for explicit search, never for aggregations or general commands)
     user_query_lower = user_query.lower()
-    
-    # Check if we already have a text filter (avoid double filtering)
+    is_aggregation = any(kw in user_query_lower for kw in ["count", "total", "how many", "sum", "avg", "average", "min", "max", "list", "show", "view", "get", "fetch"])
     has_text_filter = any(isinstance(v, dict) and v.get("op") in ["contains", "like", "ilike"] for v in filters.values())
     
-    if not has_text_filter:
-        # Heuristic for "contains word" or "[word] items"
-        # 1. Explicit: "contains blue", "in which material is blue", "contains the word sleeve"
-        # This regex looks for keywords followed by optional fillers (the, word, as) then the actual term
+    if not has_text_filter and not is_aggregation:
         match = re.search(r'(?:contains|containing|is|labeled|called|word|showing)\s+(?:the\s+)?(?:word\s+)?(?:as\s+)?([a-zA-Z0-9_\-]+)', user_query_lower)
         search_term = None
         if match:
             search_term = match.group(1).strip()
-            # Clean up trailing punctuation if any (though regex handles most)
             search_term = re.sub(r'[?.!,]$', '', search_term)
-        
-        # 2. Implicit: If the query is just a single word or few words and not a date
-        elif len(user_query.split()) <= 4 and not any(d in user_query_lower for d in ["yesterday", "today", "last", "records"]):
-             search_term = user_query.strip()
 
         if search_term and len(search_term) > 2:
-            # Find the first meaningful text column to apply this search to
-            # (In a real system, we'd use Semantic Metadata, but for now we look for 'name' or 'material' or first VARCHAR)
             search_col = get_best_search_column(table_name, client_id)
             if search_col:
                 filters[search_col] = {"op": "contains", "value": search_term}
