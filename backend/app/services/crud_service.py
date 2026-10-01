@@ -118,40 +118,78 @@ class CRUDBuilder:
         # Resolve Aggregation Column
         agg_col = None
         if agg_col_key:
-            actual_agg_col = table_map.get(self._normalize_key(agg_col_key))
+            norm_agg = self._normalize_key(agg_col_key)
+            actual_agg_col = table_map.get(norm_agg) or table_map.get(f"{norm_agg}_id")
             if actual_agg_col:
                 agg_col = getattr(table.c, actual_agg_col)
         
-        # Resolve Group By Column
+        # Resolve Group By Column (fuzzy and _id suffix support)
         group_col = None
         if group_by_key:
-            actual_group_col = table_map.get(self._normalize_key(group_by_key))
+            norm_gb = self._normalize_key(group_by_key)
+            actual_group_col = (
+                table_map.get(norm_gb)
+                or table_map.get(f"{norm_gb}_id")
+                or table_map.get(norm_gb.replace("_id", ""))
+            )
+            if not actual_group_col:
+                for k, col in table_map.items():
+                    if norm_gb in k or k in norm_gb:
+                        actual_group_col = col
+                        break
             if actual_group_col:
                 group_col = getattr(table.c, actual_group_col)
 
         select_cols = []
+        join_clause = None
+        group_target = group_col
         if group_col is not None:
-            select_cols.append(group_col)
+            gb_label = group_col.name.replace("_id", "").replace("_", " ").title()
+            cand_parent = group_col.name[:-3] if group_col.name.endswith("_id") else None
+            matched_parent_table = None
+            if cand_parent:
+                for pt in [cand_parent, f"master_{cand_parent}", f"{cand_parent}s"]:
+                    norm_pt = self._normalize_key(pt)
+                    for t_key, t_obj in self.metadata.tables.items():
+                        if self._normalize_key(t_key) == norm_pt:
+                            matched_parent_table = t_obj
+                            break
+                    if matched_parent_table is not None:
+                        break
 
+            if matched_parent_table is not None:
+                p_pk = next((c for c in matched_parent_table.c if c.primary_key or c.name in ("id", f"{cand_parent}_id")), None)
+                p_name = next((c for c in matched_parent_table.c if any(k in c.name.lower() for k in ("name", "title", "label"))), None)
+                if p_pk is not None and p_name is not None:
+                    select_cols.append(p_name.label(gb_label))
+                    group_target = p_name
+                    join_clause = (matched_parent_table, group_col == p_pk)
+                else:
+                    select_cols.append(group_col.label(gb_label))
+            else:
+                select_cols.append(group_col.label(gb_label))
+
+        metric_label = "Total" if group_col is not None else "value"
         if agg_type == "count":
-            select_cols.append(func.count(agg_col if agg_col is not None else text("*")).label("value"))
+            select_cols.append(func.count(agg_col if agg_col is not None else text("*")).label(metric_label))
         elif agg_type == "sum" and agg_col is not None:
-            select_cols.append(func.sum(agg_col).label("value"))
+            select_cols.append(func.sum(agg_col).label(metric_label))
         elif agg_type == "avg" and agg_col is not None:
-            select_cols.append(func.avg(agg_col).label("value"))
+            select_cols.append(func.avg(agg_col).label("Average" if group_col is not None else "value"))
         elif agg_type == "min" and agg_col is not None:
-            select_cols.append(func.min(agg_col).label("value"))
+            select_cols.append(func.min(agg_col).label("Min" if group_col is not None else "value"))
         elif agg_type == "max" and agg_col is not None:
-            select_cols.append(func.max(agg_col).label("value"))
+            select_cols.append(func.max(agg_col).label("Max" if group_col is not None else "value"))
         else:
-            # Fallback for count if no col provided
-            select_cols.append(func.count(text("*")).label("value"))
+            select_cols.append(func.count(text("*")).label(metric_label))
             agg_type = "count"
 
         stmt = select(*select_cols).select_from(table)
-        
-        if group_col is not None:
-            stmt = stmt.group_by(group_col)
+        if join_clause:
+            stmt = stmt.outerjoin(join_clause[0], join_clause[1])
+        if group_target is not None:
+            stmt = stmt.group_by(group_target)
+            stmt = stmt.order_by(desc(text(metric_label)))
             
         return stmt, agg_type
 
