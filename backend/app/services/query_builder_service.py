@@ -219,6 +219,12 @@ def _resolve_column(
         if term_normalized == col_normalized:
             return col_name
 
+    # 4b. Prefix/substring match (e.g. "mobile" -> "mobile_number1", "stage" -> "enquiry_status_id")
+    for col_name in table_meta.columns:
+        c_low = col_name.lower()
+        if c_low.startswith(term_lower) or (len(term_lower) >= 4 and term_lower in c_low):
+            return col_name
+
     # 5. Cross-table label lookup (for joined columns)
     if all_field_labels:
         if term_lower in all_field_labels:

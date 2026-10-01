@@ -526,7 +526,14 @@ async def execute_read_pipeline(
     if not best_sm:
         best_score = -999
         for sm in all_sms:
-            raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+            raw_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
+            if getattr(sm, "synonyms", None):
+                try:
+                    syns = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                    if isinstance(syns, list):
+                        raw_aliases.extend([str(s).strip() for s in syns if s and str(s).strip()])
+                except Exception:
+                    pass
             for alias in raw_aliases:
                 sm_lbl = alias.lower().strip()
                 sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS

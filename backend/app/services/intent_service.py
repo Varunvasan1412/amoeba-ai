@@ -333,14 +333,26 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
             has_data_kw = bool(re.search(r"\b(table|tables|data|records|rows|column|columns)\b", clean_q))
             
-            # Check if query is an exact match for an existing semantic mapping UI label
+            # Check if query is an exact match for an existing semantic mapping UI label or admin synonym
             exact_sm = None
             for sm in sm_all:
-                sm_lbl_clean = sm.ui_label.lower().strip()
-                sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl_clean)) - NON_ENTITY_WORDS
-                stemmed_sm_toks = {_stem_token(t) for t in sm_toks}
-                if sm_lbl_clean == clean_q or (stemmed_sm_toks and stemmed_sm_toks == stemmed_q_toks):
-                    exact_sm = sm
+                all_sm_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
+                if sm.synonyms:
+                    try:
+                        syns = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                        if isinstance(syns, list):
+                            all_sm_aliases.extend([str(s).strip() for s in syns if s and str(s).strip()])
+                    except Exception:
+                        pass
+
+                for sm_alias in all_sm_aliases:
+                    sm_lbl_clean = sm_alias.lower().strip()
+                    sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl_clean)) - NON_ENTITY_WORDS
+                    stemmed_sm_toks = {_stem_token(t) for t in sm_toks}
+                    if sm_lbl_clean == clean_q or (stemmed_sm_toks and stemmed_sm_toks == stemmed_q_toks):
+                        exact_sm = sm
+                        break
+                if exact_sm:
                     break
             
             # If user directly specified an exact entity that has no multi-view tab_group,
@@ -580,7 +592,16 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             best_sm_score = 0
             for sm in sm_all:
                 # Support comma-separated aliases in ui_label (e.g. "Quotations, Quotes, Sales Quotation")
-                raw_aliases = [a.strip() for a in sm.ui_label.split(",") if a.strip()]
+                raw_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
+                if sm.synonyms:
+                    try:
+                        syn_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                        if isinstance(syn_list, list):
+                            for s in syn_list:
+                                if s and str(s).strip() and str(s).strip() not in raw_aliases:
+                                    raw_aliases.append(str(s).strip())
+                    except Exception:
+                        pass
                 for alias in raw_aliases:
                     lbl = alias.lower().strip()
                     lbl_norm = normalize_entity_name(lbl)
