@@ -356,6 +356,36 @@ async def _build_joins(
             })
             already_joined.add(h_parent_lower)
 
+    # 4. Heuristic FK Resolution for common suffix _id columns (e.g. city_id -> city table)
+    fm_all_tables_res = await session.execute(
+        select(FieldMetadata.table_name).where(FieldMetadata.client_id == client_id).distinct()
+    )
+    all_known_tables = {t.lower(): t for t in fm_all_tables_res.scalars().all() if t}
+    
+    base_fm_res = await session.execute(
+        select(FieldMetadata).where(
+            FieldMetadata.client_id == client_id,
+            FieldMetadata.table_name == base_table
+        )
+    )
+    for fm in base_fm_res.scalars().all():
+        c_low = fm.column_name.lower()
+        if c_low.endswith("_id") and c_low not in ("id", "client_id", "status_id", "log_status"):
+            cand_tbl_name = c_low[:-3]
+            possible_tables = [cand_tbl_name, f"master_{cand_tbl_name}", f"{cand_tbl_name}s", f"{cand_tbl_name}es"]
+            matched_parent = next((all_known_tables[pt] for pt in possible_tables if pt in all_known_tables and pt not in already_joined), None)
+            if matched_parent:
+                joins.append({
+                    "table": matched_parent,
+                    "alias": matched_parent,
+                    "local_table": base_table,
+                    "on_local": fm.column_name,
+                    "on_remote": "id",
+                    "columns": [],
+                    "fk_column": fm.column_name
+                })
+                already_joined.add(matched_parent.lower())
+
     return joins
 
 
@@ -424,8 +454,6 @@ async def build_query(
             table_filters[table_name] = semantic_mapping.default_filter
 
     # ─── 1b. Sanitize Filters vs Requested Columns ───────────────────────────
-    # If a filter has value identical to its key (e.g. {"city": "city"}, {"customer": "customer"}),
-    # it was a requested column to display, NOT a WHERE value filter!
     clean_filters = {}
     for fk, fv in filters.items():
         if isinstance(fv, str) and fv.lower().strip() in (fk.lower().strip(), f"{fk.lower().strip()}_id", fk.lower().replace("_id", "")):
@@ -470,7 +498,7 @@ async def build_query(
         if extracted.group_by:
             gb_col = _resolve_column(extracted.group_by, table_meta)
             gb_target_alias = base_alias
-            gb_label = extracted.group_by.replace("_", " ").title()
+            gb_label = extracted.group_by.replace("_id", "").replace("_", " ").title()
 
             if not gb_col:
                 for j in joins:
@@ -485,8 +513,22 @@ async def build_query(
                             break
 
             if gb_col:
-                # Check if there's an enum mapping for this column
-                if gb_target_alias == base_alias and gb_col in table_meta.enum_mappings:
+                # Check if this FK column has a joined parent table with a readable name
+                joined_match = next((j for j in joins if j.get("on_local") == gb_col or j.get("fk_column") == gb_col), None)
+                if joined_match:
+                    j_meta = joined_metas.get(joined_match["table"])
+                    name_col = next((c for c in (j_meta.columns if j_meta else {}) if any(k in c.lower() for k in ("name", "title", "label", "code", "city", "state", "country"))), None)
+                    if name_col:
+                        gb_label = gb_col.replace("_id", "").replace("_", " ").title()
+                        select_parts.insert(0, f"{q(joined_match['table'])}.{q(name_col)} AS {q(gb_label)}")
+                    elif gb_col in table_meta.enum_mappings:
+                        case_when = _build_enum_case_when(
+                            f"{base_alias}.{q(gb_col)}", table_meta.enum_mappings[gb_col]
+                        )
+                        select_parts.insert(0, f"{case_when} AS {q(gb_label)}")
+                    else:
+                        select_parts.insert(0, f"{gb_target_alias}.{q(gb_col)} AS {q(gb_label)}")
+                elif gb_target_alias == base_alias and gb_col in table_meta.enum_mappings:
                     case_when = _build_enum_case_when(
                         f"{base_alias}.{q(gb_col)}", table_meta.enum_mappings[gb_col]
                     )
@@ -723,6 +765,14 @@ async def build_query(
                         break
 
         if gb_col:
+            joined_match = next((j for j in joins if j.get("on_local") == gb_col or j.get("fk_column") == gb_col), None)
+            if joined_match:
+                j_meta = joined_metas.get(joined_match["table"])
+                name_col = next((c for c in (j_meta.columns if j_meta else {}) if any(k in c.lower() for k in ("name", "title", "label", "code", "city", "state", "country"))), None)
+                if name_col:
+                    gb_target_alias = q(joined_match["table"])
+                    gb_col = name_col
+
             group_clause = f"GROUP BY {gb_target_alias}.{q(gb_col)}"
             if not order_clause:
                 order_clause = "ORDER BY COUNT(*) DESC"
