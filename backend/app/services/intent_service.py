@@ -324,6 +324,25 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             q_toks = set(re.findall(r'[a-zA-Z0-9]+', clean_q)) - NON_ENTITY_WORDS
             stemmed_q_toks = {_stem_token(t) for t in q_toks}
             
+            # Universal prompt clause isolation: strip projection/filter/condition clauses
+            raw_q_clean = query_lower
+            for kw in INTENT_MAP.get(detected_intent, []):
+                raw_q_clean = re.sub(rf"\b{kw}\b", "", raw_q_clean).strip()
+            raw_q_clean = strip_date_phrases(raw_q_clean)
+
+            SPLIT_PREPOSITIONS = r'\b(grouped\s+by|group\s+by|ordered\s+by|order\s+by|by|with\s+only|with|where|having|in|for|showing\s+only|showing|displaying\s+only|displaying|display|containing|contain|to\s+show|status\s*=|status\s+is)\b'
+            raw_parts = re.split(SPLIT_PREPOSITIONS, raw_q_clean, flags=re.IGNORECASE)
+            raw_subject = raw_parts[0].strip() if raw_parts else raw_q_clean
+            raw_subject = re.sub(r'^(the|a|an|all|any|recent|latest)\s+', '', raw_subject, flags=re.IGNORECASE).strip()
+            raw_subject = re.sub(r'\b(table|data|records|rows|list|entries)\b', '', raw_subject, flags=re.IGNORECASE).strip()
+            raw_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', raw_subject)) - NON_ENTITY_WORDS}
+
+            norm_parts = re.split(SPLIT_PREPOSITIONS, clean_q, flags=re.IGNORECASE)
+            norm_subject = norm_parts[0].strip() if norm_parts else clean_q
+            norm_subject = re.sub(r'^(the|a|an|all|any|recent|latest)\s+', '', norm_subject, flags=re.IGNORECASE).strip()
+            norm_subject = re.sub(r'\b(table|data|records|rows|list|entries)\b', '', norm_subject, flags=re.IGNORECASE).strip()
+            norm_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', norm_subject)) - NON_ENTITY_WORDS}
+
             # --- TAB DISAMBIGUATION CHECK ---
             # If the user asks for a general entity or screen that has multiple tabs/stages
             # (e.g. "grn inspection", "quotations", "invoices", "delivery challan") and did NOT specify a discriminating tab:
@@ -331,7 +350,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             has_tab_discriminator = any(td in clean_q.split() for td in TAB_DISCRIMINATORS)
             has_data_kw = bool(re.search(r"\b(table|tables|data|records|rows|column|columns)\b", clean_q))
             
-            # Check if query is an exact match for an existing semantic mapping UI label or admin synonym
+            # Check if query or isolated subject matches an existing semantic mapping UI label or admin synonym
             exact_sm = None
             for sm in sm_all:
                 all_sm_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
@@ -347,7 +366,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     sm_lbl_clean = sm_alias.lower().strip()
                     sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl_clean)) - NON_ENTITY_WORDS
                     stemmed_sm_toks = {_stem_token(t) for t in sm_toks}
-                    if sm_lbl_clean == clean_q or (stemmed_sm_toks and stemmed_sm_toks == stemmed_q_toks):
+                    if (
+                        sm_lbl_clean in (clean_q, raw_subject, norm_subject) or
+                        (stemmed_sm_toks and (stemmed_sm_toks == stemmed_q_toks or stemmed_sm_toks == raw_subj_toks or stemmed_sm_toks == norm_subj_toks))
+                    ):
                         exact_sm = sm
                         break
                 if exact_sm:
@@ -365,9 +387,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     if grp and _is_ui_facing_label(sm.ui_label):
                         tab_groups.setdefault(grp, []).append(sm)
                 
-                # DEBUG: Log tab groups that contain tokens related to the query
-                print(f"🔍 [TAB_DEBUG] clean_q='{clean_q}', stemmed_q_toks={stemmed_q_toks}")
-                print(f"🔍 [TAB_DEBUG] Total tab_groups: {len(tab_groups)}, keys (first 10): {list(tab_groups.keys())[:10]}")
+                # Tab group debug
+                # print(f"[TAB_DEBUG] clean_q='{clean_q}', stemmed_q_toks={stemmed_q_toks}")
                 
                 matched_group = None
                 matched_tabs = []
@@ -606,11 +627,15 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     except Exception:
                         pass
                 
-                # ERP Aliases: enquiry_header is standard for quotations in this ERP
-                if sm.database_table == "enquiry_header":
-                    for auto_alias in ["quotations", "quotation", "quote", "quotes", "sales quotation"]:
-                        if auto_alias not in raw_aliases:
-                            raw_aliases.append(auto_alias)
+                # Dynamically generate singular/plural variants for all aliases (Universal ERP alignment)
+                dyn_aliases = list(raw_aliases)
+                for a in raw_aliases:
+                    a_low = a.lower().strip()
+                    if a_low.endswith("s") and not a_low.endswith("ss"):
+                        dyn_aliases.append(a_low[:-1])
+                    else:
+                        dyn_aliases.append(a_low + "s")
+                raw_aliases = list(dict.fromkeys(dyn_aliases))
                 for alias in raw_aliases:
                     lbl = alias.lower().strip()
                     lbl_norm = normalize_entity_name(lbl)
@@ -854,17 +879,47 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     if detected_entity:
                         break
 
+        # Universal Governance Guard: Build dynamic dictionary of Admin-Governed Concepts
+        # A raw physical table must NEVER usurp an entity that the admin mapped in Semantic Mappings!
+        governed_concepts: Dict[str, str] = {}
+        if sm_all:
+            for sm in sm_all:
+                g_tbl = sm.database_table
+                g_aliases = [a.strip().lower() for a in (sm.ui_label or "").split(",") if a.strip()]
+                if getattr(sm, "synonyms", None):
+                    try:
+                        s_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                        if isinstance(s_list, list):
+                            g_aliases.extend([str(s).strip().lower() for s in s_list if s and str(s).strip()])
+                    except Exception:
+                        pass
+                for a in g_aliases:
+                    governed_concepts[a] = g_tbl
+                    governed_concepts[normalize_entity_name(a)] = g_tbl
+                    for w in re.findall(r'[a-zA-Z0-9]+', a):
+                        if len(w) >= 3 and w not in NON_ENTITY_WORDS:
+                            governed_concepts[w] = g_tbl
+                            governed_concepts[_stem_token(w)] = g_tbl
+
+        def _resolve_governed_or_raw(candidate_tbl: str) -> str:
+            if not candidate_tbl or not governed_concepts:
+                return candidate_tbl
+            cand_norm = normalize_entity_name(candidate_tbl)
+            for concept_kw, gov_tbl in governed_concepts.items():
+                if concept_kw in raw_subject or concept_kw in norm_subject or concept_kw in cand_norm:
+                    if candidate_tbl.lower() != gov_tbl.lower():
+                        print(f"🛡️ [GOVERNANCE] Overriding unmapped table '{candidate_tbl}' -> Governed Table '{gov_tbl}' for concept '{concept_kw}'")
+                        return gov_tbl
+            return candidate_tbl
+
         # Strategy 1: Table Names
         if not detected_entity:
-            has_enquiry_header = any(t.get("name") == "enquiry_header" for t in all_tables)
             for t in all_tables:
                 t_raw = t["name"]
-                if t_raw == "quotation_header" and has_enquiry_header:
-                    continue
                 t_norm = normalize_entity_name(t_raw)
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if t_norm == norm_query or (t_base and t_base == norm_query):
-                    detected_entity = t_raw
+                    detected_entity = _resolve_governed_or_raw(t_raw)
                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                     break
 
@@ -872,8 +927,6 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         if not detected_entity:
             for nav in unique_navs:
                 if normalize_entity_name(nav.label) == norm_query or normalize_entity_name(nav.module) == norm_query:
-                    # IMPORTANT: If it's a CRUD intent (not navigate), and nav has no table, skip exact match
-                    # unless it's the ONLY thing we found. But here we want to fallback to fuzzy if no table.
                     if detected_intent != "navigate" and not nav.table_name:
                         continue
                     detected_entity = nav.table_name or nav.label
@@ -899,12 +952,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         if not detected_entity:
             for t in all_tables:
                 t_raw = t["name"]
-                if t_raw == "quotation_header" and has_enquiry_header:
-                    continue
                 t_norm = normalize_entity_name(t_raw)
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if (t_norm and t_norm in norm_query) or (t_base and len(t_base) >= 3 and re.search(rf"\b{re.escape(t_base)}\b", norm_query)):
-                    detected_entity = t_raw
+                    detected_entity = _resolve_governed_or_raw(t_raw)
                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                     break
                      
@@ -914,10 +965,6 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             best_ratio = 0.0
             best_table = None
             
-            # Since the user query might be a full sentence (e.g. "show me stock where > 10"),
-            # standard difflib over the whole sentence fails. We will check if the table name 
-            # closely matches any sub-phrase of the query.
-
             query_words = norm_query.split()
             
             # Check Semantic Metadata first
@@ -943,7 +990,6 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 if t_norm:
                     t_words = t_norm.split()
                     sz = len(t_words)
-                    # Create moving window of same length
                     for i in range(len(query_words) - sz + 1):
                         sub_phrase = " ".join(query_words[i:i+sz])
                         if sub_phrase in NON_ENTITY_WORDS or len(sub_phrase) < 4:
@@ -955,9 +1001,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                             best_table = t["name"]
                     
             if best_ratio >= 0.80 and best_table:
-                detected_entity = best_table
+                detected_entity = _resolve_governed_or_raw(best_table)
                 detected_module = await resolve_module_for_table(detected_entity, client_id, session)
-                print(f"🎯 [INTENT] Fuzzy subphrase match found: '{norm_query}' -> {best_table} (ratio: {best_ratio:.2f})")
+                print(f"🎯 [INTENT] Fuzzy subphrase match found: '{norm_query}' -> {detected_entity} (ratio: {best_ratio:.2f})")
                      
         if detected_entity:
             print(f"MODULE_RESOLVED: {detected_module} for {detected_entity}")

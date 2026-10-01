@@ -516,12 +516,8 @@ async def execute_read_pipeline(
     fn_low = friendly_name.lower().strip()
     query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
     
-    # In this ERP, enquiry_header holds quotation records; quotation_header is an unpopulated skeleton table
-    if table_name and table_name.lower() == "quotation_header" and any(sm.database_table.lower() == "enquiry_header" for sm in all_sms):
-        print(f"🔄 [READ] Remapping unpopulated quotation_header -> enquiry_header")
-        table_name = "enquiry_header"
-        friendly_name = "Quotations"
-
+    # UNIVERSAL GOVERNANCE ALIGNMENT:
+    # 1. Check if the incoming table_name directly matches an Admin-governed SemanticMapping
     best_sm = None
     if table_name and table_name != "unknown_entity":
         for sm in all_sms:
@@ -529,35 +525,47 @@ async def execute_read_pipeline(
                 best_sm = sm
                 break
 
-    if not best_sm:
-        best_score = -999
-        for sm in all_sms:
-            raw_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
-            if getattr(sm, "synonyms", None):
-                try:
-                    syns = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
-                    if isinstance(syns, list):
-                        raw_aliases.extend([str(s).strip() for s in syns if s and str(s).strip()])
-                except Exception:
-                    pass
-            for alias in raw_aliases:
-                sm_lbl = alias.lower().strip()
-                sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
-                
-                score = 0
-                if sm_lbl == fn_low or sm_lbl == user_q_low:
-                    score += 100
-                elif sm_lbl in user_q_low or user_q_low in sm_lbl:
-                    score += 50
-                
-                overlap = query_tokens.intersection(sm_toks)
-                score += len(overlap) * 20
-                diff = sm_toks - query_tokens
-                score -= len(diff) * 5
-                
-                if score > best_score and score >= 15:
-                    best_score = score
-                    best_sm = sm
+    # 2. Check if user query matches an Admin-configured SemanticMapping concept
+    matched_query_sm = None
+    best_score = -999
+    for sm in all_sms:
+        raw_aliases = [a.strip() for a in (sm.ui_label or "").split(",") if a.strip()]
+        if getattr(sm, "synonyms", None):
+            try:
+                syns = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                if isinstance(syns, list):
+                    raw_aliases.extend([str(s).strip() for s in syns if s and str(s).strip()])
+            except Exception:
+                pass
+        for alias in raw_aliases:
+            sm_lbl = alias.lower().strip()
+            sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+            
+            score = 0
+            if sm_lbl == fn_low or sm_lbl == user_q_low:
+                score += 100
+            elif sm_lbl in user_q_low or user_q_low in sm_lbl:
+                score += 50
+            
+            overlap = query_tokens.intersection(sm_toks)
+            score += len(overlap) * 20
+            diff = sm_toks - query_tokens
+            score -= len(diff) * 5
+            
+            if score > best_score and score >= 15:
+                best_score = score
+                matched_query_sm = sm
+
+    # 3. Dynamic Override: If the query matched a Governed Concept, but incoming table_name
+    # is unmapped or a competing skeleton/legacy table, prioritize the Governed Concept!
+    if matched_query_sm:
+        if not best_sm or (best_sm.database_table.lower() != matched_query_sm.database_table.lower() and best_score >= 40):
+            print(f"🔄 [GOVERNANCE] Re-aligning unmapped/skeleton table '{table_name}' -> Governed Table '{matched_query_sm.database_table}' ({matched_query_sm.ui_label})")
+            best_sm = matched_query_sm
+            table_name = matched_query_sm.database_table
+            friendly_name = matched_query_sm.ui_label.split(",")[0].strip()
+    elif not best_sm and all_sms:
+        best_sm = matched_query_sm
 
     # Check if the query is a plain list request or a specific/analytical question
     has_analytical_intent = any(kw in user_q_low for kw in [
@@ -633,6 +641,10 @@ async def execute_read_pipeline(
                 else:
                     response_text = f"**{display_title}** — {agg_label}: **{agg_v}**"
             else:
+                from app.services.crud_service import CRUDService
+                cleaned_result = CRUDService.project_clean_columns(list(result), user_query=user_text)
+                if cleaned_result:
+                    result = cleaned_result
                 headers = list(result[0].keys())
                 actions_list.append({
                     "type": "data_table",
@@ -718,7 +730,7 @@ async def execute_read_pipeline(
             filters["group_by"] = gb_match.group(1)
 
     result = await CRUDService.read_records(
-        table_name=table_name, filters=filters if filters else None,
+        table_name=target_tbl, filters=filters if filters else None,
         limit=100, client_id=int(client_id), user_query=user_text
     )
     result = sanitize_for_json(result)

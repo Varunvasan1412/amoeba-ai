@@ -179,7 +179,7 @@ RULES:
    - Example: "quotations by John in Mumbai" -> filters: {{"customer_id": "John", "city_id": "Mumbai"}}
    - Example: "where status is pending" -> filters: {{"status": 1}}
    - Date filters should use "date_from" and "date_to" keys with YYYY-MM-DD format.
-5. CRITICAL: "with <field1> and <field2>" (e.g. "with customer and city") means the user wants to see those COLUMNS in the output! Put them in "columns": ["customer_id", "city_id"] and leave "filters": {{}}! Do NOT filter by city or customer unless a specific name/value is given!
+5. CRITICAL: "with ...", "showing ...", "displaying ...", or "including ..." (e.g. "showing customer name, mobile, and current stage") means the user wants to see those COLUMNS in the output! Put them in "columns": ["customer name", "mobile", "current stage"] (use physical column names or clean business terms) and leave "filters": {{}}! Do NOT filter unless a specific comparison value is given!
 6. CRITICAL: "by <field>" or "grouped by <field>" or "per <field>" (e.g. "count customers by city") means GROUP BY aggregation! Put "group_by": "city_id", "action": "count", and leave "filters": {{}}!
 7. For "aggregate_column": only set this for sum/avg/min/max actions — the physical column to aggregate.
 8. The system has already guessed the target table is: '{target_table or "unknown"}'. Verify this against the available tables.
@@ -309,11 +309,25 @@ def _keyword_fallback(user_query: str, target_table: Optional[str] = None) -> Ex
         if cand_gb not in ("all", "the", "a", "an", "and", "or", "desc", "asc", "date", "created_at"):
             group_by = cand_gb
 
+    # Detect projection / requested columns ("showing customer name, mobile, and current stage")
+    columns = None
+    proj_match = re.search(r'\b(?:showing|displaying|with|including|columns?)\s+([a-zA-Z0-9_,\s]+)', query_lower)
+    if proj_match:
+        raw_cols = proj_match.group(1).strip()
+        # Remove trailing clauses like "where ...", "ordered by ...", "limit ..."
+        for stop_word in ["where", "order", "sort", "limit", "group", "having"]:
+            if f" {stop_word} " in f" {raw_cols} ":
+                raw_cols = raw_cols.split(f" {stop_word} ")[0]
+        raw_cols = re.sub(r'\b(?:and|as\s+well\s+as)\b', ',', raw_cols)
+        extracted_cols = [p.strip() for p in raw_cols.split(',') if p.strip() and len(p.strip()) > 1]
+        if extracted_cols:
+            columns = extracted_cols
+
     return ExtractedParams(
         table=target_table or "",
         action=action,
         filters={},
-        columns=None,
+        columns=columns,
         sort_by=None,
         sort_order=None,
         aggregate_column=aggregate_column,

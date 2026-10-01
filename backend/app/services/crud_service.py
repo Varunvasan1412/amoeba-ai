@@ -211,19 +211,45 @@ class CRUDBuilder:
 
     async def execute_read(self, table_name: str, filters: Dict[str, Any] = None, limit: int = 10, relationships: List[Any] = None) -> Tuple[List[Dict[str, Any]], List[str]]:
         table = self._get_table(table_name)
+        pk_cols = [c.name for c in table.primary_key.columns] if table.primary_key else ["id"]
+        primary_pk = pk_cols[0] if pk_cols else "id"
+
         select_cols = [table]
         joins = []
+        resolved_fk_labels: Dict[str, str] = {}
+
         if relationships:
             for rel in relationships:
                 try:
+                    # Cardinality Guard (Many-to-One vs One-to-Many):
+                    # If rel.child_column is the PK of base_table, parent_table is actually
+                    # a 1-to-many child detail collection (e.g. enquiry_detail.enquiry_id = enquiry_header.id).
+                    # Never join 1-to-many child detail collections for a flat list query!
+                    if rel.child_column.lower() in [pk.lower() for pk in pk_cols] and rel.parent_column.lower() not in ("id", "pk"):
+                        print(f"🛡️ [CARDINALITY GUARD] Skipping 1-to-many child collection join {rel.parent_table} to preserve row count", flush=True)
+                        continue
+
                     parent_table = self._get_table(rel.parent_table)
                     if hasattr(table.c, rel.child_column) and hasattr(parent_table.c, rel.parent_column):
                         child_col = getattr(table.c, rel.child_column)
                         parent_col = getattr(parent_table.c, rel.parent_column)
                         joins.append((parent_table, child_col == parent_col))
-                        for sel_col in rel.selected_columns:
+
+                        # Generic Display Column Auto-Discovery:
+                        sel_cols = list(rel.selected_columns) if rel.selected_columns else []
+                        if not sel_cols:
+                            for c in parent_table.columns:
+                                c_low = c.name.lower()
+                                if any(kw in c_low for k in ["name", "title", "label", "status", "mobile", "phone", "stage"]) and not c_low.endswith("_id") and c_low != "id":
+                                    sel_cols.append(c.name)
+                                    if len(sel_cols) >= 2:
+                                        break
+
+                        for sel_col in sel_cols:
                             if hasattr(parent_table.c, sel_col):
-                                select_cols.append(getattr(parent_table.c, sel_col).label(f"{rel.child_column}_{sel_col}"))
+                                label_key = f"{rel.child_column}__{sel_col}"
+                                select_cols.append(getattr(parent_table.c, sel_col).label(label_key))
+                                resolved_fk_labels[label_key] = (rel.child_column, sel_col)
                 except Exception as e:
                     print(f"Skipping relationship {rel.child_table}->{rel.parent_table}: {e}", flush=True)
         stmt = select(*select_cols).select_from(table)
@@ -293,17 +319,34 @@ class CRUDBuilder:
         print(f"🔍 [CRUD READ SQL] Executing Query: {query}", flush=True)
         rows = await execute_sql_query(query)
         if isinstance(rows, str) and "Error" in rows: raise Exception(rows)
-        if relationships and isinstance(rows, list):
+
+        # Deduplicate records by primary key so each parent entity is guaranteed unique
+        if isinstance(rows, list) and primary_pk:
+            seen_pks = set()
+            deduped_rows = []
+            for r in rows:
+                if isinstance(r, dict) and primary_pk in r:
+                    pk_val = r[primary_pk]
+                    if pk_val not in seen_pks:
+                        seen_pks.add(pk_val)
+                        deduped_rows.append(r)
+                else:
+                    deduped_rows.append(r)
+            rows = deduped_rows
+
+        # Generic FK Value & Label Resolution:
+        if isinstance(rows, list):
             for row_dict in rows:
-                for rel in relationships:
-                    if len(rel.selected_columns) > 0:
-                        sel_col = rel.selected_columns[0]
-                        label_key = f"{rel.child_column}_{sel_col}"
-                        actual_label_key = next((k for k in row_dict.keys() if k.lower() == label_key.lower()), None)
-                        if actual_label_key is not None:
-                            val = row_dict.pop(actual_label_key)
-                            actual_child_key = next((k for k in row_dict.keys() if k.lower() == rel.child_column.lower()), None)
-                            if actual_child_key is not None: row_dict[actual_child_key] = val if val is not None else row_dict[actual_child_key]
+                for label_key, (child_col, sel_col) in resolved_fk_labels.items():
+                    if label_key in row_dict:
+                        val = row_dict.pop(label_key)
+                        if val is not None:
+                            # Primary descriptor (e.g. name, title, label, status) replaces foreign key
+                            if any(k in sel_col.lower() for k in ["name", "title", "label", "status", "stage"]):
+                                row_dict[child_col] = val
+                            else:
+                                # Additional attribute (e.g. mobile, phone, code) is added as its own column
+                                row_dict[sel_col] = val
         return rows, skipped_filters
 
     async def execute_update(self, table_name: str, filters: Dict[str, Any], data: Dict[str, Any]):
@@ -405,6 +448,10 @@ class CRUDService:
                     "grouped_results": records
                 }
 
+            # Generic Column Projection & Cleaning:
+            if isinstance(records, list) and records:
+                records = CRUDService.project_clean_columns(records, user_query=user_query)
+
             # If there are skipped filters, return a diagnostic object instead of just a list
             if skipped:
                 return {
@@ -414,6 +461,115 @@ class CRUDService:
             return records
         except Exception as e:
             raise Exception(f"Failed to read records: {e}")
+
+    @staticmethod
+    def project_clean_columns(records: List[Dict[str, Any]], user_query: Optional[str] = None) -> List[Dict[str, Any]]:
+        if not records or not isinstance(records, list) or not isinstance(records[0], dict):
+            return records
+
+        all_keys = list(records[0].keys())
+        query_lower = (user_query or "").lower()
+
+        # 1. Detect requested columns from user query projection clause
+        # Patterns like: "showing customer name, mobile, and current stage", "with X and Y", "displaying X"
+        requested_terms = []
+        proj_match = re.search(r'\b(?:showing|displaying|with|including|columns?)\s+([a-zA-Z0-9_,\s]+)', query_lower)
+        if proj_match:
+            raw_clause = proj_match.group(1).strip()
+            for stop in ["where", "order", "sort", "limit", "group", "having"]:
+                if f" {stop} " in f" {raw_clause} ":
+                    raw_clause = raw_clause.split(f" {stop} ")[0]
+            raw_clause = re.sub(r'\b(?:and|as\s+well\s+as)\b', ',', raw_clause)
+            requested_terms = [t.strip().lower() for t in raw_clause.split(',') if t.strip() and len(t.strip()) > 1]
+
+        # 2. Identify Primary Identifier column(s) (e.g., number, code, name, no)
+        primary_id_cols = []
+        for k in all_keys:
+            kl = k.lower()
+            if any(id_word in kl for id_word in ["number", "code", "no", "name", "title"]) and kl not in ("id", "log_status", "status_id") and not kl.endswith("_id"):
+                primary_id_cols.append(k)
+                break
+        if not primary_id_cols:
+            for k in all_keys:
+                if k.lower() in ("id", "code", "number", "name"):
+                    primary_id_cols.append(k)
+                    break
+
+        # 3. Identify Primary Date column(s)
+        primary_date_cols = []
+        for k in all_keys:
+            kl = k.lower()
+            if any(dw in kl for dw in ["date", "created_at", "timestamp"]) and k not in primary_id_cols:
+                primary_date_cols.append(k)
+                break
+
+        final_cols = []
+        if requested_terms:
+            # Add primary identifier and date first for context
+            for c in primary_id_cols:
+                if c not in final_cols:
+                    final_cols.append(c)
+            for c in primary_date_cols:
+                if c not in final_cols:
+                    final_cols.append(c)
+
+            # Match each requested term to available keys in records
+            for term in requested_terms:
+                term_clean = re.sub(r'[^a-z0-9]', '', term)
+                matched_key = None
+                
+                # Check exact match or normalized match
+                for k in all_keys:
+                    k_clean = re.sub(r'[^a-z0-9]', '', k.lower())
+                    if term_clean == k_clean or k_clean.startswith(term_clean):
+                        matched_key = k
+                        break
+
+                # Check token overlap / fuzzy match (e.g., "customer name" -> "customer_id", "current stage" -> "enquiry_status_id")
+                if not matched_key:
+                    term_words = [w for w in term.split() if w not in ("current", "the", "a", "an", "all", "is", "of")]
+                    for k in all_keys:
+                        kl = k.lower()
+                        if any(w in kl for w in term_words):
+                            matched_key = k
+                            break
+
+                if matched_key and matched_key not in final_cols:
+                    final_cols.append(matched_key)
+        else:
+            # Default projection: exclude technical internal columns
+            noisy_cols = {"id", "log_status", "created_by", "updated_by", "deleted_at", "deleted", "sync_status", "raw_data"}
+            for k in all_keys:
+                kl = k.lower()
+                if kl in noisy_cols or kl.startswith("temp_") or kl.startswith("__"):
+                    continue
+                # If date column already present, omit redundant created_at timestamp
+                if primary_date_cols and kl in ("created_at", "updated_at") and kl not in primary_date_cols:
+                    continue
+                final_cols.append(k)
+
+            # Limit to reasonable width if there are still too many columns
+            if len(final_cols) > 12:
+                final_cols = final_cols[:12]
+
+        if not final_cols:
+            final_cols = all_keys
+
+        # Format column names to clean, human-readable Title Case
+        clean_records = []
+        for r in records:
+            clean_row = {}
+            for col in final_cols:
+                if col in r:
+                    val = r[col]
+                    # Format column header label
+                    label = col.replace("_id", "").replace("_", " ").title()
+                    if "status" in col.lower() or "stage" in col.lower():
+                        label = "Stage" if "stage" in query_lower else "Status"
+                    clean_row[label] = val
+            clean_records.append(clean_row)
+
+        return clean_records
 
     @staticmethod
     async def update_records(table_name: str, filters: Dict[str, Any], data: Dict[str, Any], user_id: Optional[str] = None, client_id: Optional[int] = None):

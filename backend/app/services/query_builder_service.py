@@ -27,7 +27,7 @@ from app.models.field_metadata import FieldMetadata
 from app.models.semantic_metadata import SemanticMetadata
 from app.models.allowed_relationship import AllowedRelationship
 from app.models.client_config import ClientConfig
-from app.services.param_extractor import ExtractedParams
+from app.services.param_extractor import ExtractedParams, extract_params
 from app.core.context import current_db_url
 
 logger = logging.getLogger(__name__)
@@ -257,11 +257,14 @@ async def _build_joins(
     joins = []
     already_joined = {base_table.lower()}
 
-    # 1. Fetch direct enabled relationships (child_table == base_table)
+    # 1. Fetch enabled relationships where base_table is either child or parent
     rel_res = await session.execute(
         select(AllowedRelationship).where(
             AllowedRelationship.client_id == client_id,
-            AllowedRelationship.child_table == base_table,
+            or_(
+                AllowedRelationship.child_table == base_table,
+                AllowedRelationship.parent_table == base_table
+            ),
             AllowedRelationship.is_enabled == True,
             AllowedRelationship.is_restricted == False,
             or_(
@@ -273,8 +276,25 @@ async def _build_joins(
     relationships = list(rel_res.scalars().all())
 
     for rel in relationships:
-        parent_lower = rel.parent_table.lower()
-        if parent_lower in already_joined:
+        if rel.child_table.lower() == base_table.lower():
+            target_table = rel.parent_table
+            on_local = rel.child_column
+            on_remote = rel.parent_column
+            fk_col = rel.child_column
+        else:
+            target_table = rel.child_table
+            on_local = rel.parent_column
+            on_remote = rel.child_column
+            fk_col = rel.parent_column
+            # Cardinality Guard: base_table is parent; child_table is a 1-to-many collection.
+            # Skip 1-to-many child collections on flat queries to prevent Cartesian row multiplication,
+            # unless columns from that child table are explicitly requested.
+            if not requested_columns or not any(target_table.lower() in str(c).lower() for c in requested_columns):
+                logger.info(f"🛡️ [CARDINALITY GUARD] Skipping 1-to-many child collection {target_table} in query builder")
+                continue
+
+        target_lower = target_table.lower()
+        if target_lower in already_joined:
             continue
 
         selected_cols = rel.selected_columns or []
@@ -282,7 +302,7 @@ async def _build_joins(
             parent_fm_res = await session.execute(
                 select(FieldMetadata).where(
                     FieldMetadata.client_id == client_id,
-                    FieldMetadata.table_name == rel.parent_table,
+                    FieldMetadata.table_name == target_table,
                     FieldMetadata.is_visible == True
                 )
             )
@@ -293,15 +313,15 @@ async def _build_joins(
                     break
 
         joins.append({
-            "table": rel.parent_table,
-            "alias": rel.parent_table,
+            "table": target_table,
+            "alias": target_table,
             "local_table": base_table,
-            "on_local": rel.child_column,
-            "on_remote": rel.parent_column,
+            "on_local": on_local,
+            "on_remote": on_remote,
             "columns": selected_cols,
-            "fk_column": rel.child_column
+            "fk_column": fk_col
         })
-        already_joined.add(parent_lower)
+        already_joined.add(target_lower)
 
     # 2. Add dropdown FK references from FieldMetadata
     fm_res = await session.execute(
@@ -540,45 +560,74 @@ async def build_query(
             primary_identifiers.append(table_meta.primary_date_column)
 
         if extracted.columns:
-            # User requested specific columns or "with X and Y"
-            selected_cols = list(primary_identifiers)
-            for col_term in extracted.columns:
-                resolved = _resolve_column(col_term, table_meta)
-                if resolved and resolved not in selected_cols:
-                    selected_cols.append(resolved)
+            # User requested specific columns or "showing X, Y, Z"
+            # 1. Always include primary code/number/name and date columns if present
+            for pid in primary_identifiers:
+                label = table_meta.columns.get(pid, {}).get("label", pid.replace("_", " ").title())
+                select_parts.append(f"{base_alias}.{q(pid)} AS {q(label)}")
 
-            for col_name in selected_cols:
-                if col_name in table_meta.columns:
-                    # Check if this is a foreign key that can be replaced by joined name
-                    joined_match = next((j for j in joins if j.get("on_local") == col_name or j.get("fk_column") == col_name), None)
+            for col_term in extracted.columns:
+                col_term_clean = col_term.strip()
+                if not col_term_clean:
+                    continue
+
+                # A. Try resolving directly on base table
+                resolved = _resolve_column(col_term_clean, table_meta)
+                if resolved and resolved in table_meta.columns:
+                    # If this is a foreign key, check if there's a join providing its readable name
+                    joined_match = next((j for j in joins if j.get("on_local") == resolved or j.get("fk_column") == resolved), None)
                     if joined_match:
                         j_meta = joined_metas.get(joined_match["table"])
                         name_col = next((c for c in (j_meta.columns if j_meta else {}) if any(k in c.lower() for k in ("name", "title", "label"))), None)
                         if name_col:
-                            fk_label = col_name.replace("_id", "").replace("_", " ").title()
+                            fk_label = col_term_clean.replace("_", " ").title()
                             select_parts.append(f"{q(joined_match['table'])}.{q(name_col)} AS {q(fk_label)}")
                             continue
 
-                    if col_name in table_meta.enum_mappings:
+                    if resolved in table_meta.enum_mappings:
                         case_when = _build_enum_case_when(
-                            f"{base_alias}.{q(col_name)}", table_meta.enum_mappings[col_name]
+                            f"{base_alias}.{q(resolved)}", table_meta.enum_mappings[resolved]
                         )
-                        label = table_meta.columns.get(col_name, {}).get("label", col_name)
+                        label = col_term_clean.replace("_", " ").title()
                         select_parts.append(f"{case_when} AS {q(label)}")
                     else:
-                        label = table_meta.columns.get(col_name, {}).get("label", col_name)
-                        select_parts.append(f"{base_alias}.{q(col_name)} AS {q(label)}")
-                else:
-                    # Check joined tables for this column term
-                    for j in joins:
-                        j_meta = joined_metas.get(j["table"])
-                        if j_meta:
-                            j_resolved = _resolve_column(col_term, j_meta)
-                            if j_resolved:
-                                j_alias = q(j["table"])
-                                j_label = j_meta.columns.get(j_resolved, {}).get("label", j_resolved)
-                                select_parts.append(f"{j_alias}.{q(j_resolved)} AS {q(j_label)}")
-                                break
+                        label = table_meta.columns.get(resolved, {}).get("label", col_term_clean.replace("_", " ").title())
+                        select_parts.append(f"{base_alias}.{q(resolved)} AS {q(label)}")
+                    continue
+
+                # B. Try resolving across all joined tables
+                found_in_join = False
+                for j in joins:
+                    j_meta = joined_metas.get(j["table"])
+                    if j_meta:
+                        j_resolved = _resolve_column(col_term_clean, j_meta)
+                        if j_resolved:
+                            j_alias = q(j["table"])
+                            j_label = col_term_clean.replace("_", " ").title()
+                            select_parts.append(f"{j_alias}.{q(j_resolved)} AS {q(j_label)}")
+                            found_in_join = True
+                            break
+                if found_in_join:
+                    continue
+
+                # C. Check if term is an entity reference that links via an FK suffix (e.g. "customer" -> customer_id, "stage" -> status_id)
+                fk_cand = _resolve_column(f"{col_term_clean}_id", table_meta)
+                if fk_cand and fk_cand in table_meta.columns:
+                    joined_match = next((j for j in joins if j.get("on_local") == fk_cand or j.get("fk_column") == fk_cand), None)
+                    if joined_match:
+                        j_meta = joined_metas.get(joined_match["table"])
+                        name_col = next((c for c in (j_meta.columns if j_meta else {}) if any(k in c.lower() for k in ("name", "title", "label"))), None)
+                        if name_col:
+                            fk_label = col_term_clean.replace("_", " ").title()
+                            select_parts.append(f"{q(joined_match['table'])}.{q(name_col)} AS {q(fk_label)}")
+                            continue
+                    if fk_cand in table_meta.enum_mappings:
+                        case_when = _build_enum_case_when(
+                            f"{base_alias}.{q(fk_cand)}", table_meta.enum_mappings[fk_cand]
+                        )
+                        label = col_term_clean.replace("_", " ").title()
+                        select_parts.append(f"{case_when} AS {q(label)}")
+                        continue
         else:
             # Default UI Columns from SemanticMapping or visible columns
             ui_columns_str = None
@@ -776,8 +825,9 @@ async def build_query(
         limit_clause = f"LIMIT {limit}"
 
     # ─── 9. Assemble the final SQL ───────────────────────────────────────────
+    distinct_clause = "DISTINCT " if join_clauses else ""
     select_str = ", ".join(select_parts)
-    sql = f"SELECT {select_str} {from_clause}"
+    sql = f"SELECT {distinct_clause}{select_str} {from_clause}"
 
     if join_clauses:
         sql += " " + " ".join(join_clauses)
