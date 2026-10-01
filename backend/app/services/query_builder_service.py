@@ -129,12 +129,26 @@ async def _load_table_metadata(
                 line = line.strip()
                 if not line or line.lower().startswith("table:"):
                     continue
+                if line.lower().startswith("columns:"):
+                    col_items = line.split(":", 1)[1].split(",")
+                    for ci in col_items:
+                        ci = ci.strip()
+                        c_name = ci.split("(")[0].strip(" -*`\"")
+                        if c_name and c_name.isidentifier() and c_name.lower() not in ("columns", "table") and c_name not in meta.columns:
+                            c_type = "string"
+                            if "(" in ci and ")" in ci:
+                                c_type = ci.split("(")[1].split(")")[0].strip()
+                            meta.columns[c_name] = {"type": c_type, "label": c_name.replace("_", " ").title()}
+                            if not meta.primary_date_column and any(dk in c_name.lower() for dk in ("date", "created_at", "timestamp")):
+                                meta.primary_date_column = c_name
+                    continue
+
                 col_name = None
                 if ":" in line:
                     col_name = line.split(":")[0].strip(" -*`\"")
                 elif "(" in line:
                     col_name = line.split("(")[0].strip(" -*`\"")
-                if col_name and col_name.isidentifier() and col_name not in meta.columns:
+                if col_name and col_name.isidentifier() and col_name.lower() not in ("columns", "table", "schema") and col_name not in meta.columns:
                     meta.columns[col_name] = {"type": "string", "label": col_name.replace("_", " ").title()}
                     if not meta.primary_date_column and any(dk in col_name.lower() for dk in ("date", "created_at", "timestamp")):
                         meta.primary_date_column = col_name
