@@ -123,17 +123,21 @@ async def _load_table_metadata(
         )
     )
     schema_entry = sm_meta_res.scalars().first()
-    if schema_entry and schema_entry.columns:
+    if schema_entry and getattr(schema_entry, "schema_definition", None):
         try:
-            cols = json.loads(schema_entry.columns) if isinstance(schema_entry.columns, str) else schema_entry.columns
-            if isinstance(cols, list):
-                for c in cols:
-                    c_name = c.get("name") if isinstance(c, dict) else str(c)
-                    if c_name and c_name not in meta.columns:
-                        c_type = c.get("type", "string") if isinstance(c, dict) else "string"
-                        meta.columns[c_name] = {"type": c_type, "label": c_name.replace("_", " ").title()}
-                        if not meta.primary_date_column and any(dk in c_name.lower() for dk in ("date", "created_at", "timestamp")):
-                            meta.primary_date_column = c_name
+            for line in schema_entry.schema_definition.splitlines():
+                line = line.strip()
+                if not line or line.lower().startswith("table:"):
+                    continue
+                col_name = None
+                if ":" in line:
+                    col_name = line.split(":")[0].strip(" -*`\"")
+                elif "(" in line:
+                    col_name = line.split("(")[0].strip(" -*`\"")
+                if col_name and col_name.isidentifier() and col_name not in meta.columns:
+                    meta.columns[col_name] = {"type": "string", "label": col_name.replace("_", " ").title()}
+                    if not meta.primary_date_column and any(dk in col_name.lower() for dk in ("date", "created_at", "timestamp")):
+                        meta.primary_date_column = col_name
         except Exception:
             pass
 
@@ -447,19 +451,19 @@ async def build_query(
 
     if action in ("count", "sum", "avg", "min", "max"):
         if action == "count":
-            select_parts.append(f"COUNT(*) AS `Total`")
+            select_parts.append(f"COUNT(*) AS {q('Total')}")
         elif action in ("sum", "avg", "min", "max"):
             agg_col = extracted.aggregate_column
             if agg_col:
                 resolved_col = _resolve_column(agg_col, table_meta)
                 if resolved_col:
                     agg_func = action.upper()
-                    select_parts.append(f"{agg_func}({base_alias}.{q(resolved_col)}) AS `{action}`")
+                    select_parts.append(f"{agg_func}({base_alias}.{q(resolved_col)}) AS {q(action)}")
                 else:
-                    select_parts.append(f"COUNT(*) AS `Total`")
+                    select_parts.append(f"COUNT(*) AS {q('Total')}")
                     action = "count"
             else:
-                select_parts.append(f"COUNT(*) AS `Total`")
+                select_parts.append(f"COUNT(*) AS {q('Total')}")
                 action = "count"
 
         # Add group_by column to SELECT if present (for count, sum, avg, etc.)
