@@ -277,6 +277,97 @@ async def debug_semantic_endpoint(
         "matches": matches[:30]
     }
 
+@router.get("/query-debug")
+async def query_debug_endpoint(
+    api_key: str = Query(...),
+    q: str = Query(..., description="Natural language query to test"),
+    session: AsyncSession = Depends(get_session)
+):
+    """
+    Diagnostic endpoint: runs the full deterministic query pipeline and returns
+    every intermediate step (intent, params, SQL, results) for debugging.
+    """
+    from app.services.intent_service import resolve_crud_intent
+    from app.services.param_extractor import extract_params
+    from app.services.query_builder_service import execute_deterministic_query, build_query
+    from app.core.context import current_db_url
+
+    result = await session.execute(select(ClientConfig).where(ClientConfig.api_key == api_key))
+    client = result.scalars().first()
+    if not client:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+
+    debug = {"client_id": client.id, "client_name": client.client_name, "query": q}
+
+    # Step 1: Intent Resolution
+    try:
+        intent = await resolve_crud_intent(q, client.id, session, mode="operations")
+        debug["step1_intent"] = intent
+    except Exception as e:
+        debug["step1_intent_error"] = str(e)
+        return debug
+
+    target_table = intent.get("entity") if intent else None
+    debug["resolved_table"] = target_table
+
+    # Step 2: Parameter Extraction
+    try:
+        token = current_db_url.set(client.db_connection_url)
+        try:
+            params = await extract_params(q, client.id, session, target_table=target_table)
+            debug["step2_params"] = {
+                "table": params.table,
+                "action": params.action,
+                "filters": params.filters,
+                "columns": params.columns,
+                "group_by": params.group_by,
+                "sort_by": params.sort_by,
+                "aggregate_column": params.aggregate_column,
+                "limit": params.limit
+            }
+        finally:
+            current_db_url.reset(token)
+    except Exception as e:
+        debug["step2_params_error"] = str(e)
+        return debug
+
+    # Step 3: SQL Build
+    try:
+        token = current_db_url.set(client.db_connection_url)
+        try:
+            query_result = await build_query(params, client.id, session)
+            debug["step3_sql"] = query_result.sql
+            debug["step3_table_filters"] = query_result.table_filters
+            debug["step3_display_title"] = query_result.display_title
+        finally:
+            current_db_url.reset(token)
+    except Exception as e:
+        debug["step3_sql_error"] = str(e)
+        import traceback
+        debug["step3_traceback"] = traceback.format_exc()
+        return debug
+
+    # Step 4: Execute SQL
+    try:
+        from app.tools.database import execute_sql_query
+        token = current_db_url.set(client.db_connection_url)
+        try:
+            records = await execute_sql_query(query_result.sql, table_filters=query_result.table_filters)
+        finally:
+            current_db_url.reset(token)
+
+        if isinstance(records, str):
+            debug["step4_error"] = records
+        else:
+            debug["step4_record_count"] = len(records) if isinstance(records, list) else 0
+            debug["step4_first_3_rows"] = records[:3] if isinstance(records, list) else records
+    except Exception as e:
+        debug["step4_execution_error"] = str(e)
+        import traceback
+        debug["step4_traceback"] = traceback.format_exc()
+
+    return debug
+
 @router.post("/semantic/purge")
 async def purge_semantic_endpoint(
     api_key: str = Query(...),
