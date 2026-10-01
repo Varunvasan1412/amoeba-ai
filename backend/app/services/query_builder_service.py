@@ -314,6 +314,8 @@ async def _build_joins(
     )
     dropdown_fields = fm_res.scalars().all()
     for df in dropdown_fields:
+        if not df.data_source_table:
+            continue
         ds_tbl = df.data_source_table.lower().strip()
         if ds_tbl not in already_joined:
             val_col = df.value_column or "id"

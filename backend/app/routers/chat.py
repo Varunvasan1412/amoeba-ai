@@ -516,6 +516,12 @@ async def execute_read_pipeline(
     fn_low = friendly_name.lower().strip()
     query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
     
+    # In this ERP, enquiry_header holds quotation records; quotation_header is an unpopulated skeleton table
+    if table_name and table_name.lower() == "quotation_header" and any(sm.database_table.lower() == "enquiry_header" for sm in all_sms):
+        print(f"🔄 [READ] Remapping unpopulated quotation_header -> enquiry_header")
+        table_name = "enquiry_header"
+        friendly_name = "Quotations"
+
     best_sm = None
     if table_name and table_name != "unknown_entity":
         for sm in all_sms:

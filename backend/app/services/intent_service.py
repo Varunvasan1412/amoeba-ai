@@ -132,13 +132,11 @@ def normalize_entity_name(name: Optional[str]) -> str:
         name = name[:-1]
 
     # 4. Common Business Term Normalization (ERP context)
-    # We do this AFTER singularization so "inquiries" -> "inquiry" -> "enquiry"
-    # and "soles" -> "sole" -> "sale"
-    name = name.replace("inquiry", "enquiry")
-    name = name.replace("quotation", "enquiry")
-    name = name.replace("quote", "enquiry")
-    name = name.replace("sole", "sale")
-    name = name.replace("ledger", "report")
+    name = re.sub(r'\binquir(y|ies)\b', 'enquiry', name)
+    name = re.sub(r'\bquotations?\b', 'enquiry', name)
+    name = re.sub(r'\bquotes?\b', 'enquiry', name)
+    name = re.sub(r'\bsoles?\b', 'sale', name)
+    name = re.sub(r'\bledgers?\b', 'report', name)
         
     return name
 
@@ -580,12 +578,17 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 raw_q_clean = re.sub(rf"\b{kw}\b", "", raw_q_clean).strip()
             raw_q_clean = strip_date_phrases(raw_q_clean)
 
-            raw_parts = re.split(r'\b(grouped\s+by|group\s+by|by|with|where|having|in|for)\b', raw_q_clean, flags=re.IGNORECASE)
+            SPLIT_PREPOSITIONS = r'\b(grouped\s+by|group\s+by|by|with\s+only|with|where|having|in|for|showing\s+only|showing|displaying|display|containing|contain|to\s+show)\b'
+            raw_parts = re.split(SPLIT_PREPOSITIONS, raw_q_clean, flags=re.IGNORECASE)
             raw_subject = raw_parts[0].strip() if raw_parts else raw_q_clean
+            raw_subject = re.sub(r'^(the|a|an)\s+', '', raw_subject, flags=re.IGNORECASE).strip()
+            raw_subject = re.sub(r'\b(table|data|records|rows|list)\b', '', raw_subject, flags=re.IGNORECASE).strip()
             raw_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', raw_subject)) - NON_ENTITY_WORDS}
 
-            norm_parts = re.split(r'\b(grouped\s+by|group\s+by|by|with|where|having|in|for)\b', clean_q, flags=re.IGNORECASE)
+            norm_parts = re.split(SPLIT_PREPOSITIONS, clean_q, flags=re.IGNORECASE)
             norm_subject = norm_parts[0].strip() if norm_parts else clean_q
+            norm_subject = re.sub(r'^(the|a|an)\s+', '', norm_subject, flags=re.IGNORECASE).strip()
+            norm_subject = re.sub(r'\b(table|data|records|rows|list)\b', '', norm_subject, flags=re.IGNORECASE).strip()
             norm_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', norm_subject)) - NON_ENTITY_WORDS}
 
             best_sm = None
@@ -602,6 +605,12 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                                     raw_aliases.append(str(s).strip())
                     except Exception:
                         pass
+                
+                # ERP Aliases: enquiry_header is standard for quotations in this ERP
+                if sm.database_table == "enquiry_header":
+                    for auto_alias in ["quotations", "quotation", "quote", "quotes", "sales quotation"]:
+                        if auto_alias not in raw_aliases:
+                            raw_aliases.append(auto_alias)
                 for alias in raw_aliases:
                     lbl = alias.lower().strip()
                     lbl_norm = normalize_entity_name(lbl)
@@ -847,8 +856,11 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
 
         # Strategy 1: Table Names
         if not detected_entity:
+            has_enquiry_header = any(t.get("name") == "enquiry_header" for t in all_tables)
             for t in all_tables:
                 t_raw = t["name"]
+                if t_raw == "quotation_header" and has_enquiry_header:
+                    continue
                 t_norm = normalize_entity_name(t_raw)
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if t_norm == norm_query or (t_base and t_base == norm_query):
@@ -887,6 +899,8 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
         if not detected_entity:
             for t in all_tables:
                 t_raw = t["name"]
+                if t_raw == "quotation_header" and has_enquiry_header:
+                    continue
                 t_norm = normalize_entity_name(t_raw)
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if (t_norm and t_norm in norm_query) or (t_base and len(t_base) >= 3 and re.search(rf"\b{re.escape(t_base)}\b", norm_query)):
