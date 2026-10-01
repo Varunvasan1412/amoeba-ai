@@ -370,36 +370,6 @@ async def _build_joins(
             })
             already_joined.add(h_parent_lower)
 
-    # 4. Heuristic FK Resolution for common suffix _id columns (e.g. city_id -> city table)
-    fm_all_tables_res = await session.execute(
-        select(FieldMetadata.table_name).where(FieldMetadata.client_id == client_id).distinct()
-    )
-    all_known_tables = {t.lower(): t for t in fm_all_tables_res.scalars().all() if t}
-    
-    base_fm_res = await session.execute(
-        select(FieldMetadata).where(
-            FieldMetadata.client_id == client_id,
-            FieldMetadata.table_name == base_table
-        )
-    )
-    for fm in base_fm_res.scalars().all():
-        c_low = fm.column_name.lower()
-        if c_low.endswith("_id") and c_low not in ("id", "client_id", "status_id", "log_status"):
-            cand_tbl_name = c_low[:-3]
-            possible_tables = [cand_tbl_name, f"master_{cand_tbl_name}", f"{cand_tbl_name}s", f"{cand_tbl_name}es"]
-            matched_parent = next((all_known_tables[pt] for pt in possible_tables if pt in all_known_tables and pt not in already_joined), None)
-            if matched_parent:
-                joins.append({
-                    "table": matched_parent,
-                    "alias": matched_parent,
-                    "local_table": base_table,
-                    "on_local": fm.column_name,
-                    "on_remote": "id",
-                    "columns": [],
-                    "fk_column": fm.column_name
-                })
-                already_joined.add(matched_parent.lower())
-
     return joins
 
 
@@ -893,12 +863,16 @@ async def execute_deterministic_query(
     # Build user-friendly message for aggregations
     user_message = ""
     if query_result.is_aggregation and records:
-        first_row = records[0] if isinstance(records, list) and records else {}
-        if isinstance(first_row, dict):
-            for key, val in first_row.items():
-                agg_label = key.replace("_", " ").title()
-                user_message = f"The {agg_label.lower()} is **{val}**."
-                break
+        if extracted.group_by:
+            gb_clean = extracted.group_by.replace("_id", "").replace("_", " ").title()
+            user_message = f"Here is the breakdown of **{query_result.display_title}** by **{gb_clean}**:"
+        else:
+            first_row = records[0] if isinstance(records, list) and records else {}
+            if isinstance(first_row, dict):
+                for key, val in first_row.items():
+                    agg_label = key.replace("_", " ").title()
+                    user_message = f"The {agg_label.lower()} is **{val}**."
+                    break
 
     return {
         "generated_sql": query_result.sql,

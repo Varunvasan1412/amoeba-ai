@@ -700,6 +700,10 @@ async def execute_read_pipeline(
         else:
             filters["aggregate"] = "count"
 
+        gb_match = re.search(r'\b(?:by|per|grouped by)\s+([a-zA-Z0-9_]+)', query_lower)
+        if gb_match and gb_match.group(1) not in ("day", "month", "year", "date", "status"):
+            filters["group_by"] = gb_match.group(1)
+
     result = await CRUDService.read_records(
         table_name=table_name, filters=filters if filters else None,
         limit=100, client_id=int(client_id), user_query=user_text
@@ -709,7 +713,18 @@ async def execute_read_pipeline(
     date_info = f"\n📅 Date range analyzed: **{date_start}** to **{date_end}**" if date_start else ""
     clean_friendly_name = friendly_name.replace("_", " ").title() if (friendly_name and "_" in friendly_name) else friendly_name
     actions_list = []
-    if isinstance(result, dict) and "aggregate" in result:
+    if isinstance(result, dict) and "grouped_results" in result:
+        records = result["grouped_results"]
+        if records:
+            response_text = f"Breakdown for **{clean_friendly_name}**.{date_info}"
+            headers = list(records[0].keys()) if records else []
+            actions_list.append({
+                "type": "data_table",
+                "payload": {"title": clean_friendly_name, "headers": headers, "rows": records, "total": len(records)}
+            })
+        else:
+            response_text = f"No records found in **{clean_friendly_name}** for the specified criteria.{date_info}"
+    elif isinstance(result, dict) and "aggregate" in result:
         response_text = f"**{clean_friendly_name}** — {result['aggregate'].upper()}: **{result['value']}**{date_info}"
     elif isinstance(result, dict) and "records" in result:
         records = result["records"]

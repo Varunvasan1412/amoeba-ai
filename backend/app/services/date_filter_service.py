@@ -86,13 +86,13 @@ def apply_smart_filters(
     has_text_filter = any(isinstance(v, dict) and v.get("op") in ["contains", "like", "ilike"] for v in filters.values())
     
     if not has_text_filter and not is_aggregation:
-        match = re.search(r'(?:contains|containing|is|labeled|called|word|showing)\s+(?:the\s+)?(?:word\s+)?(?:as\s+)?([a-zA-Z0-9_\-]+)', user_query_lower)
+        match = re.search(r'(?:contains|containing|labeled|called)\s+(?:the\s+)?(?:word\s+)?(?:as\s+)?([a-zA-Z0-9_\-]+)', user_query_lower)
         search_term = None
         if match:
             search_term = match.group(1).strip()
             search_term = re.sub(r'[?.!,]$', '', search_term)
 
-        if search_term and len(search_term) > 2:
+        if search_term and len(search_term) > 2 and search_term not in ("only", "all", "table", "records", "data", "columns", "rows", "items", "details", "list", "name"):
             search_col = get_best_search_column(table_name, client_id)
             if search_col:
                 filters[search_col] = {"op": "contains", "value": search_term}
