@@ -490,23 +490,47 @@ async def build_query(
                     select_parts.insert(0, f"{gb_target_alias}.{q(gb_col)} AS {q(gb_label)}")
     else:
         # LIST action — determine which columns to show
+        # Always include primary code/number/name and date columns if present
+        primary_identifiers = []
+        for col_name in table_meta.columns:
+            col_low = col_name.lower()
+            if any(k in col_low for k in ("number", "code", "no", "name", "title")) and col_low not in ("id", "log_status", "status_id"):
+                primary_identifiers.append(col_name)
+                break
+        if table_meta.primary_date_column and table_meta.primary_date_column not in primary_identifiers:
+            primary_identifiers.append(table_meta.primary_date_column)
+
         if extracted.columns:
-            # User requested specific columns
+            # User requested specific columns or "with X and Y"
+            selected_cols = list(primary_identifiers)
             for col_term in extracted.columns:
                 resolved = _resolve_column(col_term, table_meta)
-                if resolved:
-                    # Check for enum mapping
-                    if resolved in table_meta.enum_mappings:
+                if resolved and resolved not in selected_cols:
+                    selected_cols.append(resolved)
+
+            for col_name in selected_cols:
+                if col_name in table_meta.columns:
+                    # Check if this is a foreign key that can be replaced by joined name
+                    joined_match = next((j for j in joins if j.get("on_local") == col_name or j.get("fk_column") == col_name), None)
+                    if joined_match:
+                        j_meta = joined_metas.get(joined_match["table"])
+                        name_col = next((c for c in (j_meta.columns if j_meta else {}) if any(k in c.lower() for k in ("name", "title", "label"))), None)
+                        if name_col:
+                            fk_label = col_name.replace("_id", "").replace("_", " ").title()
+                            select_parts.append(f"{q(joined_match['table'])}.{q(name_col)} AS {q(fk_label)}")
+                            continue
+
+                    if col_name in table_meta.enum_mappings:
                         case_when = _build_enum_case_when(
-                            f"{base_alias}.{q(resolved)}", table_meta.enum_mappings[resolved]
+                            f"{base_alias}.{q(col_name)}", table_meta.enum_mappings[col_name]
                         )
-                        label = table_meta.columns.get(resolved, {}).get("label", resolved)
+                        label = table_meta.columns.get(col_name, {}).get("label", col_name)
                         select_parts.append(f"{case_when} AS {q(label)}")
                     else:
-                        label = table_meta.columns.get(resolved, {}).get("label", resolved)
-                        select_parts.append(f"{base_alias}.{q(resolved)} AS {q(label)}")
+                        label = table_meta.columns.get(col_name, {}).get("label", col_name)
+                        select_parts.append(f"{base_alias}.{q(col_name)} AS {q(label)}")
                 else:
-                    # Check if it's a column on a joined table
+                    # Check joined tables for this column term
                     for j in joins:
                         j_meta = joined_metas.get(j["table"])
                         if j_meta:
@@ -517,11 +541,9 @@ async def build_query(
                                 select_parts.append(f"{j_alias}.{q(j_resolved)} AS {q(j_label)}")
                                 break
         else:
-            # No specific columns — use ui_columns from SemanticMapping or default to visible fields
+            # Default UI Columns from SemanticMapping or visible columns
             ui_columns_str = None
             if semantic_mapping and semantic_mapping.ui_columns:
-                # Parse ui_columns — it's a comma-separated list of labels like "Quotation No, Date, Customer"
-                # Strip any [Filter: ...] annotations
                 raw_ui_cols = re.sub(r'\[Filter:.*?\]', '', semantic_mapping.ui_columns).strip().rstrip(",;")
                 ui_column_labels = [c.strip() for c in raw_ui_cols.split(",") if c.strip()]
                 ui_columns_str = ui_column_labels
@@ -538,8 +560,6 @@ async def build_query(
                         else:
                             select_parts.append(f"{base_alias}.{q(resolved)} AS {q(label)}")
                     else:
-                        # Could be a joined column label — check joined tables
-                        found_in_join = False
                         for j in joins:
                             j_meta = joined_metas.get(j["table"])
                             if j_meta:
@@ -547,16 +567,11 @@ async def build_query(
                                 if j_resolved:
                                     j_alias = q(j["table"])
                                     select_parts.append(f"{j_alias}.{q(j_resolved)} AS {q(label)}")
-                                    found_in_join = True
                                     break
-                        if not found_in_join:
-                            # Last resort: just try it as a raw column reference
-                            select_parts.append(f"{base_alias}.{q(label.lower().replace(' ', '_'))}")
             else:
-                # Fallback: select all visible columns from FieldMetadata
                 for col_name, col_info in table_meta.columns.items():
                     if col_name.lower() in ("id", "log_status", "created_by", "updated_by"):
-                        continue  # Skip internal columns
+                        continue
                     label = col_info.get("label", col_name)
                     if col_name in table_meta.enum_mappings:
                         case_when = _build_enum_case_when(
@@ -566,14 +581,12 @@ async def build_query(
                     else:
                         select_parts.append(f"{base_alias}.{q(col_name)} AS {q(label)}")
 
-            # Add readable columns from JOINs (replace raw FK IDs with names)
+            # Add readable name columns from JOINs
             for j in joins:
                 for join_col in j.get("columns", []):
                     j_meta = joined_metas.get(j["table"])
                     if j_meta and join_col in j_meta.columns:
                         j_label = j_meta.columns[join_col].get("label", join_col)
-                        # Create a nice alias: "Customer Name" instead of "customer_name"
-                        # Use the FK column name without _id as prefix
                         fk_base = j.get("fk_column", "").replace("_id", "").replace("_", " ").title()
                         alias_label = f"{fk_base} {j_label}" if fk_base else j_label
                         select_parts.append(f"{q(j['table'])}.{q(join_col)} AS {q(alias_label)}")

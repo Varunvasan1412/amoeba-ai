@@ -462,7 +462,7 @@ async def execute_read_pipeline(
     lbl_tokens = set(re.findall(r'[a-zA-Z0-9]+', (best_sm.ui_label if best_sm else "").lower()))
     generic_list_tokens = {
         "list", "show", "view", "get", "fetch", "all", "table", "records", "data", "entries", "rows",
-        "the", "a", "an", "of", "in", "for", "please", "display", "give", "me"
+        "the", "a", "an", "of", "in", "for", "please", "display", "give", "me", "with", "and", "having"
     }
     extra_filter_tokens = query_tokens - lbl_tokens - generic_list_tokens
     is_specific_or_analytical = has_analytical_intent or (len(extra_filter_tokens) >= 1)
