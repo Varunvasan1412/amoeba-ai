@@ -100,9 +100,12 @@ class EntitySelector:
         # 1. Exact match
         if q == t or q == t_raw: return 1.0
 
-        # 2. Extract primary subject clause before prepositions (with, by, grouped by, where, in, for)
-        subject_parts = re.split(r'\b(with|grouped\s+by|group\s+by|by|where|in|for)\b', q, flags=re.IGNORECASE)
+        # 2. Extract primary subject clause before prepositions (showing, with, by, grouped by, where, in, for)
+        SPLIT_PREPOSITIONS = r'\b(showing\s+only|showing|displaying\s+only|displaying|display|including|include|containing|contain|to\s+show|with\s+only|with|grouped\s+by|group\s+by|ordered\s+by|order\s+by|by|where|having|in|for)\b'
+        subject_parts = re.split(SPLIT_PREPOSITIONS, q, flags=re.IGNORECASE)
         subject_clause = subject_parts[0].strip() if subject_parts else q
+        subject_clause = re.sub(r'^(the|a|an|all|any|recent|latest)\s+', '', subject_clause).strip()
+        subject_clause = re.sub(r'\b(table|data|records|rows|list|entries)\b', '', subject_clause).strip()
         
         if subject_clause:
             subj_tokens = set(re.findall(r'[a-zA-Z0-9]+', subject_clause))
@@ -161,12 +164,47 @@ class EntitySelector:
                 return 4
             return 5
 
-        # --- 1. Match Semantic Mappings (Priority 1) ---
+        # --- 1. Match Semantic Mappings (Priority 1 - Admin Governed Ground Truth) ---
         from app.models.semantic_mapping import SemanticMapping
+        from app.services.intent_service import NON_ENTITY_WORDS, _stem_token
         import json
         sm_stmt = select(SemanticMapping).where(SemanticMapping.client_id == client_id)
         sm_result = await session.execute(sm_stmt)
-        for sm in sm_result.scalars().all():
+        all_sms = sm_result.scalars().all()
+
+        governed_concepts: Dict[str, str] = {}
+        for sm in all_sms:
+            g_tbl = sm.database_table
+            g_aliases = [a.strip().lower() for a in (sm.ui_label or "").split(",") if a.strip()]
+            if getattr(sm, "synonyms", None):
+                try:
+                    s_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                    if isinstance(s_list, list):
+                        g_aliases.extend([str(s).strip().lower() for s in s_list if s and str(s).strip()])
+                except Exception:
+                    pass
+            for a in g_aliases:
+                governed_concepts[a] = g_tbl
+                governed_concepts[normalize_entity_name(a)] = g_tbl
+                for w in re.findall(r'[a-zA-Z0-9]+', a):
+                    if len(w) >= 3 and w not in NON_ENTITY_WORDS:
+                        governed_concepts[w] = g_tbl
+                        governed_concepts[_stem_token(w)] = g_tbl
+
+        def _resolve_governed(cand_tbl: str, cand_label: str) -> Tuple[str, str]:
+            if not cand_tbl or not governed_concepts:
+                return cand_tbl, cand_label
+            c_norm = normalize_entity_name(cand_tbl)
+            c_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', c_norm)
+            for kw, gov_tbl in governed_concepts.items():
+                if kw in clean_query or kw in norm_query or kw in c_norm or (c_base and kw in c_base) or c_norm in kw:
+                    if cand_tbl.lower() != gov_tbl.lower():
+                        gov_label = next((s.ui_label.split(',')[0].strip() for s in all_sms if s.database_table.lower() == gov_tbl.lower()), cand_label)
+                        print(f"🛡️ [SELECTOR GOVERNANCE] Overriding '{cand_tbl}' -> Governed '{gov_tbl}' ({gov_label})")
+                        return gov_tbl, gov_label
+            return cand_tbl, cand_label
+
+        for sm in all_sms:
             sm_mod = table_module_map.get(sm.database_table)
             if context_module and sm_mod and context_module.lower() != sm_mod.lower():
                 continue
@@ -199,9 +237,10 @@ class EntitySelector:
             score = get_match_score(clean_query, item.label)
             if score > 0:
                 prio = determine_priority(2, score, item.module)
-                match_key = item.table_name if item.table_name else f"nav_path:{item.path}"
-                if not any(m["table_name"] == match_key for m in matches):
-                    matches.append({"table_name": match_key, "label": item.label, "module": item.module, "priority": prio, "score": score, "strategy": "Navigation"})
+                match_tbl = item.table_name if item.table_name else f"nav_path:{item.path}"
+                match_tbl, match_lbl = _resolve_governed(match_tbl, item.label)
+                if not any(m["table_name"] == match_tbl for m in matches):
+                    matches.append({"table_name": match_tbl, "label": match_lbl, "module": item.module, "priority": prio, "score": score, "strategy": "Navigation"})
 
         # --- 3. Match Semantic Metadata (Priority 3) ---
         sem_stmt = select(SemanticMetadata).where(
@@ -219,16 +258,18 @@ class EntitySelector:
             score = get_match_score(clean_query, sem.label)
             if score > 0:
                 prio = determine_priority(3, score, sem_mod)
-                if not any(m["table_name"] == sem.table_name for m in matches):
-                    matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": score, "strategy": "Semantic Label"})
+                match_tbl, match_lbl = _resolve_governed(sem.table_name, sem.label)
+                if not any(m["table_name"] == match_tbl for m in matches):
+                    matches.append({"table_name": match_tbl, "label": match_lbl, "module": sem_mod, "priority": prio, "score": score, "strategy": "Semantic Label"})
             
             if sem.synonyms:
                 for syn in sem.synonyms:
                     syn_score = get_match_score(clean_query, syn)
                     if syn_score > 0:
                         prio = determine_priority(3, syn_score, sem_mod)
-                        if not any(m["table_name"] == sem.table_name for m in matches):
-                            matches.append({"table_name": sem.table_name, "label": sem.label, "module": sem_mod, "priority": prio, "score": syn_score, "strategy": "Semantic Synonym"})
+                        match_tbl, match_lbl = _resolve_governed(sem.table_name, sem.label)
+                        if not any(m["table_name"] == match_tbl for m in matches):
+                            matches.append({"table_name": match_tbl, "label": match_lbl, "module": sem_mod, "priority": prio, "score": syn_score, "strategy": "Semantic Synonym"})
 
         # --- 4. Match Raw Table Names (Fallback) ---
         for table in available_tables:
@@ -241,8 +282,10 @@ class EntitySelector:
             score = get_match_score(clean_query, table)
             if score > 0:
                 prio = determine_priority(5, score, tab_mod)
-                if not any(m["table_name"] == table for m in matches):
-                    matches.append({"table_name": table, "label": EntitySelector.format_table_label(table), "module": tab_mod, "priority": prio, "score": score, "strategy": "Raw Table"})
+                raw_lbl = EntitySelector.format_table_label(table)
+                match_tbl, match_lbl = _resolve_governed(table, raw_lbl)
+                if not any(m["table_name"] == match_tbl for m in matches):
+                    matches.append({"table_name": match_tbl, "label": match_lbl, "module": tab_mod, "priority": prio, "score": score, "strategy": "Raw Table"})
 
         # --- Step 5: Handle Missing Entity ---
         if not matches:

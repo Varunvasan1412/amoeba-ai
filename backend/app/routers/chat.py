@@ -513,8 +513,18 @@ async def execute_read_pipeline(
     all_sms = (await local_session.execute(sm_stmt)).scalars().all()
     
     user_q_low = user_text.lower().strip()
-    fn_low = friendly_name.lower().strip()
+    fn_low = friendly_name.lower().strip() if friendly_name else ""
     query_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_q_low)) - NON_ENTITY_WORDS
+
+    # Isolate primary query subject before projection/filter prepositions (showing, with, where, by, etc.)
+    from app.services.intent_service import _stem_token
+    SPLIT_PREPOSITIONS = r'\b(showing\s+only|showing|displaying\s+only|displaying|display|including|include|containing|contain|to\s+show|with\s+only|with|grouped\s+by|group\s+by|ordered\s+by|order\s+by|by|where|having|in|for)\b'
+    subj_parts = re.split(SPLIT_PREPOSITIONS, user_q_low, flags=re.IGNORECASE)
+    user_subject = subj_parts[0].strip() if subj_parts else user_q_low
+    user_subject = re.sub(r'^(the|a|an|all|any|recent|latest)\s+', '', user_subject).strip()
+    user_subject = re.sub(r'\b(table|data|records|rows|list|entries)\b', '', user_subject).strip()
+    subj_tokens = set(re.findall(r'[a-zA-Z0-9]+', user_subject)) - NON_ENTITY_WORDS
+    stemmed_subj_toks = {_stem_token(t) for t in subj_tokens}
     
     # UNIVERSAL GOVERNANCE ALIGNMENT:
     # 1. Check if the incoming table_name directly matches an Admin-governed SemanticMapping
@@ -540,26 +550,35 @@ async def execute_read_pipeline(
         for alias in raw_aliases:
             sm_lbl = alias.lower().strip()
             sm_toks = set(re.findall(r'[a-zA-Z0-9]+', sm_lbl)) - NON_ENTITY_WORDS
+            stemmed_sm_toks = {_stem_token(t) for t in sm_toks}
             
             score = 0
-            if sm_lbl == fn_low or sm_lbl == user_q_low:
-                score += 100
+            if sm_lbl == user_subject or (stemmed_sm_toks and stemmed_sm_toks == stemmed_subj_toks):
+                score += 120
+            elif sm_lbl in user_subject or user_subject in sm_lbl:
+                score += 80
+            elif stemmed_sm_toks and (stemmed_sm_toks.issubset(stemmed_subj_toks) or stemmed_subj_toks.issubset(stemmed_sm_toks)):
+                score += 70
             elif sm_lbl in user_q_low or user_q_low in sm_lbl:
-                score += 50
+                score += 40
             
             overlap = query_tokens.intersection(sm_toks)
-            score += len(overlap) * 20
+            score += len(overlap) * 15
             diff = sm_toks - query_tokens
             score -= len(diff) * 5
             
-            if score > best_score and score >= 15:
+            # Penalize if this label only appeared in secondary projection clauses (e.g. "showing customer name")
+            if len(subj_parts) > 1 and not (sm_lbl in user_subject or (stemmed_sm_toks and stemmed_sm_toks.intersection(stemmed_subj_toks))):
+                score -= 35
+            
+            if score > best_score and score >= 20:
                 best_score = score
                 matched_query_sm = sm
 
     # 3. Dynamic Override: If the query matched a Governed Concept, but incoming table_name
     # is unmapped or a competing skeleton/legacy table, prioritize the Governed Concept!
     if matched_query_sm:
-        if not best_sm or (best_sm.database_table.lower() != matched_query_sm.database_table.lower() and best_score >= 40):
+        if not best_sm or (best_sm.database_table.lower() != matched_query_sm.database_table.lower() and best_score >= 35):
             print(f"🔄 [GOVERNANCE] Re-aligning unmapped/skeleton table '{table_name}' -> Governed Table '{matched_query_sm.database_table}' ({matched_query_sm.ui_label})")
             best_sm = matched_query_sm
             table_name = matched_query_sm.database_table

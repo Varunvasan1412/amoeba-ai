@@ -343,6 +343,51 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
             norm_subject = re.sub(r'\b(table|data|records|rows|list|entries)\b', '', norm_subject, flags=re.IGNORECASE).strip()
             norm_subj_toks = {_stem_token(t) for t in set(re.findall(r'[a-zA-Z0-9]+', norm_subject)) - NON_ENTITY_WORDS}
 
+            # Universal Governance Guard: Build dynamic dictionary of Admin-Governed Concepts
+            # A raw physical or skeleton table must NEVER usurp an entity that the admin mapped in Semantic Mappings!
+            governed_concepts: Dict[str, str] = {}
+            if sm_all:
+                for sm in sm_all:
+                    g_tbl = sm.database_table
+                    g_aliases = [a.strip().lower() for a in (sm.ui_label or "").split(",") if a.strip()]
+                    if getattr(sm, "synonyms", None):
+                        try:
+                            s_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
+                            if isinstance(s_list, list):
+                                g_aliases.extend([str(s).strip().lower() for s in s_list if s and str(s).strip()])
+                        except Exception:
+                            pass
+                    for a in g_aliases:
+                        governed_concepts[a] = g_tbl
+                        governed_concepts[normalize_entity_name(a)] = g_tbl
+                        for w in re.findall(r'[a-zA-Z0-9]+', a):
+                            if len(w) >= 3 and w not in NON_ENTITY_WORDS:
+                                governed_concepts[w] = g_tbl
+                                governed_concepts[_stem_token(w)] = g_tbl
+
+            def _resolve_governed_or_raw(candidate_tbl: str) -> str:
+                if not candidate_tbl or not governed_concepts:
+                    return candidate_tbl
+                cand_norm = normalize_entity_name(candidate_tbl)
+                cand_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', cand_norm)
+                for concept_kw, gov_tbl in governed_concepts.items():
+                    if (
+                        concept_kw in raw_subject or concept_kw in norm_subject or
+                        concept_kw in cand_norm or (cand_base and concept_kw in cand_base) or
+                        cand_norm in concept_kw or (cand_base and cand_base in concept_kw)
+                    ):
+                        if candidate_tbl.lower() != gov_tbl.lower():
+                            print(f"🛡️ [GOVERNANCE] Overriding unmapped/sitemap table '{candidate_tbl}' -> Governed Table '{gov_tbl}' for concept '{concept_kw}'")
+                            return gov_tbl
+                return candidate_tbl
+
+            def _get_governed_label(tbl: str, fallback: str) -> str:
+                if tbl and sm_all:
+                    for sm in sm_all:
+                        if sm.database_table.lower() == tbl.lower():
+                            return sm.ui_label.split(",")[0].strip()
+                return fallback
+
             # --- TAB DISAMBIGUATION CHECK ---
             # If the user asks for a general entity or screen that has multiple tabs/stages
             # (e.g. "grn inspection", "quotations", "invoices", "delivery challan") and did NOT specify a discriminating tab:
@@ -793,9 +838,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     if not nav.table_name: continue
                     nav_label_norm = normalize_entity_name(nav.label)
                     if q == nav_label_norm:
-                        detected_entity = nav.table_name
+                        detected_entity = _resolve_governed_or_raw(nav.table_name)
                         detected_url = nav.path
-                        detected_label = nav.label
+                        detected_label = _get_governed_label(detected_entity, nav.label)
                         detected_module = nav.module
                         print(f"🎯 [INTENT] Direct Nav Label Match: '{nav.label}' -> {detected_entity} (Module: {detected_module})")
                         break
@@ -843,9 +888,9 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                         best_nav_match = nav
                         
             if best_nav_match:
-                detected_entity = best_nav_match.table_name
+                detected_entity = _resolve_governed_or_raw(best_nav_match.table_name)
                 detected_url = best_nav_match.path
-                detected_label = best_nav_match.label
+                detected_label = _get_governed_label(detected_entity, best_nav_match.label)
                 detected_module = best_nav_match.module
                 print(f"🎯 [INTENT] Word-Overlap Nav Match: '{best_nav_match.label}' -> {detected_entity} (Score: {best_nav_score:.2f}, Module: {detected_module})")
             else:
@@ -865,52 +910,21 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 sem_norm = normalize_entity_name(sem.label.lower().strip()) if sem.label else ""
                 print(f"DEBUG [INTENT] Strategy 0: label='{sem.label}' sem_norm='{sem_norm}' table='{sem.table_name}' match={sem_norm == norm_query}")
                 if sem_norm == norm_query:
-                    detected_entity = sem.table_name
+                    detected_entity = _resolve_governed_or_raw(sem.table_name)
+                    detected_label = _get_governed_label(detected_entity, sem.label)
                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
-                    print(f"🎯 [INTENT] Semantic label exact match: '{sem.label}' -> {sem.table_name} (Module: {detected_module})")
+                    print(f"🎯 [INTENT] Semantic label exact match: '{sem.label}' -> {detected_entity} (Module: {detected_module})")
                     break
                 if sem.synonyms:
                     for syn in sem.synonyms:
                         if normalize_entity_name(syn.lower().strip()) == norm_query:
-                            detected_entity = sem.table_name
+                            detected_entity = _resolve_governed_or_raw(sem.table_name)
+                            detected_label = _get_governed_label(detected_entity, sem.label)
                             detected_module = await resolve_module_for_table(detected_entity, client_id, session)
-                            print(f"🎯 [INTENT] Semantic synonym match: '{syn}' -> {sem.table_name} (Module: {detected_module})")
+                            print(f"🎯 [INTENT] Semantic synonym match: '{syn}' -> {detected_entity} (Module: {detected_module})")
                             break
                     if detected_entity:
                         break
-
-        # Universal Governance Guard: Build dynamic dictionary of Admin-Governed Concepts
-        # A raw physical table must NEVER usurp an entity that the admin mapped in Semantic Mappings!
-        governed_concepts: Dict[str, str] = {}
-        if sm_all:
-            for sm in sm_all:
-                g_tbl = sm.database_table
-                g_aliases = [a.strip().lower() for a in (sm.ui_label or "").split(",") if a.strip()]
-                if getattr(sm, "synonyms", None):
-                    try:
-                        s_list = json.loads(sm.synonyms) if isinstance(sm.synonyms, str) else sm.synonyms
-                        if isinstance(s_list, list):
-                            g_aliases.extend([str(s).strip().lower() for s in s_list if s and str(s).strip()])
-                    except Exception:
-                        pass
-                for a in g_aliases:
-                    governed_concepts[a] = g_tbl
-                    governed_concepts[normalize_entity_name(a)] = g_tbl
-                    for w in re.findall(r'[a-zA-Z0-9]+', a):
-                        if len(w) >= 3 and w not in NON_ENTITY_WORDS:
-                            governed_concepts[w] = g_tbl
-                            governed_concepts[_stem_token(w)] = g_tbl
-
-        def _resolve_governed_or_raw(candidate_tbl: str) -> str:
-            if not candidate_tbl or not governed_concepts:
-                return candidate_tbl
-            cand_norm = normalize_entity_name(candidate_tbl)
-            for concept_kw, gov_tbl in governed_concepts.items():
-                if concept_kw in raw_subject or concept_kw in norm_subject or concept_kw in cand_norm:
-                    if candidate_tbl.lower() != gov_tbl.lower():
-                        print(f"🛡️ [GOVERNANCE] Overriding unmapped table '{candidate_tbl}' -> Governed Table '{gov_tbl}' for concept '{concept_kw}'")
-                        return gov_tbl
-            return candidate_tbl
 
         # Strategy 1: Table Names
         if not detected_entity:
@@ -920,6 +934,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if t_norm == norm_query or (t_base and t_base == norm_query):
                     detected_entity = _resolve_governed_or_raw(t_raw)
+                    detected_label = _get_governed_label(detected_entity, detected_label)
                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                     break
 
@@ -929,9 +944,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 if normalize_entity_name(nav.label) == norm_query or normalize_entity_name(nav.module) == norm_query:
                     if detected_intent != "navigate" and not nav.table_name:
                         continue
-                    detected_entity = nav.table_name or nav.label
+                    raw_candidate = nav.table_name or nav.label
+                    detected_entity = _resolve_governed_or_raw(raw_candidate)
                     detected_url = nav.path
-                    detected_label = nav.label
+                    detected_label = _get_governed_label(detected_entity, nav.label)
                     detected_module = nav.module or await resolve_module_for_table(detected_entity, client_id, session)
                     break
         
@@ -942,9 +958,10 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 if nav_norm in norm_query or nav.path.lower() in norm_query:
                     if detected_intent != "navigate" and not nav.table_name:
                         continue
-                    detected_entity = nav.table_name or nav.label
+                    raw_candidate = nav.table_name or nav.label
+                    detected_entity = _resolve_governed_or_raw(raw_candidate)
                     detected_url = nav.path
-                    detected_label = nav.label
+                    detected_label = _get_governed_label(detected_entity, nav.label)
                     detected_module = nav.module or await resolve_module_for_table(detected_entity, client_id, session)
                     break
 
@@ -956,6 +973,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                 t_base = re.sub(r'(_header|_detail|_details|_mst|_master|_lines|_items)$', '', t_norm)
                 if (t_norm and t_norm in norm_query) or (t_base and len(t_base) >= 3 and re.search(rf"\b{re.escape(t_base)}\b", norm_query)):
                     detected_entity = _resolve_governed_or_raw(t_raw)
+                    detected_label = _get_governed_label(detected_entity, detected_label)
                     detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                     break
                      
@@ -1002,6 +1020,7 @@ async def resolve_crud_intent(query: str, client_id: int, session: AsyncSession,
                     
             if best_ratio >= 0.80 and best_table:
                 detected_entity = _resolve_governed_or_raw(best_table)
+                detected_label = _get_governed_label(detected_entity, detected_label)
                 detected_module = await resolve_module_for_table(detected_entity, client_id, session)
                 print(f"🎯 [INTENT] Fuzzy subphrase match found: '{norm_query}' -> {detected_entity} (ratio: {best_ratio:.2f})")
                      
