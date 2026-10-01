@@ -634,8 +634,8 @@ async def execute_read_pipeline(
                 actions_list.append({
                     "type": "query_insight",
                     "payload": {
-                        "engine": "deterministic" if source == "QUERY_BUILDER" else "rag",
-                        "engine_label": "⚡ Deterministic Engine" if source == "QUERY_BUILDER" else "🧠 Semantic RAG",
+                        "engine": "deterministic" if engine_name == "QUERY_BUILDER" else "rag",
+                        "engine_label": "⚡ Deterministic Engine" if engine_name == "QUERY_BUILDER" else "🧠 Semantic RAG",
                         "table": display_title
                     }
                 })
@@ -660,7 +660,7 @@ async def execute_read_pipeline(
             "text": response_text, 
             "actions": actions_list, 
             "type": "chat_response",
-            "engine": "deterministic" if source == "QUERY_BUILDER" else "rag"
+            "engine": "deterministic" if engine_name == "QUERY_BUILDER" else "rag"
         })
         await websocket.send_json({"type": "done", "session_id": s_id})
         return True
