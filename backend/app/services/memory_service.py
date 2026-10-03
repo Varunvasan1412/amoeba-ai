@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from app.models.chat import ChatMessage
 from app.models.chat_memory import ChatMemory
@@ -54,7 +54,7 @@ async def trigger_compression_task(session_id: str, client_id: int):
         
         new_summary = await provider.generate_response(prompt, system_prompt)
         memory.summary = new_summary
-        memory.updated_at = datetime.utcnow()
+        memory.updated_at = datetime.now(timezone.utc)
         
         if is_new:
             db_session.add(memory)

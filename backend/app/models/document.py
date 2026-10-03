@@ -1,5 +1,5 @@
 from typing import Optional, List, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field, Column
 from sqlalchemy.dialects.postgresql import UUID
 
@@ -14,7 +14,7 @@ class Document(SQLModel, table=True):
     filename: str
     file_type: str
     file_size: int
-    upload_time: datetime = Field(default_factory=datetime.utcnow)
+    upload_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = Field(default="UPLOADING")
     chunk_count: int = Field(default=0)
     error_message: Optional[str] = Field(default=None)

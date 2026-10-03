@@ -8,7 +8,7 @@ from app.services.relationship_service import get_relationship_graph
 from app.services.audit_service import log_audit
 from sqlmodel import select
 from app.core.auth_deps import get_current_active_admin
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 router = APIRouter(
@@ -136,7 +136,7 @@ async def save_report(
             existing_report.sql_template = sql_string
             existing_report.builder_definition = definition # NOW PERSISTED!
             
-            existing_report.updated_at = datetime.utcnow()
+            existing_report.updated_at = datetime.now(timezone.utc)
             session.add(existing_report)
             await session.commit()
             await session.refresh(existing_report)
@@ -168,7 +168,7 @@ async def save_report(
                 existing_report.display_name = report_name
                 existing_report.sql_template = sql_string
                 existing_report.builder_definition = definition
-                existing_report.updated_at = datetime.utcnow()
+                existing_report.updated_at = datetime.now(timezone.utc)
                 session.add(existing_report)
                 await session.commit()
                 await session.refresh(existing_report)

@@ -7,7 +7,7 @@ class ClientConfig(SQLModel, table=True):
     client_name: str = Field(unique=True, index=True)
     company_code: Optional[str] = Field(default=None, unique=True, index=True, nullable=True)
     db_connection_url: Optional[str] = Field(default="")
-    created_at: str = Field(default_factory=lambda: __import__("datetime").datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat())
     is_active: bool = Field(default=True)
     total_tokens_used: int = Field(default=0)
     # In production, ENCRYPT this column!

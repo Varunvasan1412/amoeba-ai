@@ -1,6 +1,6 @@
 from typing import Optional, Dict, Any
 from sqlmodel import SQLModel, Field, Column, JSON
-from datetime import datetime
+from datetime import datetime, timezone
 
 class ConversationState(SQLModel, table=True):
     __tablename__ = "conversation_state"
@@ -14,5 +14,5 @@ class ConversationState(SQLModel, table=True):
     view_mode: str = Field(default="table")
     current_step: str
     collected_data: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -150,11 +150,11 @@ async def init_db():
                 "SELECT column_name FROM information_schema.columns WHERE table_name = 'clientconfig' AND column_name = 'created_at'"
             ))
             if not res.fetchone():
-                now = __import__("datetime").datetime.utcnow().isoformat()
+                now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
                 await conn.execute(text(f"ALTER TABLE clientconfig ADD COLUMN created_at VARCHAR(255) DEFAULT '{now}'"))
             
             # Ensure no NULLs in existing rows
-            now = __import__("datetime").datetime.utcnow().isoformat()
+            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
             await conn.execute(text(f"UPDATE clientconfig SET created_at = '{now}' WHERE created_at IS NULL"))
             
             # Check for total_tokens_used

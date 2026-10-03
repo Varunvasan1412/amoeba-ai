@@ -9,7 +9,7 @@ from app.services.crud_service import CRUDService
 from app.services.smart_form_service import SmartFormService
 from app.services.record_selector_service import RecordSelectorService
 from sqlalchemy import inspect, create_engine
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 import traceback
@@ -120,7 +120,7 @@ async def process_conversation(
     # Update existing state with latest view_mode preference
     if state:
         state.view_mode = view_mode
-        state.updated_at = datetime.utcnow()
+        state.updated_at = datetime.now(timezone.utc)
         db_session.add(state)
         await db_session.commit()
     
@@ -292,7 +292,7 @@ async def process_conversation(
                 state.entity_name = clean_in
 
         state.current_step = "start"
-        state.updated_at = datetime.utcnow()
+        state.updated_at = datetime.now(timezone.utc)
         if state.collected_data and "original_query" in state.collected_data:
             user_input = state.collected_data["original_query"]
         db_session.add(state)

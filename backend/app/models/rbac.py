@@ -1,6 +1,6 @@
 from typing import List, Optional
 from sqlmodel import SQLModel, Field, Relationship
-from datetime import datetime
+from datetime import datetime, timezone
 
 class RolePermissionLink(SQLModel, table=True):
     __tablename__ = "role_permissions"
@@ -21,7 +21,7 @@ class Role(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     description: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # NULL client_id means it's a platform-wide global role
     client_id: Optional[int] = Field(default=None, foreign_key="clientconfig.id")

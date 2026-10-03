@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import SQLModel, Field, UniqueConstraint
 from sqlalchemy import Column, DateTime, text
@@ -37,10 +37,10 @@ class FieldMetadata(SQLModel, table=True):
     
     # Audit
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"))
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), onupdate=text("now()"))
     )

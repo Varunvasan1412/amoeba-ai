@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 
 class ApprovedJoinPath(SQLModel, table=True):
     __tablename__ = "approved_join_paths"
@@ -18,4 +18,4 @@ class ApprovedJoinPath(SQLModel, table=True):
     is_enabled: bool = Field(default=True)
     approved_by: Optional[str] = Field(default=None) # User email/ID
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import SQLModel, Field
 from sqlalchemy import Column, DateTime, text
@@ -15,10 +15,10 @@ class AISettings(SQLModel, table=True):
     max_tokens: int = Field(default=2048)
     
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"))
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), onupdate=text("now()"))
     )

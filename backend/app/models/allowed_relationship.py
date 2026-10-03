@@ -1,6 +1,6 @@
 from typing import Optional, List
 from sqlmodel import SQLModel, Field, Column, JSON
-from datetime import datetime
+from datetime import datetime, timezone
 
 class AllowedRelationship(SQLModel, table=True):
     __tablename__ = "allowed_relationships"
@@ -29,4 +29,4 @@ class AllowedRelationship(SQLModel, table=True):
     risk_level: str = Field(default="safe") # safe | heuristic | circular | high_cardinality
     confidence_score: float = Field(default=1.0) # 1.0 = Explicit, <1.0 = Heuristic
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

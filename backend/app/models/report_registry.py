@@ -1,5 +1,5 @@
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field, Column, JSON
 from sqlalchemy import UniqueConstraint
 
@@ -19,5 +19,5 @@ class ReportRegistry(SQLModel, table=True):
     date_column: Optional[str] = None
     output_format: str = Field(default="xlsx")
     
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

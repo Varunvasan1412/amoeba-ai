@@ -1,7 +1,7 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
-from datetime import datetime
+from datetime import datetime, timezone
 from app.models.report_registry import ReportRegistry
 
 async def register_reports(session: AsyncSession, client_id: int, reports: List[Dict[str, Any]]):
@@ -32,7 +32,7 @@ async def register_reports(session: AsyncSession, client_id: int, reports: List[
             # Optional fields - must be nullable/cleared if missing
             existing.date_column = report_data.get("date_column") # Set to None if missing
             
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
             
             session.add(existing)
         else:

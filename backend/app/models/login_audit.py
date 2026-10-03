@@ -1,6 +1,6 @@
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, DateTime, String
 
 class LoginAudit(SQLModel, table=True):
@@ -16,6 +16,6 @@ class LoginAudit(SQLModel, table=True):
     status: str # SUCCESS | FAILED
     failure_reason: Optional[str] = None
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column=Column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     )

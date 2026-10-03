@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field, Column, JSON
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 class ChatMemory(SQLModel, table=True):
     __tablename__ = "chat_memory"
@@ -10,4 +10,4 @@ class ChatMemory(SQLModel, table=True):
     client_id: int = Field(index=True)
     summary: str = Field(default="")
     entities_discussed: Optional[List[str]] = Field(default=[], sa_column=Column(JSON))
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

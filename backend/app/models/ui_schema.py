@@ -1,6 +1,6 @@
 from sqlmodel import SQLModel, Field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 class UISchemaCache(SQLModel, table=True):
     __tablename__ = "ui_schema_cache"
@@ -11,4 +11,4 @@ class UISchemaCache(SQLModel, table=True):
     field_name: str # e.g. customer_id
     label: str # e.g. Customer Name
     field_type: str # e.g. text, select
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

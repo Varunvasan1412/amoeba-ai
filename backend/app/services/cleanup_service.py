@@ -1,6 +1,6 @@
 import os
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.document import Document, DocumentChunk
@@ -29,7 +29,7 @@ async def run_cleanup():
 
             # 2. STATUS TIMEOUT PROTECTION (Step 8)
             # Mark documents in PROCESSING for > 10 minutes as FAILED
-            ten_mins_ago = datetime.utcnow() - timedelta(minutes=10)
+            ten_mins_ago = datetime.now(timezone.utc) - timedelta(minutes=10)
             timeout_stmt = select(Document).where(
                 Document.status == "PROCESSING",
                 Document.upload_time < ten_mins_ago
