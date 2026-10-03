@@ -1,3 +1,4 @@
+import re
 import json
 import logging
 from typing import Dict, Any, Optional, List
@@ -12,6 +13,61 @@ from app.models.crud_schema import CrudOperation
 logger = logging.getLogger(__name__)
 
 class CrudLlmService:
+    @staticmethod
+    def _extract_json_from_llm(raw: str) -> Optional[Dict[str, Any]]:
+        """
+        Robustly extracts and parses JSON from LLM output, handling markdown blocks,
+        leading text/thoughts, JS comments, and trailing commas.
+        """
+        if not raw:
+            return None
+        text = str(raw).strip()
+
+        # 1. Strip markdown code fences anywhere in the string
+        if "```json" in text:
+            try:
+                text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+            except Exception:
+                pass
+        elif "```" in text:
+            try:
+                text = text.split("```", 1)[1].split("```", 1)[0].strip()
+            except Exception:
+                pass
+
+        # 2. Strip JS/C-style line comments (// ...) and block comments (/* ... */)
+        text = re.sub(r'//.*?\n', '\n', text)
+        text = re.sub(r'/\*.*?\*/', '', text, flags=re.DOTALL)
+
+        # 3. Strip trailing commas before closing braces/brackets
+        text = re.sub(r',\s*\}', '}', text)
+        text = re.sub(r',\s*\]', ']', text)
+
+        # 4. Direct JSON parsing
+        try:
+            res = json.loads(text.strip())
+            if isinstance(res, dict):
+                return res
+        except Exception:
+            pass
+
+        # 5. Regex extraction for the outer-most {...} block
+        m = re.search(r'(\{[\s\S]*\})', text)
+        if m:
+            cand = m.group(1).strip()
+            cand = re.sub(r'//.*?\n', '\n', cand)
+            cand = re.sub(r'/\*.*?\*/', '', cand, flags=re.DOTALL)
+            cand = re.sub(r',\s*\}', '}', cand)
+            cand = re.sub(r',\s*\]', ']', cand)
+            try:
+                res = json.loads(cand)
+                if isinstance(res, dict):
+                    return res
+            except Exception:
+                pass
+
+        return None
+
     @staticmethod
     async def _get_field_metadata(session: AsyncSession, client_id: int, table_name: str) -> List[Dict[str, Any]]:
         from sqlalchemy import func
@@ -42,30 +98,21 @@ class CrudLlmService:
         if not base_llm:
             raise Exception("Base LLM not found.")
             
-        # Force JSON mode
+        # Force JSON mode if supported
         if "OLLAMA" in provider.upper():
             llm = base_llm.bind(format="json")
         else:
-            # Assuming OpenAI/Gemini support structured output or JSON mode
-            # For simplicity across providers, we can rely on the prompt's strong "OUTPUT ONLY JSON" instructions,
-            # but binding json is best for OpenAI if available, or just letting it run.
             llm = base_llm
             
         messages = [SystemMessage(content=prompt)]
         
         try:
             ai_msg = await llm.ainvoke(messages)
-            content = ai_msg.content.strip()
-            
-            # Clean up potential markdown fences
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-                
-            return json.loads(content.strip())
+            content = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+            parsed = CrudLlmService._extract_json_from_llm(content)
+            if parsed is not None:
+                return parsed
+            raise ValueError(f"Could not parse valid JSON from LLM output: {str(content)[:100]}")
         except Exception as e:
             err_str = str(e).lower()
             if "429" in err_str or "rate_limit" in err_str or "tokens per min" in err_str:
@@ -79,11 +126,8 @@ class CrudLlmService:
                         temperature=0.0
                     )
                     ai_msg = await fallback_llm.ainvoke(messages)
-                    content = ai_msg.content.strip()
-                    if content.startswith("```json"): content = content[7:]
-                    if content.startswith("```"): content = content[3:]
-                    if content.endswith("```"): content = content[:-3]
-                    return json.loads(content.strip())
+                    content = ai_msg.content if hasattr(ai_msg, "content") else str(ai_msg)
+                    return CrudLlmService._extract_json_from_llm(content)
                 except Exception as fb_err:
                     logger.error(f"Fallback to gpt-4o-mini also failed: {fb_err}")
                     return None
@@ -104,7 +148,7 @@ class CrudLlmService:
         
         result = await CrudLlmService._invoke_json_llm(client_id, session, prompt)
         
-        if result is None:
+        if result is None or not isinstance(result, dict):
             return {}
             
         # Validate that extracted keys are actually in FieldMetadata
@@ -129,7 +173,20 @@ class CrudLlmService:
         
         result = await CrudLlmService._invoke_json_llm(client_id, session, prompt)
         
-        if result is None:
-            raise Exception("Failed to generate a valid JSON operation.")
+        if result is None or not isinstance(result, dict):
+            logger.warning(f"⚠️ [CRUD] LLM returned empty/invalid JSON for {action} on {table_name}. Falling back to clean empty operation.")
+            return CrudOperation(
+                action=action,
+                table=table_name,
+                record_id=record_id,
+                fields={}
+            )
             
+        # Ensure mandatory keys exist
+        if "action" not in result: result["action"] = action
+        if "table" not in result: result["table"] = table_name
+        if "fields" not in result or not isinstance(result["fields"], dict): result["fields"] = {}
+        if record_id is not None and "record_id" not in result: result["record_id"] = record_id
+        
         return CrudOperation(**result)
+

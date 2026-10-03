@@ -352,14 +352,23 @@ async def handle_create_flow(user_input: str, state: ConversationState, db_sessi
                     fields=crud_fields
                 )
             else:
-                crud_op = await CrudLlmService.generate_crud_operation(
-                    client_id=state.client_id,
-                    session=db_session,
-                    action="CREATE",
-                    table_name=state.entity_name,
-                    concept=friendly_name,
-                    user_query=full_query
-                )
+                try:
+                    crud_op = await CrudLlmService.generate_crud_operation(
+                        client_id=state.client_id,
+                        session=db_session,
+                        action="CREATE",
+                        table_name=state.entity_name,
+                        concept=friendly_name,
+                        user_query=full_query
+                    )
+                except Exception as op_err:
+                    print(f"⚠️ [CRUD] Field extraction skipped ({op_err}). Proceeding to SmartForm with empty fields.")
+                    crud_op = CrudOperation(
+                        action="CREATE",
+                        table=state.entity_name,
+                        record_id=None,
+                        fields={}
+                    )
             
             field_metadata = await CrudLlmService._get_field_metadata(db_session, state.client_id, state.entity_name)
             missing_required_fields = []
@@ -587,16 +596,25 @@ async def handle_update_flow(user_input: str, state: ConversationState, db_sessi
 async def _stage_update(record: dict, user_query: str, state: ConversationState, db_session: AsyncSession, friendly_name: str) -> Tuple[str, List[Any]]:
     try:
         record_id = record.get("id") or list(record.values())[0]
-        crud_op = await CrudLlmService.generate_crud_operation(
-            client_id=state.client_id,
-            session=db_session,
-            action="UPDATE",
-            table_name=state.entity_name,
-            concept=friendly_name,
-            user_query=user_query,
-            record_id=record_id,
-            record_data=record
-        )
+        try:
+            crud_op = await CrudLlmService.generate_crud_operation(
+                client_id=state.client_id,
+                session=db_session,
+                action="UPDATE",
+                table_name=state.entity_name,
+                concept=friendly_name,
+                user_query=user_query,
+                record_id=record_id,
+                record_data=record
+            )
+        except Exception as op_err:
+            print(f"⚠️ [CRUD UPDATE] Field extraction skipped ({op_err}). Proceeding to SmartForm with empty fields.")
+            crud_op = CrudOperation(
+                action="UPDATE",
+                table=state.entity_name,
+                record_id=record_id,
+                fields={}
+            )
         
         # Generate SmartForm pre-loaded with the current record data
         form_structure = await SmartFormService.generate_form(

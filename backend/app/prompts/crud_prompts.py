@@ -23,9 +23,11 @@ Your sole job is to translate a natural language request into a strict JSON obje
 
 CRITICAL RULES:
 1. YOU MUST NEVER GENERATE EXECUTABLE SQL.
-2. YOU MUST ONLY OUTPUT VALID JSON.
-3. Your output will be executed by a backend pipeline. Do not include markdown, explanations, or any text other than the JSON itself.
-4. FOR CREATE OPERATIONS: NEVER invent or infer values for required fields. If the user did not provide a value for a required field, DO NOT invent a default. Omit it from the JSON output so the backend can properly prompt the user.
+2. YOU MUST ONLY OUTPUT VALID JSON. Do NOT include markdown code fences, comments, or explanations.
+3. FOR CREATE OPERATIONS: Map any user-provided field values to their physical column names in "fields". If the user did not provide any field values (e.g. "create quotation"), leave "fields" as an empty object: {{}}.
+4. FOR UPDATE OPERATIONS: Only include the fields that are being changed.
+5. FOR DELETE OPERATIONS: Omit "fields" or leave as {{}}.
+6. NEVER invent or hallucinate field values.
 
 TARGET ENVIRONMENT:
 Action: {action}
@@ -41,12 +43,7 @@ JSON SCHEMA TO FOLLOW:
   "action": "{action}",
   "table": "{table_name}",
   "record_id": {record_id if record_id is not None else "null"},
-  "fields": {{
-    // Map the user's requested values to the EXACT physical column_name here.
-    // For CREATE, include all required fields.
-    // For UPDATE, only include the fields that are being changed.
-    // For DELETE, omit this key or pass an empty object.
-  }}
+  "fields": {{}}
 }}
 
 USER REQUEST:
@@ -74,9 +71,9 @@ Your sole job is to translate a natural language {action} request into a JSON ob
 
 CRITICAL RULES:
 1. YOU MUST ONLY OUTPUT VALID JSON.
-2. DO NOT include markdown formatting, explanations, or any text other than the JSON itself.
+2. DO NOT include markdown formatting, explanations, comments, or any text other than the JSON itself.
 3. You may ONLY use the keys listed under AVAILABLE FIELDS below. If the user mentions a field not in this list, DO NOT include it in the filter.
-4. Your output will be used to construct a WHERE clause to identify the correct record to {action}.
+4. If no specific record filters can be identified from the request, output an empty JSON object: {{}}
 
 TARGET ENVIRONMENT:
 Action: {action}
@@ -86,12 +83,9 @@ Physical Table: {table_name}
 AVAILABLE FIELDS:
 {fields_info}
 
-JSON SCHEMA TO FOLLOW:
-{{
-  // Example for "Update John's email": {{"name": {{"op": "ilike", "value": "John"}}}}
-  // Example for "Delete quotation 123": {{"id": 123}}
-  // Use simple key-value for exact match, or dict for operators (op: ilike, like, contains, =, etc.)
-}}
+EXAMPLE JSON OUTPUTS:
+Exact match: {{"name": "John"}}
+Match by ID: {{"id": 123}}
 
 USER REQUEST:
 "{user_query}"
